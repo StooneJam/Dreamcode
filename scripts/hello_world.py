@@ -28,7 +28,7 @@ deepseek_llm = ChatOpenAI(
 )
 
 openai_llm = ChatOpenAI(
-    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+    model=os.getenv("OPENAI_MODEL", "gpt-5-mini"),
     api_key=os.getenv("OPENAI_API_KEY"),
     temperature=0.3,
     timeout=30,

@@ -11,7 +11,7 @@ Bytedance project · 业务场景级 vibecoding
 
 | 角色 | 职责 | 模型 |
 |---|---|---|
-| **PM Agent** | 竞品扩展 + 任务拆解 + 内联 QA + TaskRegistry 动态管理 | DeepSeek V4 |
+| **PM Agent** | 竞品扩展 + 任务拆解 + 内联 QA + TaskRegistry 动态管理 | **GPT-5** |
 | **Collector** | 抓官网 / AppStore / RSS（合规）+ 交叉源核查 | DeepSeek + GPT-5 多模态分支 |
 | **Insight** | 评论 / 情感分析（差异化亮点）；挂 questionnaire skill | DeepSeek V4 |
 | **Analyst** | NLP 情感 + 打分 + SWOT | DeepSeek V4 |
