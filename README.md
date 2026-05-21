@@ -79,6 +79,9 @@ Dreamcode/
 │   ├── observability/    # loguru + langsmith
 │   └── graph.py          # 主图装配
 ├── app/                  # Streamlit 前端
+│   ├── streamlit_app.py  # 主入口
+│   ├── components/       # graph_viz + agent_panel
+│   └── static/           # CSS / 图标
 ├── scripts/              # CLI 入口 + hello_world
 ├── tests/                # 与 src/ 镜像，含 fixtures/golden
 ├── data/                 # raw/cache/private/memory（gitignored）
