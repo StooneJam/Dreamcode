@@ -12,5 +12,4 @@ dependencies:
   - pandas                # 分析师 agent 做对比矩阵会用到
   - sqlite                # langgraph-checkpoint-sqlite 依赖
 
-  - pip:
-      - -r requirements.txt
+
