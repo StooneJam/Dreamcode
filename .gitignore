@@ -50,19 +50,27 @@ htmlcov/
 .ipynb_checkpoints/
 
 
-# langgraph 
+# langgraph
 .langgraph/
 .langchain/
-checkpoints/
 *.sqlite
 *.db
 langsmith_traces/
 
+# 忽略目录内容但保留空目录（让队友看到完整架构）
+checkpoints/*
+!checkpoints/.gitkeep
+
 #数据
-data/raw/
-data/cache/
-data/private/
-logs/
+data/raw/*
+!data/raw/.gitkeep
+data/cache/*
+!data/cache/.gitkeep
+data/private/*
+!data/private/.gitkeep
+
+logs/*
+!logs/.gitkeep
 *.log
 
 # 但保留示例数据
@@ -75,6 +83,9 @@ reports/*.pdf
 reports/*.html
 reports/*.docx
 !reports/templates/
+
+# 题目原文（仅本地参考，不上传）
+/课题介绍.pdf
 
 # =========================================
 # 操作系统垃圾

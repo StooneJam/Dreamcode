@@ -1,0 +1,29 @@
+[
+  {
+    "url": "https://www.feishu.cn/product",
+    "title": "飞书 - 产品介绍",
+    "snippet": "飞书是字节跳动旗下的协同办公平台。",
+    "content": "飞书提供文档、表格、视频会议、即时通讯、日历、邮箱等一体化协同服务。",
+    "fetched_at": "2026-05-20T10:00:00",
+    "source_type": "official",
+    "is_multimodal": false
+  },
+  {
+    "url": "https://www.dingtalk.com/product",
+    "title": "钉钉 - 阿里巴巴出品",
+    "snippet": "钉钉是阿里巴巴打造的企业级智能移动办公平台。",
+    "content": "钉钉提供即时通讯、视频会议、协同文档、智能人事、智能财务等模块。",
+    "fetched_at": "2026-05-20T10:00:05",
+    "source_type": "official",
+    "is_multimodal": false
+  },
+  {
+    "url": "https://meeting.tencent.com",
+    "title": "腾讯会议",
+    "snippet": "腾讯会议是腾讯云旗下专业的云会议产品。",
+    "content": "腾讯会议主打视频会议能力，支持 300 人同时入会。",
+    "fetched_at": "2026-05-20T10:00:10",
+    "source_type": "official",
+    "is_multimodal": false
+  }
+]

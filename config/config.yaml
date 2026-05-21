@@ -1,0 +1,43 @@
+# 仅放运行时参数 —— 领域知识在 long-term memory，不在这里
+
+# 当前分析任务
+task:
+  target_vertical: office_software       # 当前垂直（决定使用哪个 domain_seed，可选）
+  competitors:                            # 用户输入的竞品列表
+    - 飞书
+    - 钉钉
+    - 腾讯会议
+    - Zoom
+  user_query: "对比这几款办公协同软件，输出 SWOT 与功能对比"
+
+# 模型路由（具体 model id 来自 .env）
+llm:
+  default: deepseek
+  multimodal: gpt-5
+  qa: gpt-5             # 跨家族审 DeepSeek 产出
+
+# 流程控制
+flow:
+  max_retry_per_qa: 2
+  max_collection_pages: 30
+  request_timeout_sec: 30
+  use_questionnaire_skill: false        # 默认关闭一手数据采集，按需打开
+
+# 输出
+output:
+  report_format: markdown               # markdown / html / pdf
+  report_dir: reports
+  include_source_urls: true
+
+# 路径
+paths:
+  domain_seeds_dir: src/cca/domain_seeds
+  checkpoints_db: data/checkpoints.db
+  store_db: data/memory/store.db        # 统一 long-term store（替代原 episodic/semantic/quality 3 库）
+  cache_dir: data/cache
+  logs_dir: logs
+
+# 报告输出
+report:
+  formats: [markdown, pdf]              # markdown 默认 + pdf 保留
+  pdf_engine: weasyprint                 # markdown-it-py → weasyprint

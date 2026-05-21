@@ -1,0 +1,11 @@
+vertical: office_software
+priority_dimensions:
+  - 协同编辑
+  - 视频会议
+  - AI 助手
+  - 移动端体验
+trusted_sources:
+  - "https://www.feishu.cn"
+  - "https://www.dingtalk.com"
+notes: |
+  测试用 seed —— 给 dimension_discovery 子图的单元测试用。
