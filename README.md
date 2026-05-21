@@ -7,17 +7,22 @@ Bytedance project · 业务场景级 vibecoding
 模拟数字调研小组，自动完成 **公开信息采集 → 结构化竞品报告输出** 的全链路工作流。
 首发垂直：**办公软件**，架构支持 config 切换其他赛道。
 
-## Agents 分工
+## Agents 分工（v2 supervisor pattern）
 
-| 角色 | 职责 | 默认模型 |
+| 角色 | 职责 | 模型 |
 |---|---|---|
-| 项目经理 PM | 任务拆解、动态分配 | DeepSeek V4 |
-| 数据采集 | 抓官网/AppStore/RSS（合规） | DeepSeek V4 / GPT-5 多模态分支 |
-| 用户洞察 | 评论/情感分析（差异化亮点） | DeepSeek V4 |
-| 分析师 | Schema 填充 / 打分 / SWOT | DeepSeek V4 |
-| QA + 报告 | 校验 + 报告输出 + 溯源 | GPT-5（多模态） |
+| **PM Agent** | 竞品扩展 + 任务拆解 + 内联 QA + TaskRegistry 动态管理 | DeepSeek V4 |
+| **Collector** | 抓官网 / AppStore / RSS（合规）+ 交叉源核查 | DeepSeek + GPT-5 多模态分支 |
+| **Insight** | 评论 / 情感分析（差异化亮点）；挂 questionnaire skill | DeepSeek V4 |
+| **Analyst** | NLP 情感 + 打分 + SWOT | DeepSeek V4 |
+| **Report** | 整合 + 图表 + Markdown / PDF 渲染 | GPT-5（多模态） |
 
-跨家族模型对抗校验缓解 self-preference bias。
+**3 处 QA**：PM 审采集 → PM 审分析 → **Doubao 跨家族终审报告**。
+三模型家族（DeepSeek / GPT-5 / Doubao）层叠对抗，缓解 self-preference bias。
+
+**Collector + Insight 并行 fan-out**，互不依赖时同时跑，省时间。
+
+**可信度规则**：QA 失败 retry > 2 即标 `unreviewed`，报告自动生成"未经充分审核"段落。
 
 ## 记忆体系
 

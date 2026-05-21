@@ -15,6 +15,10 @@ openai>=1.40.0
 langchain-openai>=0.2.0
 langchain-deepseek>=0.1.0
 
+# Doubao (Volcengine Ark) - 用作最终跨模型 QA
+# LLM chat 仍走 ChatOpenAI + base_url（OpenAI 兼容），SDK 为图像生成/embedding 等高级特性预留
+volcengine-python-sdk>=1.0.0
+
 # State 
 pydantic>=2.7.0
 pyyaml>=6.0

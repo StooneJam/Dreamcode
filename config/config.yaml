@@ -1,43 +1,43 @@
 # 仅放运行时参数 —— 领域知识在 long-term memory，不在这里
 
-# 当前分析任务
+# 当前分析任务（输入层）
 task:
-  target_vertical: office_software       # 当前垂直（决定使用哪个 domain_seed，可选）
-  competitors:                            # 用户输入的竞品列表
-    - 飞书
-    - 钉钉
-    - 腾讯会议
-    - Zoom
-  user_query: "对比这几款办公协同软件，输出 SWOT 与功能对比"
+  target_vertical: office_software       # 决定使用哪个 domain_seed（可选）
+  primary_competitor: 飞书                # 用户主要分析的产品（必填）
+  competitors: []                         # 可选 seed；为空则由 PM 自动扩展
+  n_competitors: 5                        # PM 扩展时输出的竞品总数（默认 5）
+  user_query: "对比办公协同软件，输出 SWOT 与功能对比"
 
 # 模型路由（具体 model id 来自 .env）
 llm:
-  default: deepseek
-  multimodal: gpt-5
-  qa: gpt-5             # 跨家族审 DeepSeek 产出
+  pm: gpt-5                            # supervisor，做 QA + 任务管理
+  collector_text: deepseek
+  collector_multimodal: gpt-5             # 遇到 PDF/图像走这条
+  insight: deepseek
+  analyst: deepseek
+  report: gpt-5                           # 最终报告 + 多模态
+  final_qa: doubao                        # 跨第三家族审 GPT-5 产出
 
 # 流程控制
 flow:
-  max_retry_per_qa: 2
+  max_retry_per_qa: 2                     # >2 即 forced，写入 unreviewed
   max_collection_pages: 30
   request_timeout_sec: 30
-  use_questionnaire_skill: false        # 默认关闭一手数据采集，按需打开
+  use_questionnaire_skill: false          # v2 才开
+  parallel_collect_insight: true          # fan-out 并行
 
 # 输出
 output:
-  report_format: markdown               # markdown / html / pdf
+  formats: [markdown, pdf]
+  pdf_engine: weasyprint
   report_dir: reports
   include_source_urls: true
+  include_unreviewed_section: true        # 自动列出 retry>2 的条目
 
 # 路径
 paths:
   domain_seeds_dir: src/cca/domain_seeds
   checkpoints_db: data/checkpoints.db
-  store_db: data/memory/store.db        # 统一 long-term store（替代原 episodic/semantic/quality 3 库）
+  store_db: data/memory/store.db
   cache_dir: data/cache
   logs_dir: logs
-
-# 报告输出
-report:
-  formats: [markdown, pdf]              # markdown 默认 + pdf 保留
-  pdf_engine: weasyprint                 # markdown-it-py → weasyprint
