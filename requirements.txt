@@ -1,0 +1,51 @@
+# CLI：
+# conda env create -f environment.yml
+# conda activate multi-agent
+# python -m spacy download zh_core_web_sm
+
+# LangGraph 核心
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langgraph-checkpoint-sqlite>=2.0.0
+
+# 模型客户端
+openai>=1.40.0
+langchain-openai>=0.2.0
+langchain-deepseek>=0.1.0
+
+# State / 配置
+pydantic>=2.7.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# 信息采集
+tavily-python>=0.5.0
+requests>=2.32.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+pypdf>=4.0.0
+pymupdf>=1.24.0
+pillow>=10.0.0
+
+# 数据分析
+pandas>=2.2.0
+numpy>=1.26.0
+
+# PII 脱敏
+presidio-analyzer>=2.2.0
+presidio-anonymizer>=2.2.0
+spacy>=3.7.0
+
+# 前端
+streamlit>=1.36.0
+plotly>=5.20.0
+
+# 可观测性
+langsmith>=0.1.0
+loguru>=0.7.0
+tenacity>=8.2.0
+
+# 测试
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

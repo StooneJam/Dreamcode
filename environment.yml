@@ -1,0 +1,16 @@
+name: multi-agent
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11           # 3.11 稳定且 LangGraph/Streamlit 完全兼容
+  - pip
+
+  - lxml                  # BeautifulSoup 的高速解析器后端
+  - pillow                # 多模态图片处理
+  - numpy
+  - pandas                # 分析师 agent 做对比矩阵会用到
+  - sqlite                # langgraph-checkpoint-sqlite 依赖
+
+  - pip:
+      - -r requirements.txt

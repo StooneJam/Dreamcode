@@ -1,0 +1,92 @@
+.claude/
+.cursor/
+.vscode/
+.idea/
+
+
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+
+venv/
+.venv/
+env/
+ENV/
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter
+.ipynb_checkpoints/
+
+
+# langgraph 
+.langgraph/
+.langchain/
+checkpoints/
+*.sqlite
+*.db
+langsmith_traces/
+
+#数据
+data/raw/
+data/cache/
+data/private/
+logs/
+*.log
+
+# 但保留示例数据
+!data/examples/
+!data/README.md
+
+#报告
+output/
+reports/*.pdf
+reports/*.html
+reports/*.docx
+!reports/templates/
+
+# =========================================
+# 操作系统垃圾
+# =========================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================================
+# 临时文件
+# =========================================
+*.tmp
+*.swp
+*.bak
+~$*
