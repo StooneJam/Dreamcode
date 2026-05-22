@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.cca.schema import (
+from cca.schema import (
     CollectTask,
     Dimension,
     Evidence,
