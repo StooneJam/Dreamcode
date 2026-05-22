@@ -1,10 +1,12 @@
-"""竞品分析系统数据模型。
+"""
+竞品分析系统数据模型。
 
 通用骨架不硬编码行业字段；维度由 Agent 运行时发现；每条结论必须绑定证据。
 """
 from __future__ import annotations
-from operator import add
-from typing import Annotated, Literal, TypedDict
+
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -38,8 +40,9 @@ class Dimension(BaseModel):
 class PricingTier(BaseModel):
     """单个定价档位，数据来自官网或公开定价页。"""
     name: str
-    price_per_user_monthly_cny: float | None = None
-    price_per_user_yearly_cny: float | None = None
+    price_per_user_monthly: float | None = None
+    price_per_user_yearly: float | None = None
+    currency: str | None = Field(None, description="ISO 4217 货币代码，如 'CNY'、'USD'、'EUR'")
     user_limit: int | None = Field(None, description="None 表示不限人数")
     included_features: list[str] = Field(default_factory=list)
     source: Evidence | None = None
@@ -62,8 +65,9 @@ class ReviewSample(BaseModel):
 
 class UserSentiment(BaseModel):
     """用户口碑聚合，全部数据须来自公开渠道的客观抓取。"""
-    appstore_cn_rating: float | None = Field(None, ge=1, le=5, description="AppStore 中国区实际评分")
+    appstore_cn_rating: float | None = Field(None, ge=1, le=5, description="AppStore 实际评分")
     appstore_cn_review_count: int | None = None
+    appstore_region: str | None = Field(None, description="评分所在区域，如 'cn'、'us'、'global'")
     positive_themes: list[str] = Field(
         default_factory=list,
         description="用户好评的主题归纳，如'通知及时'，须有对应评论样本支撑"
@@ -155,38 +159,15 @@ class ReviewUnit(BaseModel):
     PM 在 Collector+Insight 并行完成后统一评审一轮；needs_retry 触发返工，
     返工完毕 PM 再次评审 append 新 ReviewUnit；retry_count > 2 时标 forced。
     """
-    agent: Literal["collector", "insight"]
+    agent: Literal["collector", "insight", "analyst"]
     product_name: str
     status: ReviewStatus
     retry_count: int = Field(description="本次评审前该 (agent, product) 已发生的返工次数")
-    qa_flags: list[str] = Field(default_factory=list, description="本轮评审写入的问题列表")
+    qa_flags: list[str] = Field(
+        default_factory=list,
+        description="未通过的校验项描述，如'定价信息与原始数据不一致'"
+        )
     pm_note: str | None = None
-    reviewed_at: str | None = None  # ISO 8601
+    reviewed_at: str | None = None
 
 
-class CCAState(TypedDict):
-    """Agent 间共享的工作台。
-
-    profiles 以 product_name 为 key 存 ProductProfile.model_dump()；
-    review_state / audit_log / qa_notes 用 add reducer，多节点并发写入自动追加。
-    """
-    user_query: str
-    target_product: str
-
-    competitor_names: list[str]
-    task_plan: dict               # TaskPlan.model_dump()
-
-    profiles: dict[str, dict]     # {product_name: ProductProfile.model_dump()}
-
-    # PM 在 Collector+Insight 完成后的评审台账，累加每一轮评审产出
-    # status=forced 的项即报告中"未经充分审核"段落的数据源
-    review_state: Annotated[list[dict], add]   # list[ReviewUnit.model_dump()]
-
-    qa_results: list[dict]        # 终局 QA Agent 产出（与 PM inline QA 分离）
-    report_status: Literal["pending", "passed", "unreviewed"]
-
-    report_md: str | None
-    report_pdf_path: str | None
-
-    qa_notes: Annotated[list[str], add]
-    audit_log: Annotated[list[dict], add]
