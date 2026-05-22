@@ -24,8 +24,8 @@ class Fact(BaseModel):
 
 
 class Dimension(BaseModel):
-    """单个分析维度，由 dimension_discovery 或 Agent 自主识别。
-
+    """
+    单个分析维度，由 dimension_discovery 或 Agent 自主识别。
     category 为开放字符串，典型值：'功能' / '定价' / '用户口碑' / '生态' / '市场定位' / '技术架构'。
     """
     name: str = Field(description="维度名称，如'视频会议人数上限'、'移动端离线能力'")
@@ -97,17 +97,17 @@ class SWOT(BaseModel):
 
 
 class ProductProfile(BaseModel):
-    """单个产品的竞品分析档案，适用于任意产品领域。
-
-    product_type / target_users 由 Collector 从官网抓取，dimensions 由 Agent 动态填入。
     """
+    单个产品的竞品分析档案，适用于任意产品领域。
+    """
+    # PM Agent 填写
     product_name: str
     company: str | None = None
     website: str | None = None
-    product_type: str | None = Field(None, description="产品类型，来自 TaskPlan（PM 联网确认），Collector 可补充修正")
-    target_users: str | None = Field(None, description="目标用户，来自官网原文")
+    product_type: str | None = Field(None, description="产品类型，PM 联网确认，Collector 可补充修正")
 
     # Collector Agent 填写
+    target_users: str | None = Field(None, description="目标用户，来自官网原文")
     dimensions: list[Dimension] = Field(default_factory=list)
     pricing: PricingInfo | None = None
     sources: list[Evidence] = Field(default_factory=list)
@@ -141,25 +141,74 @@ class CollectTask(BaseModel):
     )
     priority_dimensions: list[str] = Field(
         default_factory=list,
-        description="PM 根据产品类型和 DomainPack 确定的重点维度；为空则由 Collector 自主发现"
+        description="PM 根据产品类型和 DomainPack 确定的重点维度；如为空则由 Collector 自主判断采集哪些维度的信息"
+    )
+
+
+class InsightTask(BaseModel):
+    """PM 分配给 Insight 的单项分析任务。"""
+    product_name: str
+    target_platforms: list[Literal['appstore_cn', 'appstore_us', 'zhihu', 'weibo', 'other']] = Field(
+        default_factory=list,
+        description="PM 联网搜索后确认的平台白名单，Insight 直接执行；为空则由 Insight 自主判断"
+    )
+    priority_dimensions: list[str] = Field(
+        default_factory=list,
+        description="PM 根据产品类型和 DomainPack 确定的重点维度；为空则由 Insight 自主判断"
     )
 
 
 class TaskPlan(BaseModel):
     """PM Agent 的任务拆解结果。"""
     target_product: str
-    product_type: str = Field(description="PM 联网搜索后确认的产品类型，是全链路的权威来源")
+    product_type: str = Field(description="PM 联网搜索后确认的产品类型")
     competitor_names: list[str]
     collect_tasks: list[CollectTask]
+    insight_tasks: list[InsightTask]
     rationale: str | None = None
+
+
+class AnalystTask(BaseModel):
+    """PM 阶段二：Collector+Insight QA 通过后下发的分析任务。"""
+    target_products: list[str] = Field(description="参与对比的产品名，通常 = competitor_names")
+    focus_dimensions: list[str] = Field(
+        default_factory=list,
+        description="重点对比维度，PM 输出的各 dimensions。由PM 根据 Collector+Insight 产出评审结果指定高亮维度"
+    )
+    require_swot: bool = True
+    cross_product_comparison_required: bool = Field(
+        True,
+        description="是否要求生成跨竞品横向对比"
+    )
+
+
+class ReportTask(BaseModel):
+    """PM 阶段三：Analyst QA 通过后下发的报告撰写任务。"""
+    target_product: str = Field(description="报告主分析对象")
+    competitors: list[str]
+    output_formats: list[Literal["markdown", "pdf"]] = Field(
+        default_factory=lambda: ["markdown", "pdf"]
+    )
+    target_audience: str | None = Field(
+        None,
+        description="读者类型，如'产品负责人'、'技术评审'，影响 Reporter 语气"
+    )
+    sections: list[str] = Field(
+        default_factory=list,
+        description="报告应含章节，PM 可由 Analyst Agent给出的分析结果高亮项指定；为空则由 Reporter 自主组织"
+    )
+    invoke_call_report_reviewer: bool = Field(
+        True,
+        description="是否调用 call_report_reviewer skill - Doubao 终审"
+    )
 
 
 ReviewStatus = Literal["passed", "needs_retry", "forced"]
 
 
 class ReviewUnit(BaseModel):
-    """PM 对某次 (agent, product) 产出的评审判定。
-
+    """
+    PM 对某次 (agent, product) 产出的评审判定。
     PM 在 Collector+Insight 并行完成后统一评审一轮；needs_retry 触发返工，
     返工完毕 PM 再次评审 append 新 ReviewUnit；retry_count > 2 时标 forced。
     """

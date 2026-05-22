@@ -18,6 +18,8 @@ class CCAState(TypedDict):
 
     competitor_names: list[str]
     task_plan: dict               # TaskPlan.model_dump()
+    analyst_task: dict | None            # AnalystTask.model_dump() - PM 阶段二填
+    report_task: dict | None             # ReportTask.model_dump() - PM 阶段三填
 
     profiles: dict[str, dict]     # {product_name: ProductProfile.model_dump()}
 

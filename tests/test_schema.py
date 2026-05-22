@@ -5,14 +5,17 @@ import pytest
 from pydantic import ValidationError
 
 from cca.schema import (
+    AnalystTask,
     CollectTask,
     Dimension,
     Evidence,
     Fact,
+    InsightTask,
     PricingInfo,
     PricingTier,
     ProductProfile,
     QAResult,
+    ReportTask,
     ReviewSample,
     ReviewUnit,
     SWOT,
@@ -155,10 +158,79 @@ def test_qa_result_valid() -> None:
 def test_task_plan_valid() -> None:
     plan = TaskPlan(
         target_product="飞书",
+        product_type="企业协作平台",
         competitor_names=["钉钉", "企业微信"],
         collect_tasks=[CollectTask(product_name="钉钉", priority_dimensions=["定价"])],
+        insight_tasks=[InsightTask(product_name="钉钉", target_platforms=["appstore_cn"])],
     )
     assert len(plan.competitor_names) == 2
+    assert plan.product_type == "企业协作平台"
+
+
+def test_task_plan_rejects_missing_product_type() -> None:
+    """product_type 是 PM 权威字段，必填。"""
+    with pytest.raises(ValidationError):
+        TaskPlan(
+            target_product="飞书",
+            competitor_names=["钉钉"],
+            collect_tasks=[],
+            insight_tasks=[],
+        )
+
+
+def test_insight_task_default_empty_platforms() -> None:
+    """InsightTask 不传 target_platforms 时默认空列表，由 Insight 自主决定。"""
+    task = InsightTask(product_name="飞书")
+    assert task.target_platforms == []
+    assert task.priority_dimensions == []
+
+
+def test_insight_task_accepts_multiple_platforms() -> None:
+    task = InsightTask(
+        product_name="飞书",
+        target_platforms=["appstore_cn", "zhihu"],
+    )
+    assert len(task.target_platforms) == 2
+
+
+def test_insight_task_rejects_invalid_platform() -> None:
+    with pytest.raises(ValidationError):
+        InsightTask(product_name="飞书", target_platforms=["twitter"])
+
+
+def test_analyst_task_valid() -> None:
+    task = AnalystTask(
+        target_products=["飞书", "钉钉"],
+        focus_dimensions=["AI 助手", "视频会议"],
+    )
+    assert task.require_swot is True
+    assert task.cross_product_comparison_required is True
+
+
+def test_analyst_task_minimal() -> None:
+    """target_products 必填，其余字段有默认值。"""
+    task = AnalystTask(target_products=["飞书"])
+    assert task.focus_dimensions == []
+
+
+def test_report_task_valid() -> None:
+    task = ReportTask(
+        target_product="飞书",
+        competitors=["钉钉", "企业微信"],
+        target_audience="产品负责人",
+        sections=["市场定位", "功能对比", "SWOT"],
+    )
+    assert task.output_formats == ["markdown", "pdf"]
+    assert task.invoke_call_report_reviewer is True
+
+
+def test_report_task_rejects_invalid_format() -> None:
+    with pytest.raises(ValidationError):
+        ReportTask(
+            target_product="飞书",
+            competitors=["钉钉"],
+            output_formats=["ppt"],
+        )
 
 
 def test_review_unit_valid() -> None:
