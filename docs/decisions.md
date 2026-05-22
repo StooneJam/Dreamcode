@@ -289,6 +289,76 @@ task_id / agent / description / status (pending|running|passed|failed|forced) / 
 
 ---
 
+## D-017 · 跨家族最终 QA 从节点变 skill（call_report_reviewer）
+**Status**: Accepted · **Date**: 2026-05-22
+**Supersedes**: 架构 v2 中"Doubao 作为独立 QA 节点"的设计
+
+**Context**：v2 架构原把 Doubao 终审做成 LangGraph 独立节点（QA #3）。实际审查只做一致性校对，工作量远低于一个完整 agent；做成节点带来不必要的图结构复杂度。
+
+**Decision**：
+- Doubao 终审封装为 **`call_report_reviewer` skill**（LangGraph subgraph）
+- Reporter agent 生成 MD 后**主动调用**该 skill
+- skill 仅返审查结论（`QAResult`），不修改 MD；Reporter 根据 result 决定是否重写
+- 是否调用由 `ReportTask.invoke_call_report_reviewer: bool` 显式开关控制（默认 true）
+
+**Why**：
+- 一致性校对的认知负荷 << 完整 agent，skill 颗粒度更合适
+- 与 `questionnaire` skill 对称，架构连贯
+- Reporter 作为单一触点拥有完整报告生命周期（生成 + 审 + 修订）
+
+**Trade-offs**：
+- LangGraph 节点图里 Doubao 跨家族审不再独立可见 → **修法**：在架构图里画 Reporter 调用 skill subgraph 的虚线（与 questionnaire 视觉对称），保住答辩可视化卖点
+- `ReviewUnit.agent` 范围因此**不含 report**（仅 collector / insight / analyst），Doubao 审查记录走独立的 `qa_results` 字段（D-016 已明示）
+
+**Implementation**：
+- `src/cca/skills/call_report_reviewer.py`（v1 占位）
+- 接口：`def call_report_reviewer(report_md: str, profiles: dict[str, dict]) -> QAResult` —— 单一职责，仅返审查结论
+- 失败语义：QAResult.passed=false 时 Reporter 重写；retry_count > 2 进入 forced（沿用 D-014 规则）
+
+---
+
+## D-018 · PM 分阶段任务下发（AnalystTask + ReportTask 后置）
+**Status**: Accepted · **Date**: 2026-05-22
+**Implements**: D-011 (supervisor pattern) + D-015 (动态任务管理) + D-016 (schema 设计)
+
+**Context**：早期 TaskPlan 仅含 `collect_tasks` + `insight_tasks`，下游 Analyst / Report 没有任务定义。若 PM 在开局就一次性下发全部任务（Pattern X），Analyst 的 `focus_dimensions` 只能盲填或留空，因为此时 Collector 还未发现真实 dimensions —— **信息流逆向**。
+
+**Decision**：PM 分 3 阶段下发任务，每阶段基于上一阶段真实产出生成。
+
+```
+PM 阶段一 → TaskPlan(collect_tasks + insight_tasks)
+   ↓
+Collector + Insight 并行 → PM QA pass
+   ↓
+PM 阶段二 → AnalystTask（focus_dimensions 用 Collector 实际填的高频维度）
+   ↓
+Analyst → PM QA pass
+   ↓
+PM 阶段三 → ReportTask（sections 由 SWOT 高亮项指定）
+   ↓
+Reporter（内部调用 call_report_reviewer skill，D-017）→ END
+```
+
+**Alternatives**：
+- **Pattern X 开局一次性出全部任务**：信息流逆向（Analyst 拿到 task 时还没有真实 dimensions），驳回
+- **完全静态 dispatch（无 AnalystTask/ReportTask）**：Analyst/Report 直接读 state.profiles 自行决策，PM 不下发 → 失去 PM 作为 supervisor 的价值，驳回
+
+**Why**：
+- 每阶段任务定义基于上一阶段真实产出 → 信息流正向
+- 强化 PM 的 supervisor 角色，每个 QA pass 后都有"再规划"动作 → 体现 D-011 supervisor pattern
+- 兑现 D-015 动态任务管理（task 真正动态，不是开局静态）
+
+**Implementation**：
+- `schema.py`：新增 `AnalystTask` + `ReportTask`（独立 Pydantic 类，不嵌入 TaskPlan）
+- `state.py`：`CCAState` 加 `analyst_task: dict | None` + `report_task: dict | None`
+- TaskPlan 保持只含 collect + insight tasks，**不增长字段**
+
+**Trade-offs**：
+- PM 多 2 次 LLM 调用（阶段二、三），token 成本上升 → 接受，因 Doubao 终审是 skill 不占独立节点（D-017），整体调用次数相比 v2 原设计无显著增加
+- TaskPlan 与 AnalystTask / ReportTask 字段同源问题：如 `target_products` 在两处都有 → 设计上 PM 必须保持一致，开发期靠 audit_log 检测
+
+---
+
 ## 待决（Pending）
 
 - **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略（命中后是跳过 web 还是合并）

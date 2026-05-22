@@ -1,4 +1,6 @@
-"""Day 1 Hello World — LangGraph + DeepSeek + OpenAI 联通，演示结构化输出。
+"""Day 1 Hello World — LangGraph + DeepSeek + OpenAI + Doubao 三家族联通验证。
+
+DeepSeek 探维度 → OpenAI 给竞争格局 → Doubao 跨家族审一致性。
 
 用法:
     python scripts/hello_world.py           # 默认分析"飞书"
@@ -34,6 +36,15 @@ openai_llm = ChatOpenAI(
     timeout=30,
 )
 
+# Doubao 走火山方舟 Ark OpenAI 兼容协议
+doubao_llm = ChatOpenAI(
+    model=os.getenv("DOUBAO_MODEL", "Doubao-Seed-2.0-lite"),
+    api_key=os.getenv("DOUBAO_API_KEY"),
+    base_url=os.getenv("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
+    temperature=0.2,
+    timeout=30,
+)
+
 
 class AnalysisDimension(BaseModel):
     name: str = Field(description="维度名称，如「定价策略」「生态绑定」「核心用户画像」")
@@ -62,10 +73,21 @@ class CompetitiveEdge(BaseModel):
     threat_level: str = Field(description="当前市场威胁等级：低 / 中 / 高")
 
 
+class ReviewVerdict(BaseModel):
+    """Doubao 跨家族审查产出。"""
+    consistent: bool = Field(description="DeepSeek 维度与 OpenAI 战略判断是否自洽")
+    contradictions: list[str] = Field(
+        default_factory=list,
+        description="发现的矛盾点；自洽时为空列表"
+    )
+    overall_note: str = Field(description="一句话总评")
+
+
 class HelloState(TypedDict):
     product_name: str
     product_analysis: dict
     competitive_edge: dict
+    review_verdict: dict
 
 
 def deepseek_node(state: HelloState) -> dict:
@@ -106,13 +128,35 @@ def openai_node(state: HelloState) -> dict:
     return {"competitive_edge": result.model_dump()}
 
 
+def doubao_node(state: HelloState) -> dict:
+    """Doubao 跨家族审查：检查 DeepSeek 维度与 OpenAI 战略是否自洽。"""
+    analysis = state["product_analysis"]
+    edge = state["competitive_edge"]
+    dim_list = "、".join(d["name"] for d in analysis["dimensions"])
+    structured = doubao_llm.with_structured_output(ReviewVerdict, method="json_mode")
+    result: ReviewVerdict = structured.invoke(
+        f"你是独立审查员，与生成者不同家族，不预设立场。\n"
+        f"请审查以下竞品分析的内部自洽性：\n\n"
+        f"产品：{analysis['product_name']}\n"
+        f"定位：{analysis['positioning']}\n"
+        f"OpenAI 威胁等级：{edge['threat_level']}\n"
+        f"OpenAI 战略建议：{edge['strategic_recommendation']}\n\n"
+        f"判断维度集合与战略判断是否自洽，列出任何矛盾点。\n"
+        f"严格按以下 JSON 输出：\n"
+        f'{{"consistent": true, "contradictions": [], "overall_note": "一句话总评"}}'
+    )
+    return {"review_verdict": result.model_dump()}
+
+
 def build_graph():
     g = StateGraph(HelloState)
     g.add_node("deepseek", deepseek_node)
     g.add_node("openai", openai_node)
+    g.add_node("doubao", doubao_node)
     g.add_edge(START, "deepseek")
     g.add_edge("deepseek", "openai")
-    g.add_edge("openai", END)
+    g.add_edge("openai", "doubao")
+    g.add_edge("doubao", END)
     return g.compile()
 
 
@@ -125,9 +169,11 @@ def main() -> None:
         "product_name": product,
         "product_analysis": {},
         "competitive_edge": {},
+        "review_verdict": {},
     })
     analysis = result["product_analysis"]
     edge = result["competitive_edge"]
+    verdict = result["review_verdict"]
 
     print(f"产品: {analysis['product_name']}")
     print(f"定位: {analysis['positioning']}")
@@ -142,6 +188,12 @@ def main() -> None:
     for item in edge["vs_competitors"]:
         print(f"  {item}")
     print(f"\n战略建议: {edge['strategic_recommendation']}")
+    print(f"\nDoubao 审查: 自洽={verdict['consistent']}")
+    if verdict["contradictions"]:
+        print("矛盾点:")
+        for c in verdict["contradictions"]:
+            print(f"  {c}")
+    print(f"总评: {verdict['overall_note']}")
 
 
 if __name__ == "__main__":
