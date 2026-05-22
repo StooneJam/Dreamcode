@@ -237,6 +237,58 @@ task_id / agent / description / status (pending|running|passed|failed|forced) / 
 
 ---
 
+## D-016 · Schema 设计：通用骨架 + 动态维度 + 证据驱动 + state/schema 分文件
+**Status**: Accepted · **Date**: 2026-05-22
+**Implements**: D-004 (config 化可扩展) · D-014 (forced/unreviewed) · D-015 (动态任务管理)
+
+**Context**：Timeline 5.22 要求"办公软件竞品专属 Schema"，但若把办公软件字段写死会破坏 D-004 的扩展性承诺。需要在领域深度与扩展性间找到工程上的平衡。
+
+**Decision**：
+
+1. **通用骨架 + 动态维度** —— Schema 本身赛道无关
+   - `Dimension(name, category, facts)` —— name 和 category 都是开放字符串
+   - `ProductProfile.dimensions: list[Dimension]` —— 维度由 PM/Agent 运行时发现
+   - 领域知识在 `domain_seeds/{vertical}.yaml` + prompts，**不在 Pydantic 类**
+
+2. **证据驱动** —— 每条事实必须可溯源
+   - `Fact.evidence: list[Evidence] = Field(min_length=1)` —— 至少一条证据
+   - `Evidence(source_url, snippet, fetched_at)` —— URL + 原文 + 时间戳
+   - `SWOTPoint.supporting_fact_statements: Field(min_length=1)` —— SWOT 必须引用已有 facts
+   - **答辩亮点**：杜绝 LLM 无依据生成结论
+
+3. **约束分层**（与 100% strict 讨论的结论）
+   - 闭合状态机 → 严格 `Literal[...]`（report_status / ReviewUnit.status / .agent）
+   - 已知分类可扩展 → `Literal[..., "other"]` 兜底（pricing_model / platform）
+   - 真开放发现 → `str`（Dimension.name / .category / product_type / target_users）
+   - 不全局加 `extra="forbid"`，保留 agent 扩展字段的空间
+
+4. **state 与 schema 分文件**
+   - `src/cca/schema.py` —— Pydantic `BaseModel`（领域）
+   - `src/cca/state.py` —— TypedDict + reducer（LangGraph 状态）
+   - 避免 `Annotated/add/TypedDict` 等 import 污染领域模型文件
+
+5. **ReviewUnit 三件套兑现 D-014 + D-015**
+   - `ReviewStatus = Literal["passed", "needs_retry", "forced"]`
+   - `ReviewUnit(agent, product_name, status, retry_count, qa_flags, pm_note, reviewed_at)`
+   - `agent` 范围限定 `["collector", "insight", "analyst"]` —— **不含 report**，因为 report 归 Doubao 终审走 `qa_results`，与 PM inline QA 解耦
+   - `CCAState.review_state: Annotated[list[dict], add]` —— 累加每轮评审，retry 状态从 list 推导而非单一 int
+
+**Alternatives 考虑过**：
+- 硬编码垂直字段（方案 A）：换垂直 = 重写 schema，违背 D-004
+- 完全继承体系（方案 B）：每个垂直一个子类，工程量大
+- 运行时 `pydantic.create_model()` 动态 schema（方案 C）：开发期无静态类型，17 天承担不起
+- 通用骨架 + 逃生舱 `domain_specific: dict[str, Any]`（方案 D 初版）：最终未加，因 `Dimension.facts` 已足够灵活
+
+**Trade-offs**：
+- `UserSentiment.appstore_cn_*` 半固化中国 AppStore，是办公软件首发的合理 trade-off；同文件 `appstore_region` 字段保留通用化迹象，v2 重构
+- `PricingTier` 已通用化（`price_per_user_monthly` + `currency` 字段）
+- 没有 `domain_specific` 逃生舱意味着塞不进 dimensions 的极端字段无处放，**接受**（按 YAGNI，遇到再加）
+
+**Known issues**：
+- `qa_results` vs `ReviewUnit` 职责相邻：前者是 Doubao 终审 / 后者是 PM inline；注释里已明示区分，开发时需注意不要混用
+
+---
+
 ## 待决（Pending）
 
 - **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略（命中后是跳过 web 还是合并）
