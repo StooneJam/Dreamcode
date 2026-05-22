@@ -104,7 +104,7 @@ class ProductProfile(BaseModel):
     product_name: str
     company: str | None = None
     website: str | None = None
-    product_type: str | None = Field(None, description="产品类型，Agent 从官网内容推断")
+    product_type: str | None = Field(None, description="产品类型，来自 TaskPlan（PM 联网确认），Collector 可补充修正")
     target_users: str | None = Field(None, description="目标用户，来自官网原文")
 
     # Collector Agent 填写
@@ -135,16 +135,20 @@ class QAResult(BaseModel):
 class CollectTask(BaseModel):
     """PM 分配给 Collector 的单项采集任务。"""
     product_name: str
-    target_urls: list[str] = Field(default_factory=list)
+    target_urls: list[str] = Field(
+        default_factory=list,
+        description="PM 联网搜索后确认的采集 URL，Collector 直接执行，无需自行查找"
+    )
     priority_dimensions: list[str] = Field(
         default_factory=list,
-        description="本次重点采集的维度提示，来自 DomainPack；为空则由 Agent 自主决定"
+        description="PM 根据产品类型和 DomainPack 确定的重点维度；为空则由 Collector 自主发现"
     )
 
 
 class TaskPlan(BaseModel):
     """PM Agent 的任务拆解结果。"""
     target_product: str
+    product_type: str = Field(description="PM 联网搜索后确认的产品类型，是全链路的权威来源")
     competitor_names: list[str]
     collect_tasks: list[CollectTask]
     rationale: str | None = None
