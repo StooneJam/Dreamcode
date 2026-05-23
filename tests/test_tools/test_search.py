@@ -3,11 +3,8 @@
  web_search 是 BaseTool 对象.
 """
 from __future__ import annotations
-
 from unittest.mock import MagicMock
-
 import pytest
-
 from cca.tools import search
 from cca.tools.search import web_search
 
