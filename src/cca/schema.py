@@ -247,7 +247,8 @@ class AnalystTask(BaseModel):
 # PM 四轮下发 Report 的分析任务细化，指导下一轮产出。
 class ReportTask(BaseModel):
     """PM 阶段四：Analyst QA 通过后下发的报告撰写任务。"""
-    product_names: list[str] = Field(description="参与对比的产品名，通常 = competitor_names + target_product")
+    target_product: str = Field(description="目标分析产品")
+    competitors: list[str] = Field(description="竞品名称列表")
     output_formats: list[Literal["markdown", "pdf"]] = Field(
         default_factory=lambda: ["markdown", "pdf"],
     )

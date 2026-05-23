@@ -121,7 +121,7 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
             insight_tasks=[InsightTask(product_name="钉钉"), InsightTask(product_name="企业微信")],
         ).model_dump(),
         analyst_task=AnalystTask(
-            target_products=["钉钉", "企业微信"],
+            product_names=["飞书", "钉钉", "企业微信"],
             focus_dimensions=["视频会议人数上限", "定价"],
             require_swot=True,
         ).model_dump(),

@@ -53,7 +53,8 @@
 **输出类型**：`ReportTask`
 **触发**：所有 Analyst 产出评审通过
 
-- **product_names**：参与对比的产品名，通常 = competitor_names + target_product
+- **target_product**：目标分析产品名
+- **competitors**：参与对比的竞品名称列表
 - **sections**：根据 SWOT 高亮项指定报告章节；为空则由 Reporter 自主组织
 - **output_formats**：默认 `["markdown", "pdf"]`
 - **invoke_call_report_reviewer**：默认 `true`

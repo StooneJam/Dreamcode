@@ -231,7 +231,8 @@ def test_analyst_task_minimal() -> None:
 
 def test_report_task_valid() -> None:
     task = ReportTask(
-        product_names=["飞书", "钉钉", "企业微信"],
+        target_product="飞书",
+        competitors=["钉钉", "企业微信"],
         target_audience="产品负责人",
         sections=["市场定位", "功能对比", "SWOT"],
     )
@@ -242,7 +243,8 @@ def test_report_task_valid() -> None:
 def test_report_task_rejects_invalid_format() -> None:
     with pytest.raises(ValidationError):
         ReportTask(
-            product_names=["飞书", "钉钉"],
+            target_product="飞书",
+            competitors=["钉钉"],
             output_formats=["ppt"],
         )
 
