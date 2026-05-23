@@ -3,7 +3,9 @@
 通用骨架不硬编码行业字段；维度由 Agent 运行时发现；每条结论必须绑定证据。
 """
 from __future__ import annotations
+
 from typing import Literal
+
 from pydantic import BaseModel, Field
 
 # 三家族标识，用于 debate 类型约束
@@ -117,7 +119,6 @@ class ProductProfile(BaseModel):
     product_name: str
     company: str | None = Field(None, description="PM 训练知识 seed，Collector 联网验证")
 
-
     # Collector Agent 联网验证 + 填实
     product_type: str | None = Field(None, description="Collector 联网推断，PM debate 收敛")
     target_users: str | None = Field(None, description="目标用户，来自官网原文")
@@ -190,10 +191,9 @@ class CollectorExplorationResult(BaseModel):
 class CollectTask(BaseModel):
     """PM 分配给 Collector 的单项采集任务。"""
     product_name: str
-
     priority_dimensions: list[str] = Field(
         default_factory=list,
-        description="PM 根据产品类型和 DomainPack 确定的重点维度",
+        description="PM 根据产品类型和 DomainPack 确定的重点维度；为空则由 Collector 自主判断",
     )
     allow_self_extension: bool = Field(
         True,
@@ -220,10 +220,10 @@ class InsightTask(BaseModel):
 
 class TaskPlan(BaseModel):
     """
-    PM 阶段二：基于 CollectorExplorationResult 给 collector and insight 下发的细粒度任务包
+    PM 阶段二：基于 CollectorExplorationResult 给 Collector 和 Insight 下发的细粒度任务包
     """
     target_product: str
-    product_type: str | None = Field(None, description="一轮debate 收敛后的权威产品类型")
+    product_type: str = Field(description="一轮 debate 收敛后的权威产品类型")
     competitor_names: list[str] = Field(description="一轮debate 收敛后的权威竞品列表")
     collect_tasks: list[CollectTask]
     insight_tasks: list[InsightTask]
@@ -232,8 +232,8 @@ class TaskPlan(BaseModel):
 
 # PM 三轮下发 Analyst 的分析任务细化，指导下一轮产出；Analyst 可接受也可挑战
 class AnalystTask(BaseModel):
-    """PM 阶段二：Collector+Insight QA 通过后下发的分析任务。"""
-    target_products: list[str] = Field(description="参与对比的产品名，通常 = competitor_names")
+    """PM 阶段三：Collector+Insight QA 通过后下发的分析任务。"""
+    product_names: list[str] = Field(description="参与对比的产品名，通常 = competitor_names + target_product")
     focus_dimensions: list[str] = Field(
         default_factory=list,
         description="重点对比维度，PM 根据 Collector+Insight 产出指定高亮维度",
@@ -246,9 +246,8 @@ class AnalystTask(BaseModel):
 
 # PM 四轮下发 Report 的分析任务细化，指导下一轮产出。
 class ReportTask(BaseModel):
-    """PM 阶段三：Analyst QA 通过后下发的报告撰写任务。"""
-    target_product: str = Field(description="报告主分析对象")
-    competitors: list[str]
+    """PM 阶段四：Analyst QA 通过后下发的报告撰写任务。"""
+    product_names: list[str] = Field(description="参与对比的产品名，通常 = competitor_names + target_product")
     output_formats: list[Literal["markdown", "pdf"]] = Field(
         default_factory=lambda: ["markdown", "pdf"],
     )
@@ -268,6 +267,8 @@ class ReportTask(BaseModel):
 
 # review 结果：PM 对 Collector/Insight/Analyst 产出的评审结论，包含返工建议和 QA 结果；用于 PM 自身记录和后续分析，也可供用户查询了解 PM 的评审逻辑
 ReviewStatus = Literal["passed", "needs_retry", "forced"]
+
+
 class ReviewUnit(BaseModel):
     """
     PM 对某次 (agent, product) 产出的评审判定。
@@ -287,7 +288,10 @@ class ReviewUnit(BaseModel):
 
 
 
-# 应用于 PM 二轮 TaskPlan 和三轮 AnalystTask 精化 / Analyst SWOT 校验 / Report 终审 三处 checkpoint
+# debate 应用于 3 个 checkpoint：
+#    1. PM 二轮 TaskPlan（精化竞品 / 产品类型）
+#    2. PM 三轮 AnalystTask 后的 SWOT 校验
+#    3. Report 终审（call_report_reviewer skill）
 
 class DebatePosition(BaseModel):
     """4 阶段 debate 中单个辩方在某一轮的观点。"""
