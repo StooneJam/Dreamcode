@@ -1,13 +1,15 @@
 """PM Agent 测试（不调真 API）。
 
-覆盖 4 个阶段节点的输出结构，不测试 LLM 内容质量。
+覆盖 4 个阶段节点的输出结构 + 信号处理，不测试 LLM 内容质量。
 """
 from __future__ import annotations
 
 import pytest
 
 from cca.schema import (
+    AgentSignal,
     AnalystTask,
+    DebateResult,
     InitialBrief,
     ReportTask,
     TaskPlan,
@@ -191,3 +193,252 @@ def test_prompt_file_loads() -> None:
     assert len(prompt) > 200
     assert "InitialBrief" in prompt
     assert "TaskPlan" in prompt
+
+
+# ── _read_defense ──────────────────────────────────────────────────────
+
+def test_read_defense_task_plan() -> None:
+    from cca.agents.pm import _read_defense
+
+    state = _make_minimal_state(
+        task_plan={
+            "rationale": "exploration 确认竞品列表",
+            "product_type": "协作办公SaaS",
+            "competitor_names": ["钉钉", "企业微信"],
+        },
+    )
+    pos = _read_defense("task_plan", state)
+    assert pos.agent_family == "gpt-5"
+    assert "exploration 确认竞品列表" in pos.claim
+    assert any("协作办公SaaS" in e for e in pos.evidence)
+    assert any("钉钉" in e for e in pos.evidence)
+
+
+def test_read_defense_analyst_task() -> None:
+    from cca.agents.pm import _read_defense
+
+    state = _make_minimal_state(
+        analyst_task={
+            "focus_dimensions": ["视频会议", "定价"],
+            "product_names": ["飞书", "钉钉"],
+        },
+    )
+    pos = _read_defense("analyst_task", state)
+    assert "视频会议" in pos.claim
+    assert any("飞书" in e for e in pos.evidence)
+
+
+def test_read_defense_report_task() -> None:
+    from cca.agents.pm import _read_defense
+
+    state = _make_minimal_state(
+        report_task={
+            "sections": ["执行摘要", "SWOT 分析"],
+            "target_audience": "产品负责人",
+            "competitors": ["钉钉"],
+        },
+    )
+    pos = _read_defense("report_task", state)
+    assert "执行摘要" in pos.claim
+    assert "产品负责人" in pos.claim
+    assert any("钉钉" in e for e in pos.evidence)
+
+
+def test_read_defense_unknown_target_falls_back() -> None:
+    from cca.agents.pm import _read_defense
+
+    state = _make_minimal_state()
+    pos = _read_defense("unknown_key", state)
+    assert pos.agent_family == "gpt-5"
+    assert pos.claim == "PM 决策"
+    assert pos.evidence == ["state context"]
+
+
+# ── _apply_debate_result ───────────────────────────────────────────────
+
+def _make_debate_result(**overrides) -> DebateResult:
+    defaults: dict = {
+        "target": "pm_taskplan",
+        "rounds": [],
+        "final_verdict": "accepted",
+        "judge_family": None,
+        "judge_rationale": "",
+        "revised_output": None,
+    }
+    defaults.update(overrides)
+    return DebateResult(**defaults)
+
+
+def test_apply_debate_result_accepted_revises_task_plan() -> None:
+    from cca.agents.pm import _apply_debate_result
+
+    result = _make_debate_result(
+        target="pm_taskplan",
+        final_verdict="accepted_with_revision",
+        revised_output={"product_type": "IM SaaS", "competitor_names": ["钉钉"]},
+    )
+    updates = _apply_debate_result(result)
+    assert updates["task_plan"] == result.revised_output
+    assert updates["competitor_names"] == ["钉钉"]
+    assert updates["audit_log"][0]["verdict"] == "accepted_with_revision"
+
+
+def test_apply_debate_result_rejected_only_logs() -> None:
+    from cca.agents.pm import _apply_debate_result
+
+    result = _make_debate_result(
+        target="pm_taskplan",
+        final_verdict="rejected",
+        revised_output={"product_type": "IM SaaS"},
+    )
+    updates = _apply_debate_result(result)
+    assert "task_plan" not in updates
+    assert updates["audit_log"][0]["verdict"] == "rejected"
+
+
+def test_apply_debate_result_analyst_target() -> None:
+    from cca.agents.pm import _apply_debate_result
+
+    result = _make_debate_result(
+        target="analyst_swot",
+        final_verdict="accepted_with_revision",
+        revised_output={"focus_dimensions": ["定价"]},
+    )
+    updates = _apply_debate_result(result)
+    assert updates["analyst_task"] == result.revised_output
+
+
+def test_apply_debate_result_report_target() -> None:
+    from cca.agents.pm import _apply_debate_result
+
+    result = _make_debate_result(
+        target="report",
+        final_verdict="accepted_with_revision",
+        revised_output={"sections": ["概述"]},
+    )
+    updates = _apply_debate_result(result)
+    assert updates["report_task"] == result.revised_output
+
+
+# ── handle_signal_node ─────────────────────────────────────────────────
+
+def test_handle_signal_node_empty_returns_empty() -> None:
+    from cca.agents.pm import handle_signal_node
+
+    result = handle_signal_node(_make_minimal_state(agent_signals=[]))
+    assert result == {}
+
+
+def test_handle_signal_node_debate_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cca.agents.pm import handle_signal_node
+
+    debate_result = _make_debate_result(final_verdict="accepted_with_revision")
+    monkeypatch.setattr(
+        "cca.agents.pm.run_debate",
+        lambda **kwargs: debate_result,  # noqa: ARG005
+        raising=False,
+    )
+
+    signal = AgentSignal(
+        from_agent="analyst",
+        kind="pm_challenge",
+        target="task_plan",
+        payload={"reason": "竞品列表不完整"},
+        requires_debate=True,
+        ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[signal.model_dump()],
+        task_plan={"rationale": "test", "product_type": "SaaS", "competitor_names": ["钉钉"]},
+    )
+    result = handle_signal_node(state)
+    assert "debate_results" in result
+    assert result["audit_log"][0]["event"] == "debate_applied"
+
+
+def test_handle_signal_node_debate_from_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    """challenge 从 signal.payload 构造 DebatePosition。"""
+    from cca.agents.pm import handle_signal_node
+
+    debate_result = _make_debate_result(final_verdict="accepted")
+    monkeypatch.setattr("cca.agents.pm.run_debate", lambda **kwargs: debate_result, raising=False)
+
+    signal = AgentSignal(
+        from_agent="insight",
+        kind="other",
+        target="analyst_task",
+        payload={"reason": "维度不足"},
+        requires_debate=True,
+        ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[signal.model_dump()],
+        analyst_task={"focus_dimensions": ["功能"], "product_names": ["飞书"]},
+    )
+    result = handle_signal_node(state)
+    assert "debate_results" in result
+
+
+def test_handle_signal_node_reroute_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cca.agents.pm import handle_signal_node
+    from cca.skills.reroute import RerouteDecision
+
+    decision = RerouteDecision(
+        target_phase="phase_1",
+        root_cause="定价数据缺失",
+        fix_summary={},
+        rationale="采集层缺失数据",
+    )
+    monkeypatch.setattr("cca.agents.pm.reroute", lambda s, state_json: decision, raising=False)
+    monkeypatch.setattr(
+        "cca.agents.pm.apply_reroute",
+        lambda d, s: {"exploration_result": None, "audit_log": [{"agent": "reroute"}]},
+        raising=False,
+    )
+
+    signal = AgentSignal(
+        from_agent="collector",
+        kind="data_gap",
+        target="collector:企业微信",
+        payload={"reason": "定价数据缺失"},
+        requires_debate=False,
+        ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(agent_signals=[signal.model_dump()])
+    result = handle_signal_node(state)
+    assert result["exploration_result"] is None
+    assert result["audit_log"][0]["agent"] == "reroute"
+
+
+def test_handle_signal_node_multiple_signals(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cca.agents.pm import handle_signal_node
+    from cca.skills.reroute import RerouteDecision
+
+    debate_result = _make_debate_result(final_verdict="accepted")
+    monkeypatch.setattr("cca.agents.pm.run_debate", lambda **kwargs: debate_result, raising=False)
+
+    reroute_decision = RerouteDecision(
+        target_phase="phase_2", root_cause="x", fix_summary={}, rationale="y",
+    )
+    monkeypatch.setattr("cca.agents.pm.reroute", lambda s, state_json: reroute_decision, raising=False)
+    monkeypatch.setattr(
+        "cca.agents.pm.apply_reroute",
+        lambda d, s: {"task_plan": None, "audit_log": [{"agent": "reroute"}]},
+        raising=False,
+    )
+
+    debate_signal = AgentSignal(
+        from_agent="analyst", kind="pm_challenge", target="task_plan",
+        payload={}, requires_debate=True, ts="2026-05-23T00:00:00Z",
+    )
+    reroute_signal = AgentSignal(
+        from_agent="collector", kind="data_gap", target="collector:X",
+        payload={}, requires_debate=False, ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[debate_signal.model_dump(), reroute_signal.model_dump()],
+        task_plan={"rationale": "test"},
+    )
+    result = handle_signal_node(state)
+    assert "debate_results" in result
+    assert result["task_plan"] is None

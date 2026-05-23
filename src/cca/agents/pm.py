@@ -1,8 +1,8 @@
 """
-PM Agent —— 分阶段规划、下发指令、评审下游产出。
+PM Agent —— 分阶段规划、下发指令、评审下游产出，处理下游信号。
 
-不是 ReAct agent，没有工具，纯结构化规划 + 评审。
-4 个阶段函数对应 pm.md 的 4 个阶段。
+不是 ReAct agent，没有工具，纯结构化规划 + 评审 + 信号分发。
+4 个阶段函数 + 1 个信号处理节点。
 """
 from __future__ import annotations
 
@@ -14,14 +14,29 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from cca.llm.factory import gpt
 from cca.schema import (
+    AgentFamily,
+    AgentSignal,
     AnalystTask,
+    DebatePosition,
     InitialBrief,
     ReportTask,
     TaskPlan,
 )
+from cca.skills.debate import DebateTarget, run_debate
+from cca.skills.reroute import apply_reroute, reroute
 from cca.state import CCAState
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "pm.md"
+
+# 信号 target → debate target 映射
+_TARGET_TO_DEBATE = {
+    "task_plan": "pm_taskplan",
+    "analyst_task": "analyst_swot",
+    "report_task": "report",
+}
+
+PM_FAMILY: AgentFamily = "gpt-5"
+CHALLENGER_FAMILY: AgentFamily = "deepseek"
 
 
 def _load_system_prompt() -> str:
@@ -93,3 +108,110 @@ def report_task_node(state: CCAState) -> dict:
     )
     result = cast(ReportTask, llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]))
     return {"report_task": result.model_dump()}
+
+
+# 返工信号统一处理
+
+def _read_defense(target: str, state: CCAState) -> DebatePosition:
+    """从 state 记忆读取 PM 的辩护立场，零 LLM 调用。"""
+    task = state.get(target) or {}
+
+    if target == "task_plan":
+        claim = task.get("rationale", "PM 基于 exploration_result 制定 TaskPlan")
+        evidence = [
+            f"product_type: {task.get('product_type', '')}",
+            f"competitor_names: {task.get('competitor_names', [])}",
+        ]
+    elif target == "analyst_task":
+        claim = f"focus_dimensions: {task.get('focus_dimensions', [])}"
+        evidence = [f"product_names: {task.get('product_names', [])}"]
+    elif target == "report_task":
+        claim = f"sections: {task.get('sections', [])}, audience: {task.get('target_audience', 'N/A')}"
+        evidence = [f"competitors: {task.get('competitors', [])}"]
+    else:
+        claim = "PM 决策"
+        evidence = ["state context"]
+
+    return DebatePosition(
+        agent_family=PM_FAMILY,
+        claim=claim,
+        evidence=[e for e in evidence if e] or ["决策上下文"],
+    )
+
+
+def _apply_debate_result(result) -> dict:
+    """将 debate 结果转为 state 更新。"""
+    updates: dict = {
+        "debate_results": [result.model_dump()],
+        "audit_log": [{
+            "agent": "pm",
+            "event": "debate_applied",
+            "target": result.target,
+            "verdict": result.final_verdict,
+        }],
+    }
+    if result.final_verdict == "rejected":
+        return updates
+
+    if result.revised_output:
+        if result.target == "pm_taskplan":
+            updates["task_plan"] = result.revised_output
+            updates["competitor_names"] = result.revised_output.get("competitor_names", [])
+        elif result.target == "analyst_swot":
+            updates["analyst_task"] = result.revised_output
+        elif result.target == "report":
+            updates["report_task"] = result.revised_output
+
+    return updates
+
+
+def handle_signal_node(state: CCAState) -> dict:
+    """处理下游 AgentSignal，独立于 4 阶段主流程。
+
+    requires_debate=true  → debate skill（PM 从 state 读 defense，挑战方从 signal 读 challenge_position）
+    requires_debate=false → reroute skill
+    """
+    raw = state.get("agent_signals", [])
+    if not raw:
+        return {}
+
+    signals = [AgentSignal(**s) if isinstance(s, dict) else s for s in raw]
+    updates: dict = {}
+
+    for signal in signals:
+        if signal.requires_debate:
+            updates.update(_handle_debate_signal(signal, state))
+        else:
+            updates.update(_handle_reroute_signal(signal, state))
+
+    return updates
+
+
+def _handle_debate_signal(signal: AgentSignal, state: CCAState) -> dict:
+    """主观信号 → 跨家族 debate。"""
+    challenge = DebatePosition(
+        agent_family=CHALLENGER_FAMILY,
+        claim=signal.payload.get("reason", ""),
+        evidence=[signal.payload.get("reason", "")],
+    )
+    defense = _read_defense(signal.target, state)
+    debate_target = cast(DebateTarget, _TARGET_TO_DEBATE.get(signal.target, "pm_taskplan"))
+    target_content = state.get(signal.target) or {}
+
+    result = run_debate(
+        target=debate_target,
+        target_content=target_content if isinstance(target_content, dict) else {},
+        seed_positions={PM_FAMILY: defense, CHALLENGER_FAMILY: challenge},
+    )
+    return _apply_debate_result(result)
+
+
+def _handle_reroute_signal(signal: AgentSignal, state: CCAState) -> dict:
+    """事实性信号 → reroute skill 根因分析 + 阶段回溯。"""
+    state_json = json.dumps(
+        {k: v for k, v in state.items() if k != "agent_signals"},
+        ensure_ascii=False,
+        default=str,
+    )
+    decision = reroute(signal, state_json)
+    return apply_reroute(decision, dict(state))

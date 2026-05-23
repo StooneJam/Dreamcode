@@ -333,7 +333,7 @@ class DebateResult(BaseModel):
 class AgentSignal(BaseModel):
     """
     Agent 反向通道信号。
-    事实性信号（kind=data_gap）走 PM 普通响应；
+    事实性信号（kind=data_gap）走 reroute skill；
     主观判断信号（requires_debate=True）触发 PM 启动 debate。
     """
     from_agent: Literal["collector", "insight", "analyst", "report"]
