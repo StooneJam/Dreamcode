@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent))
+from fixtures.mock_state import make_mock_state  # noqa: E402
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
@@ -38,3 +42,15 @@ class FakeLLM:
 @pytest.fixture
 def fake_llm(mock_llm_responses):
     return FakeLLM(mock_llm_responses)
+
+
+@pytest.fixture
+def mock_state():
+    """Phase 2 结束后的完整 CCAState，供 Report Agent 测试使用。"""
+    return make_mock_state(invoke_reviewer=False)
+
+
+@pytest.fixture
+def mock_state_with_reviewer():
+    """同上，但开启豆包终审开关。"""
+    return make_mock_state(invoke_reviewer=True)

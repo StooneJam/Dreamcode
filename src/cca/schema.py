@@ -333,7 +333,7 @@ class AgentSignal(BaseModel):
     事实性信号（kind=data_gap）走 PM 普通响应；
     主观判断信号（requires_debate=True）触发 PM 启动 debate。
     """
-    from_agent: Literal["collector", "insight", "analyst"]
+    from_agent: Literal["collector", "insight", "analyst", "report"]
     kind: Literal["data_gap", "pm_challenge", "insight_lead", "other"]
     target: str = Field(description="信号所指的 task_id 或 agent 名")
     payload: dict = Field(description="信号正文，结构因 kind 而异")
