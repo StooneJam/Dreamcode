@@ -167,24 +167,25 @@ def test_task_plan_valid() -> None:
 
 
 def test_task_plan_rejects_missing_target_product() -> None:
-    """target_product 是 PM 入口必填字段（v3：product_type 改 Optional）。"""
+    """target_product 是 PM 入口必填字段。"""
     with pytest.raises(ValidationError):
         TaskPlan(
+            product_type="企业协作平台",
             competitor_names=["钉钉"],
             collect_tasks=[],
             insight_tasks=[],
         )
 
 
-def test_task_plan_accepts_missing_product_type() -> None:
-    """v3：product_type 由 Collector 联网验证后填，PM 起草可空。"""
-    plan = TaskPlan(
-        target_product="飞书",
-        competitor_names=["钉钉"],
-        collect_tasks=[],
-        insight_tasks=[],
-    )
-    assert plan.product_type is None
+def test_task_plan_rejects_missing_product_type() -> None:
+    """product_type 经一轮 debate 收敛后是权威值，必填。"""
+    with pytest.raises(ValidationError):
+        TaskPlan(
+            target_product="飞书",
+            competitor_names=["钉钉"],
+            collect_tasks=[],
+            insight_tasks=[],
+        )
 
 
 def test_insight_task_has_self_extension_flag() -> None:
@@ -215,7 +216,7 @@ def test_insight_task_rejects_invalid_platform() -> None:
 
 def test_analyst_task_valid() -> None:
     task = AnalystTask(
-        target_products=["飞书", "钉钉"],
+        product_names=["飞书", "钉钉"],
         focus_dimensions=["AI 助手", "视频会议"],
     )
     assert task.require_swot is True
@@ -223,15 +224,14 @@ def test_analyst_task_valid() -> None:
 
 
 def test_analyst_task_minimal() -> None:
-    """target_products 必填，其余字段有默认值。"""
-    task = AnalystTask(target_products=["飞书"])
+    """product_names 必填，其余字段有默认值。"""
+    task = AnalystTask(product_names=["飞书"])
     assert task.focus_dimensions == []
 
 
 def test_report_task_valid() -> None:
     task = ReportTask(
-        target_product="飞书",
-        competitors=["钉钉", "企业微信"],
+        product_names=["飞书", "钉钉", "企业微信"],
         target_audience="产品负责人",
         sections=["市场定位", "功能对比", "SWOT"],
     )
@@ -242,8 +242,7 @@ def test_report_task_valid() -> None:
 def test_report_task_rejects_invalid_format() -> None:
     with pytest.raises(ValidationError):
         ReportTask(
-            target_product="飞书",
-            competitors=["钉钉"],
+            product_names=["飞书", "钉钉"],
             output_formats=["ppt"],
         )
 
