@@ -359,9 +359,156 @@ Reporter（内部调用 call_report_reviewer skill，D-017）→ END
 
 ---
 
+## D-019 · Tools 全部 `@tool` 化（Level 1 agent 自治）
+**Status**: Accepted · **Date**: 2026-05-23
+
+**Context**：原 plain function tool 设计被 push back —— "套着 LLM 壳子做后端开发"，是伪 agent。
+
+**Decision**：所有暴露给 agent 的工具用 `langchain_core.tools.tool` 装饰。LLM 通过 `bind_tools` / `create_react_agent` 自主决定调用时机与参数。
+
+**Why**：Level 1 工具自治是 multi-agent 的最低门槛。docstring 直接成为 LLM 的 tool description，需为 LLM 友好。
+
+**Implementation**：
+- `src/cca/tools/search.py` ✓ 已落地
+- 后续 `tools/fetcher.py` / `pdf_reader.py` / `pii_guard.py` 同样模式
+- 测试用 `tool.invoke({...})` 调用 + 验证 `isinstance(tool, BaseTool)`
+
+---
+
+## D-020 · 半步 multi-agent 架构（v3）
+**Status**: Accepted · **Date**: 2026-05-23 (Meeting3)
+**Supersedes**: D-011 部分（PM 中心化但完全 deterministic 的版本），D-018 三阶段静态 dispatch 的部分语义
+
+**Context**：外部 review 指出 v2 仍是"带智能路由的 Pipeline"，agent 间无交互、PM 自审无审。完全去中心化 multi-agent (debate / mesh) 工期不可达。需要中间方案。
+
+**Decision**：**半步 multi-agent** —— PM 与下游 agent 通过**跨家族 debate** 双向收敛 task_plan，但最终 dispatch 仍走 PM（保留 supervisor 单点可观测）。
+
+**职责重新切分**：
+- **PM (GPT-5, 无工具)**：仅用训练知识起草 initial task_plan，通过 debate 与下游协商精化；分阶段 dispatch + 验收
+- **Collector (DeepSeek + ReAct + 工具)**：联网发现真实竞品、产品赛道、分析维度（**接管原 PM 的外部认知**）+ 抓取数据
+- **Insight (DeepSeek + ReAct + 工具)**：联网发现评论平台 + 抓评论 + 情感分析
+- **Analyst (DeepSeek + ReAct)**：SWOT 推理，与 PM debate 验证
+- **Report (GPT-5)**：撰写 + 调 call_report_reviewer skill (debate-based)
+
+**信息流**：
+```
+PM 起草 → Collector/Insight 实地探索 → 跨家族 debate 收敛 task_plan
+       → PM 接受 → Analyst 推理 → PM debate 收敛 SWOT
+       → PM 接受 → Report 撰写 → Doubao+DeepSeek debate 终审 → END
+```
+
+**Why**：
+- 学术 multi-agent (mesh/debate) 工期 8-10 周，不可达
+- 业界生产 supervisor pattern 又被 reviewer 指为"伪 agent"
+- 半步是工程妥协：保留 PM 编排 + 引入跨家族 debate + 重新切分职责让 agent 真有自主探索权
+
+**Trade-offs**：
+- PM 失去外部信息源 → 信任 Collector 的实地探索 + 用 debate 拒绝错误的 hallucination
+- 每个关键 checkpoint 多 5x token（debate 4 阶段）→ 总 cost 2-3x
+- Demo 时间增加（debate 是串行）→ 用 streaming 让评委看辩论展开
+
+---
+
+## D-021 · domain_seeds/ 定位为用户可上传内容
+**Status**: Accepted · **Date**: 2026-05-23
+
+**Context**：曾考虑把 domain_seeds 简化合并进 config.yaml，被用户 push back 指出 domain_seeds 是**面向用户的可上传内容**，与开发者管理的 config 性质不同。
+
+**Decision**：保留 `src/cca/domain_seeds/` 作为独立目录。`settings.load_domain_seed()` **不缓存**（用户可运行时上传新 yaml）。
+
+**类比**：config.yaml 像 Nginx config（开发者管理），domain_seeds 像 WordPress 插件目录（用户管理）。
+
+**v1 内置**：`office_software.yaml` 演示完整能力。v2 加上传 UI。
+
+---
+
+## D-022 · PM TaskPlan 跨家族 debate 精化（合并 self-audit gap fix）
+**Status**: Accepted · **Date**: 2026-05-23
+**Implements**: D-020 半步 multi-agent；修复外部 review 的 #2 PM self-audit critique
+
+**Context**：v2 中 PM 自审 TaskPlan 是关键漏洞 —— PM 幻觉竞品或漏维度无人发现。
+
+**Decision**：PM 起草 initial task_plan → 由 Collector/Insight 在 ReAct 执行后**反向 debate** PM 的假设 → 跨家族仲裁产出 refined task_plan。
+
+**4 阶段实现**（D-024 debate skill）：
+1. Position：PM 给 initial task_plan，Collector/Insight 各自给实地证据
+2. Critique：两方互相挑刺（"PM 漏了 XX 竞品"/"Collector 找的 XX 在国内份额 <1%"）
+3. Refine：双方修订
+4. Judge：Doubao 仲裁，产出 refined task_plan
+
+**Why**：PM (GPT-5) 与 Collector/Insight (DeepSeek) 异家族 + Doubao 仲裁三家族无重叠 → bias 隔离链条完整。
+
+**Trade-offs**：每个产品的 task_plan 精化要 5x token，但只跑一次/一产品 → 整体可控。
+
+---
+
+## D-023 · Agent → PM 反向 signal 通道
+**Status**: Accepted · **Date**: 2026-05-23
+**Implements**: 修复外部 review 的 #1 (pipeline 感) + #3 (Collector 太薄) critique
+
+**Context**：要在 supervisor 架构内让 agent 有"主动反馈权"，避免 reviewer 的 "agent 是被动函数" 评判。
+
+**Decision**：state 加 `agent_signals: Annotated[list[dict], add]` 字段。Agent 可主动 publish：
+- `data_gap`：发现数据缺口请求重派
+- `pm_challenge`：质疑 PM 的 task_plan 某假设
+- `insight_lead`：发现一个高价值线索建议追加任务
+
+PM 每轮扫这个列表决定是否短路径响应。**事实性 signal 走普通响应，主观判断 signal 触发 debate**。
+
+**Why**：让 Collector / Insight / Analyst 不是被动接受 task，而是可发起 push-back —— 是"半步 multi-agent" 双向通讯的具体实现。
+
+**Trade-offs**：可能 signal 过多 → 加 rate limit + 优先级。
+
+---
+
+## D-024 · 跨家族 4 阶段 debate skill
+**Status**: Accepted · **Date**: 2026-05-23
+**Used by**: D-022, D-017 (修订), Analyst SWOT 校验
+
+**Context**：单家族 LLM 审同家族 LLM 输出有 bias。需要可复用的多家族对抗机制。
+
+**Decision**：实现 `src/cca/skills/debate.py` 公共组件。
+
+**接口**：
+```python
+def run_debate(
+    target: str,                  # 被审对象类型 (pm_taskplan / analyst_swot / report)
+    target_content: dict,
+    families: list[str] = ["deepseek", "doubao"],
+    judge: str = "gpt-5",         # 第三家族仲裁
+    max_rounds: int = 2,
+) -> DebateResult
+```
+
+**4 阶段**：Position → Critique → Refine → Judge（详见 [[project-debate-design]]）。
+
+**应用 checkpoint**：
+- PM TaskPlan 精化（D-022）
+- Analyst SWOT 推理
+- Report 终审（D-017 升级）
+
+**不用 debate**：Collector 结构化字段、Insight 情感分类等单审够。
+
+**Trade-offs**：debate 比单审多 5x token；3-4 个 checkpoint × 5x ≈ 总 cost 2-3x。
+
+---
+
+## D-017 修订 · call_report_reviewer 升级为 debate 实现
+**Status**: Revised · **Date**: 2026-05-23
+**Revises**: 原 D-017（Doubao 独审）
+
+**变更**：call_report_reviewer skill 内部不再是 Doubao 独审，而是 **Doubao + DeepSeek 双辩 → GPT-5 仲裁**（跨三家族）。
+
+**Why**：单 Doubao 仍是同模型审同模型（虽跨家族但单方）。debate 引入对抗强化判断。
+
+**Implementation**：sklls/call_report_reviewer.py 内部调用 `run_debate(target="report", ...)`。
+
+---
+
 ## 待决（Pending）
 
-- **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略（命中后是跳过 web 还是合并）
+- **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略
 - **DP-002**：weasyprint 在 Windows 装失败时的 fallback 触发条件
 - **DP-003**：答辩 demo 时长（影响 streaming 节奏）
-- **DP-004**：Doubao 具体 model id（用户拿到 endpoint 后填）
+- **DP-004**：Doubao 具体 model id / endpoint
+- **DP-005**：debate 不收敛率 > 阈值时是否打断流程（v1 走 forced，v2 可加 alert）

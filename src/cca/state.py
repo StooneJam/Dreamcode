@@ -35,3 +35,8 @@ class CCAState(TypedDict):
 
     qa_notes: Annotated[list[str], add]
     audit_log: Annotated[list[dict], add]
+
+    # agent辩论交互的相关状态
+    initial_task_plan: dict | None       # PM 起草版 Taskplan 
+    debate_results: Annotated[list[dict], add]   # DebateResult.model_dump() 累加
+    agent_signals: Annotated[list[dict], add]    # AgentSignal.model_dump() 累加

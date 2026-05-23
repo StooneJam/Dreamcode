@@ -5,16 +5,18 @@ from operator import add
 
 from cca.state import CCAState
 
-
 REQUIRED_FIELDS = {
     "user_query",
     "target_product",
     "competitor_names",
     "task_plan",
+    "initial_task_plan",   # v3 D-022：PM 起草版快照
     "analyst_task",
     "report_task",
     "profiles",
     "review_state",
+    "debate_results",      # v3 D-024：debate skill 累加
+    "agent_signals",       # v3 D-023：反向通道
     "qa_results",
     "report_status",
     "report_md",

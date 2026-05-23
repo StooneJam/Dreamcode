@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from cca.schema import (
+    SWOT,
     AnalystTask,
     CollectTask,
     Dimension,
@@ -18,12 +19,10 @@ from cca.schema import (
     ReportTask,
     ReviewSample,
     ReviewUnit,
-    SWOT,
     SWOTPoint,
     TaskPlan,
     UserSentiment,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -167,15 +166,31 @@ def test_task_plan_valid() -> None:
     assert plan.product_type == "企业协作平台"
 
 
-def test_task_plan_rejects_missing_product_type() -> None:
-    """product_type 是 PM 权威字段，必填。"""
+def test_task_plan_rejects_missing_target_product() -> None:
+    """target_product 是 PM 入口必填字段（v3：product_type 改 Optional）。"""
     with pytest.raises(ValidationError):
         TaskPlan(
-            target_product="飞书",
             competitor_names=["钉钉"],
             collect_tasks=[],
             insight_tasks=[],
         )
+
+
+def test_task_plan_accepts_missing_product_type() -> None:
+    """v3：product_type 由 Collector 联网验证后填，PM 起草可空。"""
+    plan = TaskPlan(
+        target_product="飞书",
+        competitor_names=["钉钉"],
+        collect_tasks=[],
+        insight_tasks=[],
+    )
+    assert plan.product_type is None
+
+
+def test_insight_task_has_self_extension_flag() -> None:
+    """v3：InsightTask 与 CollectTask 对称，有 allow_self_extension。"""
+    task = InsightTask(product_name="飞书")
+    assert task.allow_self_extension is True
 
 
 def test_insight_task_default_empty_platforms() -> None:
