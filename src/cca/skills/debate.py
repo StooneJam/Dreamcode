@@ -11,7 +11,7 @@
 """
 from __future__ import annotations
 import json
-from typing import Literal
+from typing import Any, Literal, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -55,7 +55,8 @@ def _phase_critique(
         },
         ensure_ascii=False,
     )
-    return llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]).text
+    result = cast(_Critique, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
+    return result.text
 
 
 def _phase_refine(
@@ -77,7 +78,7 @@ def _phase_refine(
         {"my_position": my_position.model_dump(), "critique_from_other": other_critique},
         ensure_ascii=False,
     )
-    return llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)])
+    return cast(_Refinement, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
 
 
 def _phase_judge(
@@ -103,7 +104,7 @@ def _phase_judge(
         },
         ensure_ascii=False,
     )
-    result = llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)])
+    result = cast(DebateResult, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
     # judge_family 由代码强制覆盖，防止 LLM 自报错家族
     result.judge_family = judge
     result.target = target
@@ -128,7 +129,7 @@ def _phase_finalize_converged(
         {"original": target_content, "winning_refinement": winning_refinement},
         ensure_ascii=False,
     )
-    response = llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)])
+    response: Any = llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)])
     raw = response.content if hasattr(response, "content") else str(response)
     return json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
 
@@ -139,28 +140,27 @@ def _phase_finalize_converged(
 def run_debate(
     target: DebateTarget,
     target_content: dict,
+    seed_positions: dict[AgentFamily, DebatePosition],
     families: tuple[AgentFamily, AgentFamily] = ("deepseek", "gpt-5"),
     judge: AgentFamily = "doubao",
     max_rounds: int = 2,
-    seed_positions: dict[AgentFamily, DebatePosition] | None = None,
 ) -> DebateResult:
     """
     跑完整 3 阶段 debate，返回 DebateResult。
     families 是 2 个辩方，judge 必须与两者均不同。
     max_rounds 控制循环次数，考虑token消耗部分，默认为 2。
-    seed_positions 采用 caller 注入 Agent 的真实经验作为初始 position；
+    seed_positions 由 caller 注入 Agent 的真实经验作为初始 position；
     例如 Collector 把采集数据封装为 DebatePosition.evidence，避免辩方凭空生成。
     """
     if judge in families:
         raise ValueError(f"judge={judge!r} 不能与辩方 {families!r} 重叠")
 
     fam_a, fam_b = families
-    seed = seed_positions or {}
     rounds: list[DebateRound] = []
 
     # 第一轮初始 position — caller 注入
-    pos_a = seed.get(fam_a) 
-    pos_b = seed.get(fam_b)
+    pos_a = seed_positions[fam_a]
+    pos_b = seed_positions[fam_b]
 
     for round_idx in range(1, max_rounds + 1):
         crit_a_on_b = _phase_critique(fam_a, pos_a, pos_b)
