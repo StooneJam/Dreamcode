@@ -4,6 +4,7 @@ reroute skill —— 事实性信号的根因分析与阶段回溯。
 对应 debate 的对称路径：AgentSignal.requires_debate=false 时触发。
 诊断信号根因，决定回溯到 PM 哪个阶段、修什么字段。
 """
+
 from __future__ import annotations
 
 import json
@@ -31,7 +32,9 @@ class RerouteDecision(BaseModel):
         )
     )
     root_cause: str = Field(description="根因分析，一句话说明问题出在哪个环节")
-    fix_summary: dict = Field(description="修正建议，key 为需修改的字段名，value 为修正内容或修正方向")
+    fix_summary: dict = Field(
+        description="修正建议，key 为需修改的字段名，value 为修正内容或修正方向"
+    )
     rationale: str = Field(description="为什么回溯到该阶段而非其他阶段")
 
 
@@ -47,16 +50,12 @@ def reroute(signal: AgentSignal, state_json: str) -> RerouteDecision:
         "你是竞品分析系统的纠偏 skill- reroute。"
         "下游 Agent 报告了一个事实性问题（数据缺失、字段不可采集、URL 失效、数据错误等），"
         "不涉及主观判断分歧。你的任务是诊断根因并决定回溯到哪个阶段。"
-
         "## 阶段 1 vs 阶段 2 的核心区别"
-
         "阶段 1 是采集层——Collector 联网获取原始数据。如果信号指向采集阶段出了事实性问题，"
         "应回到阶段 1，清除已有 exploration_result 强制 Collector 重新探索。"
-
         "阶段 2 是规划层——PM 基于 Collector 已有采集结果制定 TaskPlan。"
         "如果采集数据本身无误，只是 PM 的竞品选择、维度优先级、任务分配有误，"
         "则回到阶段 2，PM 重新生成 TaskPlan，不需要 Collector 重采。"
-
         "## 决策规则"
         "- 数据缺失、URL 失效、抓取到错误数据 → phase_1"
         "- 产品虚假、已确认停服或不再运营 → phase_1"
@@ -72,7 +71,9 @@ def reroute(signal: AgentSignal, state_json: str) -> RerouteDecision:
         {"signal": signal.model_dump(), "state": state_json},
         ensure_ascii=False,
     )
-    result = cast(RerouteDecision, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
+    result = cast(
+        RerouteDecision, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)])
+    )
     return result
 
 
@@ -95,8 +96,10 @@ def apply_reroute(decision: RerouteDecision, state: dict) -> dict:
     elif decision.target_phase == "phase_4":
         updates["report_task"] = None
 
-    updates["audit_log"] = [{
-        "agent": "reroute",
-        "decision": decision.model_dump(),
-    }]
+    updates["audit_log"] = [
+        {
+            "agent": "reroute",
+            "decision": decision.model_dump(),
+        }
+    ]
     return updates

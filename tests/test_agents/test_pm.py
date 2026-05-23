@@ -2,6 +2,7 @@
 
 覆盖 4 个阶段节点的输出结构 + 信号处理，不测试 LLM 内容质量。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -65,6 +66,7 @@ def _make_minimal_state(**overrides) -> CCAState:
 
 # ── Phase 1: InitialBrief ──────────────────────────────────────────────
 
+
 def test_initial_brief_node_returns_initial_brief(monkeypatch: pytest.MonkeyPatch) -> None:
     brief = InitialBrief(
         target_product="飞书",
@@ -83,6 +85,7 @@ def test_initial_brief_node_returns_initial_brief(monkeypatch: pytest.MonkeyPatc
 
 
 # ── Phase 2: TaskPlan ──────────────────────────────────────────────────
+
 
 def test_task_plan_node_returns_task_plan_and_competitors(
     monkeypatch: pytest.MonkeyPatch,
@@ -116,6 +119,7 @@ def test_task_plan_node_returns_task_plan_and_competitors(
 
 # ── Phase 3: AnalystTask ───────────────────────────────────────────────
 
+
 def test_analyst_task_node_returns_analyst_task(monkeypatch: pytest.MonkeyPatch) -> None:
     task = AnalystTask(
         product_names=["飞书", "钉钉", "企业微信"],
@@ -140,6 +144,7 @@ def test_analyst_task_node_returns_analyst_task(monkeypatch: pytest.MonkeyPatch)
 
 
 # ── Phase 4: ReportTask ────────────────────────────────────────────────
+
 
 def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -> None:
     task = ReportTask(
@@ -169,6 +174,7 @@ def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -
 
 # ── Edge cases ─────────────────────────────────────────────────────────
 
+
 def test_initial_brief_passes_user_query_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     """user_query 原样透传，不做加工。"""
     brief = InitialBrief(
@@ -196,6 +202,7 @@ def test_prompt_file_loads() -> None:
 
 
 # ── _read_defense ──────────────────────────────────────────────────────
+
 
 def test_read_defense_task_plan() -> None:
     from cca.agents.pm import _read_defense
@@ -255,6 +262,7 @@ def test_read_defense_unknown_target_falls_back() -> None:
 
 
 # ── _apply_debate_result ───────────────────────────────────────────────
+
 
 def _make_debate_result(**overrides) -> DebateResult:
     defaults: dict = {
@@ -321,6 +329,7 @@ def test_apply_debate_result_report_target() -> None:
 
 
 # ── handle_signal_node ─────────────────────────────────────────────────
+
 
 def test_handle_signal_node_empty_returns_empty() -> None:
     from cca.agents.pm import handle_signal_node
@@ -418,9 +427,14 @@ def test_handle_signal_node_multiple_signals(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("cca.agents.pm.run_debate", lambda **kwargs: debate_result, raising=False)
 
     reroute_decision = RerouteDecision(
-        target_phase="phase_2", root_cause="x", fix_summary={}, rationale="y",
+        target_phase="phase_2",
+        root_cause="x",
+        fix_summary={},
+        rationale="y",
     )
-    monkeypatch.setattr("cca.agents.pm.reroute", lambda s, state_json: reroute_decision, raising=False)
+    monkeypatch.setattr(
+        "cca.agents.pm.reroute", lambda s, state_json: reroute_decision, raising=False
+    )
     monkeypatch.setattr(
         "cca.agents.pm.apply_reroute",
         lambda d, s: {"task_plan": None, "audit_log": [{"agent": "reroute"}]},
@@ -428,12 +442,20 @@ def test_handle_signal_node_multiple_signals(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     debate_signal = AgentSignal(
-        from_agent="analyst", kind="pm_challenge", target="task_plan",
-        payload={}, requires_debate=True, ts="2026-05-23T00:00:00Z",
+        from_agent="analyst",
+        kind="pm_challenge",
+        target="task_plan",
+        payload={},
+        requires_debate=True,
+        ts="2026-05-23T00:00:00Z",
     )
     reroute_signal = AgentSignal(
-        from_agent="collector", kind="data_gap", target="collector:X",
-        payload={}, requires_debate=False, ts="2026-05-23T00:00:00Z",
+        from_agent="collector",
+        kind="data_gap",
+        target="collector:X",
+        payload={},
+        requires_debate=False,
+        ts="2026-05-23T00:00:00Z",
     )
     state = _make_minimal_state(
         agent_signals=[debate_signal.model_dump(), reroute_signal.model_dump()],

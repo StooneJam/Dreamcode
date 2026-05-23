@@ -1,4 +1,5 @@
 """测试 reroute skill 流程（不调真 API）。"""
+
 from __future__ import annotations
 
 import pytest
