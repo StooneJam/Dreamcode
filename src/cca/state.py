@@ -36,7 +36,7 @@ class CCAState(TypedDict):
 
     # 报告终审产出（来自 call_report_reviewer skill 的跨家族 debate）
     qa_results: list[dict]
-    report_status: Literal["pending", "passed", "unreviewed"]
+    report_status: Literal["pending", "passed", "failed", "unreviewed"]
     report_md: str | None
     report_pdf_path: str | None
 

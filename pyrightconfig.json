@@ -1,0 +1,6 @@
+{
+  "pythonVersion": "3.11",
+  "extraPaths": ["src", "tests"],
+  "include": ["src", "tests", "scripts"],
+  "exclude": ["**/__pycache__", ".claude", "output"]
+}
