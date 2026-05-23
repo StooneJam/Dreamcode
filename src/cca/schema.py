@@ -317,7 +317,9 @@ class DebateResult(BaseModel):
     target: Literal["pm_taskplan", "analyst_swot", "report"] = Field(description="被审对象类型")
     rounds: list[DebateRound]
     final_verdict: Literal["accepted", "rejected", "accepted_with_revision"]
-    judge_family: AgentFamily = Field(description="仲裁方家族，应异于两个辩方")
+    judge_family: AgentFamily | None = Field(
+        description="仲裁方家族，应异于两个辩方。未触发仲裁时为 None",
+        )
     judge_rationale: str
     revised_output: dict | None = Field(
         None,
