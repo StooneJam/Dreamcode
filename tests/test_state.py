@@ -8,21 +8,22 @@ from cca.state import CCAState
 REQUIRED_FIELDS = {
     "user_query",
     "target_product",
+    "initial_brief",         # PM 阶段一产物
+    "exploration_result",    # Collector 一轮探索产物
     "competitor_names",
-    "task_plan",
-    "initial_task_plan",   # v3 D-022：PM 起草版快照
-    "analyst_task",
-    "report_task",
+    "task_plan",             # PM 阶段二
+    "analyst_task",          # PM 阶段三
+    "report_task",           # PM 阶段四
     "profiles",
     "review_state",
-    "debate_results",      # v3 D-024：debate skill 累加
-    "agent_signals",       # v3 D-023：反向通道
     "qa_results",
     "report_status",
     "report_md",
     "report_pdf_path",
     "qa_notes",
     "audit_log",
+    "debate_results",        # debate skill 跨阶段累加
+    "agent_signals",         # 反向通道
 }
 
 
