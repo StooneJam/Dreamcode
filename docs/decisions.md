@@ -615,6 +615,54 @@ def run_debate(
 
 ---
 
+## D-031 · state 写权架构：producer-owns + PM 通过 debate 事后校验
+**Status**: Accepted · **Date**: 2026-05-25
+**Used by**: 所有非 PM agent 节点（Collector / Insight / Analyst / Report）
+
+**Context**：Step 2 写 `collector.exploration_node` 前，讨论一个架构原则——"state 是否应由 PM 独占维护"。这关系到所有 agent 节点的返回值约定、是否需要 PM commit 中间层、demo 答辩的叙事框架。
+
+**评估了 3 个方案**：
+- **A 极严**：非 PM 节点只能通过 `agent_signals` 投递数据（signal-as-message-bus）。PM 消费 signal 提交到 state
+- **B 中等**：state 加 `pending_*` 待审字段；非 PM 节点写 pending，PM 加 `commit_*` 节点搬运到权威字段
+- **C 软约束**：state 字段按 **producer owns** 划分；PM 通过现有 debate / reroute 在分歧点事后修正
+
+**Decision**：选 **C**。具体写权划分：
+
+| 字段 | Owner |
+|---|---|
+| `task_plan` / `analyst_task` / `report_task` | PM |
+| `decision_log` / `debate_results` / `review_state` / `consumed_signal_ids` / `competitor_names` | PM |
+| `exploration_result` | Collector |
+| `profiles[*].dimensions/pricing/sources/website` | Collector |
+| `profiles[*].sentiment` | Insight |
+| `profiles[*].swot` | Analyst |
+| `report_md` / `report_pdf_path` / `report_status` / `qa_results` | Report |
+| `agent_signals` / `audit_log` / `qa_notes` | 任何 agent（add reducer 累加无冲突）|
+
+**纠错通道仍由 PM 把持**：
+- Collector 写脏 `exploration_result` → PM 阶段二 `task_plan_node` 消费时可发起 debate；或下游 agent 通过 `AgentSignal` 反向挑战
+- Analyst 写脏 SWOT → Report 阶段通过 `call_report_reviewer` 跨家族审核
+- 任何主观分歧 → `agent_signals` + `handle_signal_node` debate 仲裁
+- `rejected` verdict 清空被否决的 task（D-028），触发上游路由重派
+
+**Why not A**：所有数据走 signal 通道会让 signal 语义混乱（signal 原本是 event/challenge，被迫承担数据交付角色）；现有 `report_node` 等需大改；plumbing 成本 ~3x。
+
+**Why not B**：commit 节点引入 1 跳延迟；commit 内若不调 LLM 校验则只是搬运（B 的卖点等于零），若调 LLM 校验则每次交付都烧 token（debate 通道本就在分歧点才烧）。事后校验已经覆盖核心场景。
+
+**Why C 贴 D-020 半步 multi-agent 叙事**：D-020 已选"agent 有自主权但 PM 有最终否决权"。C 是这条线的自然延伸——agent 在自己的域内自治写，PM 在分歧点通过 debate / reroute 行使否决权。强行套 A/B 反而和 D-020 精神冲突。
+
+**答辩叙事可这么讲**：
+> PM 是 **planning 字段**的唯一 owner（task_plan / decision_log / review_state / debate_results）；数据产出归各自 owner agent。PM 通过跨家族 debate 在分歧点 push back 修正——这是半步 multi-agent 的核心：agent 有自主权但 PM 有最终否决权。
+
+**Trade-offs**：失去"PM 是唯一 state owner"这条干净叙事；但答辩可改用上面的"planning vs data 域划分 + debate 否决权"叙事，更贴架构实际。
+
+**回头改为 B 的触发条件**（边界值）：
+- 出现两个 agent 同时往同一字段写（目前无重叠，未来若有冲突再加 reducer 或上 B）
+- 下游 agent 因 bug 反复写脏数据且 debate 识别率 < 70%（先尝试加 schema 校验或 prompt 强化）
+- 答辩评委明确质疑 "为什么 Report agent 能改 state"（用上面叙事回答，撑不住再上 B）
+
+---
+
 ## 待决（Pending）
 
 - **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略
