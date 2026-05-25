@@ -455,6 +455,9 @@ PM 起草 → Collector/Insight 实地探索 → 跨家族 debate 收敛 task_pl
 
 PM 每轮扫这个列表决定是否短路径响应。**事实性 signal 走普通响应，主观判断 signal 触发 debate**。
 
+**消费去重**：`AgentSignal.signal_id`（UUID）+ `state.consumed_signal_ids: Annotated[list[str], add]`。
+PM 节点处理完一条信号后把其 `signal_id` append 进 `consumed_signal_ids`，下次扫描 `agent_signals` 时跳过这些 id。信号本体永不删除，保留在 `agent_signals` 内供回溯（看历史挑战）；debate 内容存于 `debate_results`，PM 决策存于 `audit_log`，三条审计链分离。
+
 **Why**：让 Collector / Insight / Analyst 不是被动接受 task，而是可发起 push-back —— 是"半步 multi-agent" 双向通讯的具体实现。
 
 **Trade-offs**：可能 signal 过多 → 加 rate limit + 优先级。

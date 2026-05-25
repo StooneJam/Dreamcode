@@ -24,6 +24,7 @@ REQUIRED_FIELDS = {
     "audit_log",
     "debate_results",        # debate skill 跨阶段累加
     "agent_signals",         # 反向通道
+    "consumed_signal_ids",   # PM 消费去重指针
 }
 
 

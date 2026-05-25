@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -368,8 +369,16 @@ class AgentSignal(BaseModel):
     Agent 反向通道信号。
     事实性信号（kind=data_gap）走 reroute skill；
     主观判断信号（requires_debate=True）触发 PM 启动 debate。
+
+    signal_id 用于 PM 的消费去重：handle_signal_node 处理后会把 signal_id 写入
+    state.consumed_signal_ids，下次扫描时跳过；信号本体保留在 agent_signals 里
+    供回溯审计。
     """
 
+    signal_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        description="信号唯一标识，PM 消费去重用；默认自动生成 UUID",
+    )
     from_agent: Literal["collector", "insight", "analyst", "report"]
     kind: Literal["data_gap", "pm_challenge", "insight_lead", "other"]
     target: str = Field(description="信号所指的 task_id 或 agent 名")

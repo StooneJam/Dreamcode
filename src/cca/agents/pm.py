@@ -192,14 +192,23 @@ def handle_signal_node(state: CCAState) -> dict:
     同一次调用内多个信号：reroute 先处理（事实性纠错优先清理脏数据），
     debate 后处理（主观分歧基于清理后的状态再裁决）。
     list 字段（debate_results / audit_log）本地累加再返回，避免节点内 dict.update 同 key 覆盖。
+
+    去重：state.consumed_signal_ids 记录已处理的 signal_id，本次跳过其中的信号；
+    本次处理的新 signal_id 写回 consumed_signal_ids（add reducer 累加）。
+    信号本体留在 agent_signals 中不删除，供回溯审计。
     """
     raw = state.get("agent_signals", [])
     if not raw:
         return {}
 
+    consumed = set(state.get("consumed_signal_ids", []))
     signals = [AgentSignal(**s) if isinstance(s, dict) else s for s in raw]
-    ordered = [s for s in signals if not s.requires_debate] + [
-        s for s in signals if s.requires_debate
+    pending = [s for s in signals if s.signal_id not in consumed]
+    if not pending:
+        return {}
+
+    ordered = [s for s in pending if not s.requires_debate] + [
+        s for s in pending if s.requires_debate
     ]
 
     debate_results: list[dict] = []
@@ -220,6 +229,7 @@ def handle_signal_node(state: CCAState) -> dict:
         **scalar_updates,
         "debate_results": debate_results,
         "audit_log": audit_log,
+        "consumed_signal_ids": [s.signal_id for s in ordered],
     }
 
 

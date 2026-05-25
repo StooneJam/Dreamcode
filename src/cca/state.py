@@ -44,4 +44,5 @@ class CCAState(TypedDict):
     qa_notes: Annotated[list[str], add]
     audit_log: Annotated[list[dict], add]
     debate_results: Annotated[list[dict], add]   # DebateResult.model_dump() 累加
-    agent_signals: Annotated[list[dict], add]    # AgentSignal.model_dump() 累加
+    agent_signals: Annotated[list[dict], add]    # AgentSignal.model_dump() 累加（永不删，供回溯审计）
+    consumed_signal_ids: Annotated[list[str], add]  # PM 已处理的 signal_id，去重指针

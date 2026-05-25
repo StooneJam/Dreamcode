@@ -59,6 +59,7 @@ def _make_minimal_state(**overrides) -> CCAState:
         "audit_log": [],
         "debate_results": [],
         "agent_signals": [],
+        "consumed_signal_ids": [],
     }
     state.update(overrides)  # type: ignore[typeddict-unknown-key]
     return state
@@ -513,3 +514,102 @@ def test_handle_signal_node_multiple_debates_all_preserved(
     assert len(result["debate_results"]) == 2
     assert {r["judge_rationale"] for r in result["debate_results"]} == {"r1", "r2"}
     assert len(result["audit_log"]) == 2
+
+
+def test_handle_signal_node_skips_already_consumed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """signal_id 已在 consumed_signal_ids 中的信号必须跳过，不再触发 debate。"""
+    from cca.agents.pm import handle_signal_node
+
+    called = {"count": 0}
+
+    def _fake_run_debate(**_kwargs):  # noqa: ANN003
+        called["count"] += 1
+        return _make_debate_result(final_verdict="accepted")
+
+    monkeypatch.setattr("cca.agents.pm.run_debate", _fake_run_debate, raising=False)
+
+    signal = AgentSignal(
+        from_agent="analyst",
+        kind="pm_challenge",
+        target="task_plan",
+        payload={"reason": "x"},
+        requires_debate=True,
+        ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[signal.model_dump()],
+        consumed_signal_ids=[signal.signal_id],
+        task_plan={"rationale": "t"},
+    )
+    result = handle_signal_node(state)
+    assert result == {}
+    assert called["count"] == 0
+
+
+def test_handle_signal_node_returns_consumed_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """处理新信号时，本次消费的 signal_id 必须出现在返回的 consumed_signal_ids 中。"""
+    from cca.agents.pm import handle_signal_node
+
+    monkeypatch.setattr(
+        "cca.agents.pm.run_debate",
+        lambda **kwargs: _make_debate_result(final_verdict="accepted"),  # noqa: ARG005
+        raising=False,
+    )
+
+    signal = AgentSignal(
+        from_agent="analyst",
+        kind="pm_challenge",
+        target="task_plan",
+        payload={"reason": "x"},
+        requires_debate=True,
+        ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[signal.model_dump()],
+        task_plan={"rationale": "t"},
+    )
+    result = handle_signal_node(state)
+    assert result["consumed_signal_ids"] == [signal.signal_id]
+
+
+def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -> None:
+    """旧信号已消费、新信号未消费时，只处理新信号。"""
+    from cca.agents.pm import handle_signal_node
+
+    called_targets: list[str] = []
+
+    def _fake_run_debate(**kwargs):  # noqa: ANN003
+        called_targets.append(kwargs["target"])
+        return _make_debate_result(final_verdict="accepted")
+
+    monkeypatch.setattr("cca.agents.pm.run_debate", _fake_run_debate, raising=False)
+
+    old = AgentSignal(
+        from_agent="analyst",
+        kind="pm_challenge",
+        target="task_plan",
+        payload={"reason": "old"},
+        requires_debate=True,
+        ts="2026-05-23T00:00:00Z",
+    )
+    new = AgentSignal(
+        from_agent="insight",
+        kind="other",
+        target="analyst_task",
+        payload={"reason": "new"},
+        requires_debate=True,
+        ts="2026-05-23T00:00:01Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[old.model_dump(), new.model_dump()],
+        consumed_signal_ids=[old.signal_id],
+        task_plan={"rationale": "t"},
+        analyst_task={"focus_dimensions": ["d"], "product_names": ["P"]},
+    )
+    result = handle_signal_node(state)
+    assert called_targets == ["analyst_swot"]
+    assert result["consumed_signal_ids"] == [new.signal_id]
