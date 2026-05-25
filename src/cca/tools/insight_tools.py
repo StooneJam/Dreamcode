@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from langchain_core.tools import tool
 
-from cca.schema import AgentSignal, UserSentiment
+from cca.schema import AgentSignal, ChallengePayload, UserSentiment
 from cca.settings import load_config
 from cca.skills.questionnaire.subgraph import run_questionnaire_skill
 from cca.tools.appstore import scrape_app_store  # noqa: F401 — re-exported as agent tool
@@ -86,17 +86,29 @@ def finalize_sentiment(product_name: str, sentiment_json: str) -> str:
 
 
 @tool
-def challenge_pm(reason: str, suggested_fix: str | None = None, requires_debate: bool = False) -> str:
+def challenge_pm(
+    claim: str,
+    evidence: list[str],
+    suggested_fix: str | None = None,
+    requires_debate: bool = False,
+) -> str:
     """发现任务错误或数据矛盾时，向 PM 发出挑战信号。
 
     Args:
-        requires_debate: 主观判断分歧时为 True；事实性错误（产品不存在等）为 False。
+        claim: 挑战或问题的核心陈述，一句话讲清"哪里不对"
+        evidence: 支撑 claim 的事实/观测/数据点列表，至少 1 条
+        suggested_fix: 可选，建议的修订方向
+        requires_debate: 主观判断分歧时为 True；事实性错误（产品不存在等）为 False
     """
     signal = AgentSignal(
         from_agent="insight",
         kind="pm_challenge",
         target="task_plan",
-        payload={"reason": reason, "suggested_fix": suggested_fix},
+        payload=ChallengePayload(
+            claim=claim,
+            evidence=evidence,
+            suggested_fix=suggested_fix,
+        ),
         requires_debate=requires_debate,
         ts=datetime.now(timezone.utc).isoformat(),
     )
