@@ -13,7 +13,7 @@ from langgraph.prebuilt import create_react_agent
 
 from cca.llm.factory import deepseek
 from cca.schema import TaskPlan, UserSentiment
-from cca.settings import load_config
+from cca.settings import PROJECT_ROOT, load_config
 from cca.state import CCAState
 from cca.tools.appstore import scrape_app_store
 from cca.tools.insight_tools import (
@@ -52,12 +52,15 @@ def _extract_signals(messages: list) -> list[dict]:
 
 
 def _maybe_finetune() -> None:
-    """若 config 开启 fine_tune.enabled，在节点启动前触发微调（首次运行较慢）。"""
+    """若 config 开启 fine_tune.enabled，在节点启动前触发微调（首次运行较慢）。
+
+    使用 PROJECT_ROOT 解析路径，保证 CWD 无关。
+    """
     cfg = load_config().get("nlp", {}).get("fine_tune", {})
     if not cfg.get("enabled", False):
         return
-    output_dir = cfg.get("model_output_dir", "data/models/bert_fine_tuned")
-    if Path(output_dir).exists():
+    output_dir = PROJECT_ROOT / cfg.get("model_output_dir", "data/models/bert_fine_tuned")
+    if output_dir.exists():
         return  # 已有微调模型，跳过
     from cca.skills.bert_finetune.subgraph import run_finetune  # lazy import
     run_finetune()
@@ -65,6 +68,9 @@ def _maybe_finetune() -> None:
 
 def insight_node(state: CCAState) -> dict:
     """Insight Agent 节点：为每个产品收集评论并输出 UserSentiment。"""
+    if not state.get("task_plan"):
+        return {"audit_log": [{"agent": "insight", "event": "skipped", "reason": "task_plan not set"}]}
+
     _maybe_finetune()
     task_plan = TaskPlan(**state["task_plan"])
     profiles = state.get("profiles", {})
@@ -87,7 +93,6 @@ def insight_node(state: CCAState) -> dict:
         else "情感分析请综合问卷回答和网络评论，直接用 LLM 判断正负面主题。"
     )
 
-    # 若 config 指向微调后的本地路径，bert_model 已自动更新；insight 无需额外处理
     agent = create_react_agent(
         model=deepseek,
         tools=[scrape_app_store, web_search, run_questionnaire, extract_topics,
