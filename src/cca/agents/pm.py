@@ -73,7 +73,7 @@ def _stamp_decisions(
 
 def initial_brief_node(state: CCAState) -> dict:
     """阶段一：凭训练知识起草 InitialBrief，同时落盘决策档案。"""
-    llm = gpt.with_structured_output(InitialBriefOutput)
+    llm = gpt.with_structured_output(InitialBriefOutput, method="function_calling")
     user = _phase_prefix("阶段一 InitialBrief") + json.dumps(
         {"user_query": state["user_query"]},
         ensure_ascii=False,
@@ -90,7 +90,7 @@ def initial_brief_node(state: CCAState) -> dict:
 
 def task_plan_node(state: CCAState) -> dict:
     """阶段二：基于 CollectorExplorationResult 创建 TaskPlan，同时落盘决策档案。"""
-    llm = gpt.with_structured_output(TaskPlanOutput)
+    llm = gpt.with_structured_output(TaskPlanOutput, method="function_calling")
     user = _phase_prefix("阶段二 TaskPlan") + json.dumps(
         {
             "user_query": state["user_query"],
@@ -112,7 +112,7 @@ def task_plan_node(state: CCAState) -> dict:
 
 def analyst_task_node(state: CCAState) -> dict:
     """阶段三：基于 profiles 创建 AnalystTask，同时落盘决策档案。"""
-    llm = gpt.with_structured_output(AnalystTaskOutput)
+    llm = gpt.with_structured_output(AnalystTaskOutput, method="function_calling")
     user = _phase_prefix("阶段三 AnalystTask") + json.dumps(
         {
             "user_query": state["user_query"],
@@ -134,7 +134,7 @@ def analyst_task_node(state: CCAState) -> dict:
 
 def report_task_node(state: CCAState) -> dict:
     """阶段四：基于 profiles（含 SWOT）+ review_state 创建 ReportTask，同时落盘决策档案。"""
-    llm = gpt.with_structured_output(ReportTaskOutput)
+    llm = gpt.with_structured_output(ReportTaskOutput, method="function_calling")
     user = _phase_prefix("阶段四 ReportTask") + json.dumps(
         {
             "user_query": state["user_query"],

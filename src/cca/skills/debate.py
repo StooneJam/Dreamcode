@@ -39,16 +39,20 @@ _REVISED_OUTPUT_SCHEMA: dict[DebateTarget, type[BaseModel]] = {
 }
 
 
-# 是否认可对方观点。
+# 单方/单轮的轻量结构化输出类型
+class _Critique(BaseModel):
+    """字段名取 critique 而非 text：LLM 在 json_mode 下倾向自然命名，避免被改名导致 parse 失败。"""
+
+    critique: str = Field(description="对对方观点的具体批驳，至少指出 1 处问题")
+
+
 class _Refinement(BaseModel):
-    text: str
+    """字段名同理取 refinement。"""
+
+    refinement: str = Field(description="基于对方批驳后修订的观点正文")
     still_disagrees: bool = Field(
         description="经过本轮修订后，你是否仍与对方在核心 claim 上有分歧"
     )
-
-# 单方/单轮的轻量结构化输出类型
-class _Critique(BaseModel):
-    text: str = Field(description="对对方观点的具体批驳，至少指出 1 处问题")
 
 
 # 3阶段实现
@@ -64,6 +68,8 @@ def _phase_critique(
         f"你是 {family} 家族。请针对 {other_position.agent_family} 的观点写出批驳。"
         "聚焦事实层面：哪些 claim 不成立？哪些 evidence 太弱或缺失？"
         "不要泛泛而谈，每条批驳指向对方原文具体段落。"
+        '以 JSON 输出，**严格格式**：{"critique": "..."}。critique 字段必须是单一字符串，'
+        "可在一段话内列出多点批驳；不要返回数组、对象或嵌套结构。"
     )
     user = json.dumps(
         {
@@ -73,7 +79,7 @@ def _phase_critique(
         ensure_ascii=False,
     )
     result = cast(_Critique, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
-    return result.text
+    return result.critique
 
 
 def _phase_refine(
@@ -90,6 +96,9 @@ def _phase_refine(
         "(b) 部分修订 claim"
         "(c) 撤回 claim 接受批驳"
         "明确说明你的选择以及理由。"
+        '以 JSON 输出，**严格格式**：{"refinement": "...", "still_disagrees": true/false}。'
+        "refinement 必须是单一字符串，不要数组/对象。"
+        "still_disagrees=false 表示你接受了对方批驳。"
     )
     user = json.dumps(
         {"my_position": my_position.model_dump(), "critique_from_other": other_critique},
@@ -111,7 +120,7 @@ def _phase_judge(
         "综合最后一轮的 refinements，请pick你认为的 final_verdict："
         "accepted（采纳原内容）/ rejected（拒绝原内容）/ "
         "accepted_with_revision（部分采纳，给出修订版 revised_output）。"
-        "判断只看事实是否站得住，不偏袒任一辩方。"
+        "判断只看事实是否站得住，不偏袒任一辩方。以 JSON 输出，符合 DebateResult schema。"
     )
     user = json.dumps(
         {
@@ -148,6 +157,7 @@ def _phase_finalize_converged(
         f"你的观点在辩论中被对方采纳。请基于你的最终 refinement，"
         f"产出修订版 {target}，必须严格符合 {schema.__name__} 的字段约束 ——"
         f"不要遗漏 required 字段，不要保留 original 中已被 refinement 推翻的项。"
+        f"以 JSON 输出。"
     )
     user = json.dumps(
         {"original": target_content, "winning_refinement": winning_refinement},
@@ -196,7 +206,7 @@ def run_debate(
                 round=round_idx,
                 positions=[pos_a, pos_b],
                 critiques={fam_b: crit_a_on_b, fam_a: crit_b_on_a},
-                refinements={fam_a: refined_a.text, fam_b: refined_b.text},
+                refinements={fam_a: refined_a.refinement, fam_b: refined_b.refinement},
             )
         )
 
@@ -212,17 +222,17 @@ def run_debate(
                     winner_family=fam_a if refined_a.still_disagrees else fam_b,
                     target=target,
                     target_content=target_content,
-                    winning_refinement=refined_a.text if refined_a.still_disagrees else refined_b.text
+                    winning_refinement=refined_a.refinement if refined_a.still_disagrees else refined_b.refinement
                 ),              
             )
     
         # 下一轮的 position = 本轮 refinement
         if round_idx < max_rounds:
             pos_a = DebatePosition(
-                agent_family=fam_a, claim=refined_a.text, evidence=pos_a.evidence
+                agent_family=fam_a, claim=refined_a.refinement, evidence=pos_a.evidence
             )
             pos_b = DebatePosition(
-                agent_family=fam_b, claim=refined_b.text, evidence=pos_b.evidence
+                agent_family=fam_b, claim=refined_b.refinement, evidence=pos_b.evidence
             )
 
     return _phase_judge(judge, target, target_content, rounds)

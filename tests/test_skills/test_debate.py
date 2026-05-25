@@ -67,12 +67,12 @@ def test_run_debate_full_flow_to_judge(monkeypatch: pytest.MonkeyPatch) -> None:
     from cca.skills.debate import _Critique, _Refinement
 
     deepseek_responses = {
-        _Critique: [_Critique(text="ds critiques db")],
-        _Refinement: [_Refinement(text="ds refined", still_disagrees=True)],
+        _Critique: [_Critique(critique="ds critiques db")],
+        _Refinement: [_Refinement(refinement="ds refined", still_disagrees=True)],
     }
     doubao_responses = {
-        _Critique: [_Critique(text="db critiques ds")],
-        _Refinement: [_Refinement(text="db refined", still_disagrees=True)],
+        _Critique: [_Critique(critique="db critiques ds")],
+        _Refinement: [_Refinement(refinement="db refined", still_disagrees=True)],
     }
     gpt_responses = {
         DebateResult: [
@@ -132,13 +132,13 @@ def test_run_debate_converged_short_circuit(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
     deepseek_responses = {
-        _Critique: [_Critique(text="ds accepts db")],
-        _Refinement: [_Refinement(text="ds conceded", still_disagrees=False)],
+        _Critique: [_Critique(critique="ds accepts db")],
+        _Refinement: [_Refinement(refinement="ds conceded", still_disagrees=False)],
     }
     # ds 让步 → 赢家是 doubao（fam_b），由 doubao 产出修订版 TaskPlan
     doubao_responses = {
-        _Critique: [_Critique(text="db accepts ds")],
-        _Refinement: [_Refinement(text="db conceded", still_disagrees=True)],
+        _Critique: [_Critique(critique="db accepts ds")],
+        _Refinement: [_Refinement(refinement="db conceded", still_disagrees=True)],
         TaskPlan: [revised_plan],
     }
 
@@ -210,12 +210,12 @@ def test_run_debate_two_rounds_propagates_refinement(
         return _FakeLLMClient(
             {
                 _Critique: [
-                    _Critique(text=f"{fam} r1 crit"),
-                    _Critique(text=f"{fam} r2 crit"),
+                    _Critique(critique=f"{fam} r1 crit"),
+                    _Critique(critique=f"{fam} r2 crit"),
                 ],
                 _Refinement: [
-                    _Refinement(text=f"{fam} r1 refined", still_disagrees=True),
-                    _Refinement(text=f"{fam} r2 refined", still_disagrees=True),
+                    _Refinement(refinement=f"{fam} r1 refined", still_disagrees=True),
+                    _Refinement(refinement=f"{fam} r2 refined", still_disagrees=True),
                 ],
             }
         )
@@ -265,14 +265,14 @@ def test_judge_family_is_forced_by_code(monkeypatch: pytest.MonkeyPatch) -> None
     family_clients = {
         "deepseek": _FakeLLMClient(
             {
-                _Critique: [_Critique(text="c")],
-                _Refinement: [_Refinement(text="r", still_disagrees=True)],
+                _Critique: [_Critique(critique="c")],
+                _Refinement: [_Refinement(refinement="r", still_disagrees=True)],
             }
         ),
         "doubao": _FakeLLMClient(
             {
-                _Critique: [_Critique(text="c")],
-                _Refinement: [_Refinement(text="r", still_disagrees=True)],
+                _Critique: [_Critique(critique="c")],
+                _Refinement: [_Refinement(refinement="r", still_disagrees=True)],
             }
         ),
         "gpt-5": _FakeLLMClient(
