@@ -1,9 +1,17 @@
-# CLI：
-# conda env create -f environment.yml
-# conda activate multi-agent
+# CLI（首次环境搭建）：
+# 1. conda env create -f environment.yml
+# 2. conda activate multi-agent
+# 3. pip install -r requirements.txt
+# 4. pip install -e .                      # 安装 cca 包本身，让 scripts/ 下脚本可 import cca
+# 5. python -m spacy download zh_core_web_sm
+#
+# Node.js（App Store 爬取 + BERT 微调数据采集，需另外安装）：
+# 6. 安装 Node.js >= 18（https://nodejs.org 或 conda install -c conda-forge nodejs）
+# 7. cd scripts/node && npm install && cd ../..
+#
+# 更新依赖（队友拉新代码后执行）：
 # pip install -r requirements.txt
-# pip install -e .                      # 安装 cca 包本身，让 scripts/ 下脚本可 import cca
-# python -m spacy download zh_core_web_sm
+# cd scripts/node && npm install && cd ../..
 
 # LangGraph
 langgraph>=0.2.0
@@ -38,6 +46,10 @@ pillow>=10.0.0
 pandas>=2.2.0
 numpy>=1.26.0
 matplotlib>=3.8.0            # chart.py 图表渲染
+scikit-learn>=1.4.0          # Insight Agent NMF 主题提取
+transformers>=4.40.0         # Insight Agent BERT 情感分类 + 微调
+datasets>=2.18.0             # BERT 微调训练集构建（bert_finetune/train.py）
+torch>=2.1.0                 # transformers 推理/微调后端（CPU 即可，GPU 加速可选）
 
 # PII 脱敏
 presidio-analyzer>=2.2.0

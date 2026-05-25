@@ -61,6 +61,9 @@ langsmith_traces/
 checkpoints/*
 !checkpoints/.gitkeep
 
+# Node.js
+node_modules/
+
 #数据
 data/raw/*
 !data/raw/.gitkeep
@@ -68,6 +71,10 @@ data/cache/*
 !data/cache/.gitkeep
 data/private/*
 !data/private/.gitkeep
+data/bert_finetune/*
+!data/bert_finetune/.gitkeep
+data/models/*
+!data/models/.gitkeep
 
 logs/*
 !logs/.gitkeep

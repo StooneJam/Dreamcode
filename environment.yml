@@ -11,5 +11,6 @@ dependencies:
   - numpy
   - pandas                # 分析师 agent 做对比矩阵会用到
   - sqlite                # langgraph-checkpoint-sqlite 依赖
+  - nodejs>=18            # App Store 爬取脚本（scripts/node/）依赖
 
 

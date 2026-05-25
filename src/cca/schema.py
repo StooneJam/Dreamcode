@@ -91,11 +91,11 @@ class UserSentiment(BaseModel):
     appstore_region: str | None = Field(None, description="评分所在区域，如 'cn'、'us'、'global'")
     positive_themes: list[str] = Field(
         default_factory=list,
-        description="用户好评的主题归纳，如'通知及时'，须有对应评论样本支撑",
+        description="用户好评的主题归纳，来自 BERT positive 分组后 NMF 提取",
     )
     negative_themes: list[str] = Field(
         default_factory=list,
-        description="用户槽点的主题归纳，如'通话断线频繁'",
+        description="用户槽点的主题归纳，来自 BERT negative 分组后 NMF 提取",
     )
     representative_reviews: list[ReviewSample] = Field(default_factory=list)
     sources: list[Evidence] = Field(default_factory=list)
