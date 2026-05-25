@@ -188,21 +188,39 @@ def handle_signal_node(state: CCAState) -> dict:
 
     requires_debate=true  → debate skill（PM 从 state 读 defense，挑战方从 signal 读 challenge_position）
     requires_debate=false → reroute skill
+
+    同一次调用内多个信号：reroute 先处理（事实性纠错优先清理脏数据），
+    debate 后处理（主观分歧基于清理后的状态再裁决）。
+    list 字段（debate_results / audit_log）本地累加再返回，避免节点内 dict.update 同 key 覆盖。
     """
     raw = state.get("agent_signals", [])
     if not raw:
         return {}
 
     signals = [AgentSignal(**s) if isinstance(s, dict) else s for s in raw]
-    updates: dict = {}
+    ordered = [s for s in signals if not s.requires_debate] + [
+        s for s in signals if s.requires_debate
+    ]
 
-    for signal in signals:
-        if signal.requires_debate:
-            updates.update(_handle_debate_signal(signal, state))
-        else:
-            updates.update(_handle_reroute_signal(signal, state))
+    debate_results: list[dict] = []
+    audit_log: list[dict] = []
+    scalar_updates: dict = {}
 
-    return updates
+    for signal in ordered:
+        partial = (
+            _handle_debate_signal(signal, state)
+            if signal.requires_debate
+            else _handle_reroute_signal(signal, state)
+        )
+        debate_results.extend(partial.pop("debate_results", []))
+        audit_log.extend(partial.pop("audit_log", []))
+        scalar_updates.update(partial)
+
+    return {
+        **scalar_updates,
+        "debate_results": debate_results,
+        "audit_log": audit_log,
+    }
 
 
 def _handle_debate_signal(signal: AgentSignal, state: CCAState) -> dict:

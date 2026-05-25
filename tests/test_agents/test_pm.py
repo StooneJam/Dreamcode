@@ -464,3 +464,52 @@ def test_handle_signal_node_multiple_signals(monkeypatch: pytest.MonkeyPatch) ->
     result = handle_signal_node(state)
     assert "debate_results" in result
     assert result["task_plan"] is None
+    # reroute 先于 debate，audit_log 顺序应为 [reroute, debate_applied]
+    assert [e.get("agent") for e in result["audit_log"]] == ["reroute", "pm"]
+
+
+def test_handle_signal_node_multiple_debates_all_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """两个 debate 信号同时来时，两份 DebateResult 都要进 debate_results，不能互覆。"""
+    from cca.agents.pm import handle_signal_node
+
+    results_iter = iter(
+        [
+            _make_debate_result(final_verdict="accepted", judge_rationale="r1"),
+            _make_debate_result(
+                target="analyst_swot",
+                final_verdict="accepted",
+                judge_rationale="r2",
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "cca.agents.pm.run_debate", lambda **kwargs: next(results_iter), raising=False
+    )
+
+    sig1 = AgentSignal(
+        from_agent="analyst",
+        kind="pm_challenge",
+        target="task_plan",
+        payload={"reason": "竞品列表不完整"},
+        requires_debate=True,
+        ts="2026-05-23T00:00:00Z",
+    )
+    sig2 = AgentSignal(
+        from_agent="insight",
+        kind="other",
+        target="analyst_task",
+        payload={"reason": "维度不足"},
+        requires_debate=True,
+        ts="2026-05-23T00:00:01Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[sig1.model_dump(), sig2.model_dump()],
+        task_plan={"rationale": "t", "product_type": "SaaS", "competitor_names": ["X"]},
+        analyst_task={"focus_dimensions": ["d"], "product_names": ["P"]},
+    )
+    result = handle_signal_node(state)
+    assert len(result["debate_results"]) == 2
+    assert {r["judge_rationale"] for r in result["debate_results"]} == {"r1", "r2"}
+    assert len(result["audit_log"]) == 2
