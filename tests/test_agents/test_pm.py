@@ -10,12 +10,29 @@ import pytest
 from cca.schema import (
     AgentSignal,
     AnalystTask,
+    AnalystTaskOutput,
     DebateResult,
+    DecisionRecord,
     InitialBrief,
+    InitialBriefOutput,
     ReportTask,
+    ReportTaskOutput,
     TaskPlan,
+    TaskPlanOutput,
 )
 from cca.state import CCAState
+
+
+def _mk_decision(decision_type: str = "other", **overrides) -> DecisionRecord:
+    """构造最小可用 DecisionRecord，供 fake LLM 响应内嵌。phase 会被节点覆盖。"""
+    defaults: dict = {
+        "phase": "initial_brief",
+        "decision_type": decision_type,
+        "chosen": {"k": "v"},
+        "rationale": "test rationale",
+    }
+    defaults.update(overrides)
+    return DecisionRecord(**defaults)
 
 
 class _FakeStructuredLLM:
@@ -70,13 +87,15 @@ def _make_minimal_state(**overrides) -> CCAState:
 
 
 def test_initial_brief_node_returns_initial_brief(monkeypatch: pytest.MonkeyPatch) -> None:
-    brief = InitialBrief(
-        target_product="飞书",
-        company_hint="字节跳动",
-        user_query="分析飞书",
-        rationale="用户明确指定飞书",
+    output = InitialBriefOutput(
+        initial_brief=InitialBrief(
+            target_product="飞书",
+            company_hint="字节跳动",
+            user_query="分析飞书",
+        ),
+        decision_records=[_mk_decision("target_product_selection")],
     )
-    _patch_pm_gpt(monkeypatch, brief)
+    _patch_pm_gpt(monkeypatch, output)
 
     from cca.agents.pm import initial_brief_node
 
@@ -84,6 +103,9 @@ def test_initial_brief_node_returns_initial_brief(monkeypatch: pytest.MonkeyPatc
     assert "initial_brief" in result
     assert result["initial_brief"]["target_product"] == "飞书"
     assert result["initial_brief"]["company_hint"] == "字节跳动"
+    assert len(result["decision_log"]) == 1
+    assert result["decision_log"][0]["phase"] == "initial_brief"
+    assert result["decision_log"][0]["decision_type"] == "target_product_selection"
 
 
 # ── Phase 2: TaskPlan ──────────────────────────────────────────────────
@@ -92,15 +114,20 @@ def test_initial_brief_node_returns_initial_brief(monkeypatch: pytest.MonkeyPatc
 def test_task_plan_node_returns_task_plan_and_competitors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    plan = TaskPlan(
-        target_product="飞书",
-        product_type="协作办公SaaS",
-        competitor_names=["钉钉", "企业微信"],
-        collect_tasks=[],
-        insight_tasks=[],
-        rationale="exploration 确认",
+    output = TaskPlanOutput(
+        task_plan=TaskPlan(
+            target_product="飞书",
+            product_type="协作办公SaaS",
+            competitor_names=["钉钉", "企业微信"],
+            collect_tasks=[],
+            insight_tasks=[],
+        ),
+        decision_records=[
+            _mk_decision("competitor_selection"),
+            _mk_decision("dimension_priority"),
+        ],
     )
-    _patch_pm_gpt(monkeypatch, plan)
+    _patch_pm_gpt(monkeypatch, output)
 
     from cca.agents.pm import task_plan_node
 
@@ -117,18 +144,23 @@ def test_task_plan_node_returns_task_plan_and_competitors(
     assert "task_plan" in result
     assert result["task_plan"]["product_type"] == "协作办公SaaS"
     assert result["competitor_names"] == ["钉钉", "企业微信"]
+    assert len(result["decision_log"]) == 2
+    assert all(d["phase"] == "task_plan" for d in result["decision_log"])
 
 
 # ── Phase 3: AnalystTask ───────────────────────────────────────────────
 
 
 def test_analyst_task_node_returns_analyst_task(monkeypatch: pytest.MonkeyPatch) -> None:
-    task = AnalystTask(
-        product_names=["飞书", "钉钉", "企业微信"],
-        focus_dimensions=["视频会议", "定价"],
-        require_swot=True,
+    output = AnalystTaskOutput(
+        analyst_task=AnalystTask(
+            product_names=["飞书", "钉钉", "企业微信"],
+            focus_dimensions=["视频会议", "定价"],
+            require_swot=True,
+        ),
+        decision_records=[_mk_decision("analyst_focus")],
     )
-    _patch_pm_gpt(monkeypatch, task)
+    _patch_pm_gpt(monkeypatch, output)
 
     from cca.agents.pm import analyst_task_node
 
@@ -143,21 +175,28 @@ def test_analyst_task_node_returns_analyst_task(monkeypatch: pytest.MonkeyPatch)
     assert "analyst_task" in result
     assert result["analyst_task"]["require_swot"] is True
     assert "飞书" in result["analyst_task"]["product_names"]
+    assert result["decision_log"][0]["phase"] == "analyst_task"
 
 
 # ── Phase 4: ReportTask ────────────────────────────────────────────────
 
 
 def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -> None:
-    task = ReportTask(
-        target_product="飞书",
-        competitors=["钉钉", "企业微信"],
-        output_formats=["markdown", "pdf"],
-        target_audience="产品负责人",
-        sections=["执行摘要", "SWOT 分析"],
-        invoke_call_report_reviewer=True,
+    output = ReportTaskOutput(
+        report_task=ReportTask(
+            target_product="飞书",
+            competitors=["钉钉", "企业微信"],
+            output_formats=["markdown", "pdf"],
+            target_audience="产品负责人",
+            sections=["执行摘要", "SWOT 分析"],
+            invoke_call_report_reviewer=True,
+        ),
+        decision_records=[
+            _mk_decision("report_structure"),
+            _mk_decision("audience_choice"),
+        ],
     )
-    _patch_pm_gpt(monkeypatch, task)
+    _patch_pm_gpt(monkeypatch, output)
 
     from cca.agents.pm import report_task_node
 
@@ -172,6 +211,8 @@ def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -
     assert "report_task" in result
     assert result["report_task"]["target_product"] == "飞书"
     assert result["report_task"]["invoke_call_report_reviewer"] is True
+    assert len(result["decision_log"]) == 2
+    assert all(d["phase"] == "report_task" for d in result["decision_log"])
 
 
 # ── Edge cases ─────────────────────────────────────────────────────────
@@ -179,18 +220,36 @@ def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -
 
 def test_initial_brief_passes_user_query_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     """user_query 原样透传，不做加工。"""
-    brief = InitialBrief(
-        target_product="小米 Buds 4",
-        company_hint="小米",
-        user_query="分析 200 元内的耳机",
-        rationale="用户未指定具体产品，PM 选取代表",
+    output = InitialBriefOutput(
+        initial_brief=InitialBrief(
+            target_product="小米 Buds 4",
+            company_hint="小米",
+            user_query="分析 200 元内的耳机",
+        ),
+        decision_records=[_mk_decision("target_product_selection")],
     )
-    _patch_pm_gpt(monkeypatch, brief)
+    _patch_pm_gpt(monkeypatch, output)
 
     from cca.agents.pm import initial_brief_node
 
     result = initial_brief_node(_make_minimal_state(user_query="分析 200 元内的耳机"))
     assert result["initial_brief"]["user_query"] == "分析 200 元内的耳机"
+
+
+def test_stamp_decisions_overrides_phase() -> None:
+    """LLM 自报错 phase 时，_stamp_decisions 必须覆盖为节点指定的 phase。"""
+    from cca.agents.pm import _stamp_decisions
+
+    records = [
+        DecisionRecord(
+            phase="initial_brief",  # LLM 自报错
+            decision_type="competitor_selection",
+            chosen={"competitors": ["X"]},
+            rationale="x",
+        ),
+    ]
+    out = _stamp_decisions(records, "task_plan")
+    assert out[0]["phase"] == "task_plan"
 
 
 def test_prompt_file_loads() -> None:

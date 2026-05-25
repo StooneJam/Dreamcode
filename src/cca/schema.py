@@ -5,10 +5,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
+
+
+def _now_iso() -> str:
+    """当前时刻 ISO 8601 UTC 时间戳，供 default_factory 用。"""
+    return datetime.now(timezone.utc).isoformat()
 
 # 三家族标识，用于 debate 类型约束
 AgentFamily = Literal["gpt-5", "deepseek", "doubao"]
@@ -178,7 +184,6 @@ class InitialBrief(BaseModel):
         None, description="PM 凭训练知识给的公司 seed，Collector 可挑战"
     )
     user_query: str = Field(description="原始用户输入，给collector理解意图")
-    rationale: str | None = None
 
 
 class ProductBrief(BaseModel):
@@ -251,7 +256,6 @@ class TaskPlan(BaseModel):
     competitor_names: list[str] = Field(description="一轮debate 收敛后的权威竞品列表")
     collect_tasks: list[CollectTask]
     insight_tasks: list[InsightTask]
-    rationale: str | None = None
 
 
 # PM 三轮下发 Analyst 的分析任务细化，指导下一轮产出；Analyst 可接受也可挑战
@@ -367,7 +371,43 @@ class DecisionRecord(BaseModel):
             "'profiles.飞书.dimensions[0].facts'"
         ),
     )
-    ts: str = Field(description="ISO 8601 时间戳")
+    ts: str = Field(
+        default_factory=_now_iso,
+        description="ISO 8601 时间戳，未填则用当前时刻",
+    )
+
+
+# PM 4 阶段节点的联合输出：task 主体 + 该阶段产生的若干 DecisionRecord。
+# 用 with_structured_output(*Output) 一次 LLM 调用同时拿到任务和决策档案，
+# 避免双倍 token 成本。decision_records min_length=1 强制 LLM 至少落一条决策。
+
+
+class InitialBriefOutput(BaseModel):
+    """阶段一联合输出：InitialBrief + 决策档案。"""
+
+    initial_brief: InitialBrief
+    decision_records: list[DecisionRecord] = Field(min_length=1)
+
+
+class TaskPlanOutput(BaseModel):
+    """阶段二联合输出：TaskPlan + 决策档案。"""
+
+    task_plan: TaskPlan
+    decision_records: list[DecisionRecord] = Field(min_length=1)
+
+
+class AnalystTaskOutput(BaseModel):
+    """阶段三联合输出：AnalystTask + 决策档案。"""
+
+    analyst_task: AnalystTask
+    decision_records: list[DecisionRecord] = Field(min_length=1)
+
+
+class ReportTaskOutput(BaseModel):
+    """阶段四联合输出：ReportTask + 决策档案。"""
+
+    report_task: ReportTask
+    decision_records: list[DecisionRecord] = Field(min_length=1)
 
 
 # debate 应用于 3 个 checkpoint：

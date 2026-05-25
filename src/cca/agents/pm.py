@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -17,11 +17,12 @@ from cca.llm.factory import gpt
 from cca.schema import (
     AgentFamily,
     AgentSignal,
-    AnalystTask,
+    AnalystTaskOutput,
     DebatePosition,
-    InitialBrief,
-    ReportTask,
-    TaskPlan,
+    DecisionRecord,
+    InitialBriefOutput,
+    ReportTaskOutput,
+    TaskPlanOutput,
 )
 from cca.skills.debate import DebateTarget, run_debate
 from cca.skills.reroute import apply_reroute, reroute
@@ -49,23 +50,43 @@ def _phase_prefix(phase: str) -> str:
     return f"## 当前阶段：{phase}\n\n"
 
 
+def _stamp_decisions(
+    records: list[DecisionRecord],
+    phase: Literal["initial_brief", "task_plan", "analyst_task", "report_task"],
+) -> list[dict]:
+    """覆盖 phase，把 DecisionRecord 列表落盘为 dict 列表。
+
+    phase 字段由代码强制覆盖，防止 LLM 自报错值；ts 由 schema 的 default_factory
+    在 LLM 缺省时填当前时刻，LLM 主动填写的也予以保留（审计层面可信即可）。
+    """
+    out: list[dict] = []
+    for r in records:
+        d = r.model_dump()
+        d["phase"] = phase
+        out.append(d)
+    return out
+
+
 def initial_brief_node(state: CCAState) -> dict:
-    """阶段一：凭训练知识起草 InitialBrief。"""
-    llm = gpt.with_structured_output(InitialBrief)
+    """阶段一：凭训练知识起草 InitialBrief，同时落盘决策档案。"""
+    llm = gpt.with_structured_output(InitialBriefOutput)
     user = _phase_prefix("阶段一 InitialBrief") + json.dumps(
         {"user_query": state["user_query"]},
         ensure_ascii=False,
     )
     result = cast(
-        InitialBrief,
+        InitialBriefOutput,
         llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]),
     )
-    return {"initial_brief": result.model_dump()}
+    return {
+        "initial_brief": result.initial_brief.model_dump(),
+        "decision_log": _stamp_decisions(result.decision_records, "initial_brief"),
+    }
 
 
 def task_plan_node(state: CCAState) -> dict:
-    """阶段二：基于 CollectorExplorationResult 创建 TaskPlan。"""
-    llm = gpt.with_structured_output(TaskPlan)
+    """阶段二：基于 CollectorExplorationResult 创建 TaskPlan，同时落盘决策档案。"""
+    llm = gpt.with_structured_output(TaskPlanOutput)
     user = _phase_prefix("阶段二 TaskPlan") + json.dumps(
         {
             "user_query": state["user_query"],
@@ -75,18 +96,19 @@ def task_plan_node(state: CCAState) -> dict:
         ensure_ascii=False,
     )
     result = cast(
-        TaskPlan,
+        TaskPlanOutput,
         llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]),
     )
     return {
-        "task_plan": result.model_dump(),
-        "competitor_names": result.competitor_names,
+        "task_plan": result.task_plan.model_dump(),
+        "competitor_names": result.task_plan.competitor_names,
+        "decision_log": _stamp_decisions(result.decision_records, "task_plan"),
     }
 
 
 def analyst_task_node(state: CCAState) -> dict:
-    """阶段三：基于 profiles 创建 AnalystTask。"""
-    llm = gpt.with_structured_output(AnalystTask)
+    """阶段三：基于 profiles 创建 AnalystTask，同时落盘决策档案。"""
+    llm = gpt.with_structured_output(AnalystTaskOutput)
     user = _phase_prefix("阶段三 AnalystTask") + json.dumps(
         {
             "user_query": state["user_query"],
@@ -97,15 +119,18 @@ def analyst_task_node(state: CCAState) -> dict:
         ensure_ascii=False,
     )
     result = cast(
-        AnalystTask,
+        AnalystTaskOutput,
         llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]),
     )
-    return {"analyst_task": result.model_dump()}
+    return {
+        "analyst_task": result.analyst_task.model_dump(),
+        "decision_log": _stamp_decisions(result.decision_records, "analyst_task"),
+    }
 
 
 def report_task_node(state: CCAState) -> dict:
-    """阶段四：基于 SWOT 创建 ReportTask。"""
-    llm = gpt.with_structured_output(ReportTask)
+    """阶段四：基于 SWOT 创建 ReportTask，同时落盘决策档案。"""
+    llm = gpt.with_structured_output(ReportTaskOutput)
     user = _phase_prefix("阶段四 ReportTask") + json.dumps(
         {
             "user_query": state["user_query"],
@@ -117,10 +142,13 @@ def report_task_node(state: CCAState) -> dict:
         ensure_ascii=False,
     )
     result = cast(
-        ReportTask,
+        ReportTaskOutput,
         llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]),
     )
-    return {"report_task": result.model_dump()}
+    return {
+        "report_task": result.report_task.model_dump(),
+        "decision_log": _stamp_decisions(result.decision_records, "report_task"),
+    }
 
 
 # 返工信号统一处理
