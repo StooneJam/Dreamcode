@@ -508,6 +508,113 @@ def run_debate(
 
 ---
 
+## D-025 · DecisionRecord + decision_log：PM 决策可溯源
+**Status**: Accepted · **Date**: 2026-05-25
+**Implements**: 离线 Q&A 用户"为什么这么决定" + 修复 debate defense 空壳
+
+**Context**：用户产品诉求是"看报告时能问 PM 为什么选这几家竞品 / 为什么强调这些维度"。原本 `TaskPlan.rationale` 是可选 str，PM 经常不填；debate 时 `_read_defense` 只能字面拼字段值当 claim，evidence 等于 claim，是空壳。根因：**PM 在产出 task 时根本没把决策过程写下来**——不是存储问题，是产出环节缺记录。
+
+**Decision**：加 `DecisionRecord(decision_id, phase, decision_type, chosen, alternatives_considered, rationale, inputs_used, ts)` schema。state 加 `decision_log: Annotated[list[dict], add]`。PM 4 个阶段节点用新增的 `InitialBriefOutput / TaskPlanOutput / AnalystTaskOutput / ReportTaskOutput` 联合输出类型，同一次 LLM 调用同时返回 task 主体 + `decision_records: list[DecisionRecord]`（min_length=1 强制）。删除 `InitialBrief.rationale` 与 `TaskPlan.rationale`（被 DecisionRecord.rationale 完全覆盖）。
+
+**Why not 黑板模式**：`Annotated[list, add]` state 字段本身就是黑板的最小实现；引入独立 zone / 检索层 / 持久化层对单会话 demo 是负收益，违反"简洁优于完备"。`decision_log` 只是又一个分区，跟 `debate_results` / `audit_log` 对称。
+
+**Why decision_type 不用 Literal**：枚举固化太早。description 里列建议值（`competitor_selection` / `dimension_priority` / `task_allocation` / `analyst_focus` / `report_structure` / `audience_choice` / `other`）让 LLM 倾向用，自由 str 字段保扩展性。
+
+**Implementation 细节**：
+- `phase` 由代码端 `_stamp_decisions` 强制覆盖（防 LLM 自报错值，同 debate `_phase_judge` 覆盖 judge_family 的模式）
+- `ts` schema 端 default_factory 兜底
+- `confidence` 字段砍掉——LLM 自评 confidence 不可信，留个 None 不如不留
+
+**Trade-offs**：每个 PM 节点 LLM 输出 token 增加 ~30%，换来完整决策审计链；下游可在报告段落里嵌 `[D-XX]` 脚注供用户回溯（3d 阶段做）。
+
+---
+
+## D-026 · AgentSignal 强类型 ChallengePayload + signal_id 消费去重
+**Status**: Accepted · **Date**: 2026-05-25
+**Implements**: 修复 #3（challenge 空壳）+ 防 handle_signal_node 重复触发
+
+**Context**：原 `AgentSignal.payload: dict` 任意结构，约定俗成塞 `{"reason": str}`。`_handle_debate_signal` 把 reason 字符串同时灌进 challenge 的 claim 和 evidence——双倍 claim 当 evidence，等于零证据挑战。同时 `agent_signals: Annotated[list, add]` 永不删，PM 节点二次激活会重复处理同一信号，可触发死循环。
+
+**Decision**：
+- 加 `ChallengePayload(claim, evidence: list[str] min_length=1, observed_data, suggested_fix)`，把 `AgentSignal.payload` 改为强类型 `ChallengePayload`。事实性 / 主观信号共用同一形态——reroute LLM 与 debate skill 都能直接读结构化字段。evidence 强约束 ≥1 条，让"零证据挑战"在 Pydantic 层就被拒。
+- 加 `AgentSignal.signal_id: str = Field(default_factory=lambda: str(uuid4()))` + state 加 `consumed_signal_ids: Annotated[list[str], add]`。`handle_signal_node` 处理前过滤已消费 id，处理后把本次 id 写回。信号本体永留 `agent_signals` 供回溯。
+
+**三审计链分离**：`agent_signals`（原始信号）+ `consumed_signal_ids`（去重指针）+ `debate_results`（辩论内容）+ `audit_log`（PM 决策事件）。任意时刻可按 signal_id 追溯整条链。
+
+**Why not in-place 标记 consumed**：list 是 add reducer，修改 = 追加新版本污染历史。独立指针字段 = 清爽的"已读"语义，类比邮箱"已读"标记不删邮件。
+
+**配套改动**：`_read_defense` 从字段字面拼装改为按 phase 聚合 `decision_log`（依赖 D-025 已落盘的决策档案）。`qa_report.reject_report_task` 工具签名从 `(reason, ...)` 改为 `(claim, evidence, ...)` 强制结构化产出。
+
+---
+
+## D-027 · PM handle_signal_node 多信号正确性 + reroute 上下文瘦身
+**Status**: Accepted · **Date**: 2026-05-25
+**Implements**: 修复 #1（dict.update 覆盖）+ #10（rejected 无恢复）+ #11（reroute context 膨胀）+ #12（apply_reroute 死参）
+
+**Context**：`handle_signal_node` 单次调用收多个信号时，`updates.update(...)` 同 key 覆盖——LangGraph add reducer 只在节点之间累加，**节点内自己合并 dict 不会触发 reducer**。第二个 debate 信号的 `debate_results: [r2]` 把第一个的整键吞掉。`apply_reroute` 全量 state JSON 化送 LLM，profiles 累积后 prompt 无界增长。`rejected` verdict 只记 log，被否决的 task 维持错误状态，下游基于脏数据继续跑。
+
+**Decision**：
+1. **节点内 list 本地累加** `debate_results` / `audit_log` 用本地 list，循环结束一次性返回；标量字段保留"后写覆盖先写"语义
+2. **信号处理顺序固定**：reroute（事实性纠错优先清理脏数据）先处理，debate（主观分歧基于清理后的状态再裁决）后处理
+3. **rejected verdict 清空对应 task 字段**（`task_plan` / `analyst_task` / `report_task` = None），触发上游路由重派该阶段；落地 `_DEBATE_TARGET_TO_TASK_FIELD` 共用 dispatch 表
+4. **reroute context 瘦身**：新加 `_build_reroute_context` 只送 `exploration_result / task_plan / analyst_task / report_task / review_state / competitor_names`，剔除 profiles / audit_log / debate_results / decision_log 等大对象
+5. **`apply_reroute` 删 state 死参**：从未读取过
+
+**Trade-offs**：节点内手动 list 拼接看起来不如 reducer 优雅，但 LangGraph 的设计就是跨节点累加；理解后这是正确用法不是 hack。
+
+---
+
+## D-028 · debate skill 一致性修复：target rename + revised_output schema 校验
+**Status**: Accepted · **Date**: 2026-05-25
+**Implements**: 修复 #4（target 语义错位）+ #5（revised_output 静默数据丢失）
+**Revises**: D-024 接口
+
+**Context**：
+- **#4**：signal target `analyst_task` 被映射到 debate target `"analyst_swot"`，但 `target_content = state["analyst_task"]` 取的是 PM 下发的任务包（focus_dimensions / product_names），不是 Analyst 产出的 SWOT。**标签在欺骗内容**——下游若按 target 类型分发会误判。
+- **#5**：`_phase_finalize_converged` 收敛路径用裸 `json.loads(raw.strip().removeprefix("```json").removesuffix("```"))` 解析 LLM 输出，没 schema 校验。若 LLM 漏写 `competitor_names`，`_apply_debate_result` 里 `updates["competitor_names"] = result.revised_output.get("competitor_names", [])` 把整张竞品列表静默清空——最难 debug 的失败模式。
+
+**Decision**：
+1. `DebateTarget` / `DebateResult.target` Literal: `analyst_swot` → `analyst_task`（"analyst SWOT 终审"由 `call_report_reviewer` skill 独立 owner，不归入本表）
+2. 加 `_REVISED_OUTPUT_SCHEMA: dict[DebateTarget, type[BaseModel]]` dispatch（`TaskPlan` / `AnalystTask` / `ReportTask`）
+3. `_phase_finalize_converged` 改用 `get_llm(winner).with_structured_output(schema, method="json_mode")`：LLM 漏 required 字段 → Pydantic ValidationError 直接抛，loud failure 替代 silent data loss
+
+**显式不修**：
+- **#6**（双方都让步时 winner 任意按 families 元组顺序选）：边角 case，且 demo 真跑出来过，但优先级低
+- **#7/#8**（refinement 不带新 evidence / critique 看不到对方 refinement）：双 LLM 并行的设计权衡，文档化为已知限制
+
+---
+
+## D-029 · 多家族 LLM 跑通的兼容性约束
+**Status**: Accepted · **Date**: 2026-05-25
+**Context**：D-025/D-026/D-028 设计跑 dry-run 全过，切真 LLM 后一连串踩坑，最后归纳出 3 类必须的兼容性约束。
+
+**Decision**：
+1. **PM 4 节点必须 `method="function_calling"`**——OpenAI strict mode 拒绝任何含 `dict` 字段的 schema（要求每个 object 显式 `additionalProperties: false`）。`DecisionRecord.chosen: dict` 是结构灵活的设计本意，不能为兼容 strict 而改成 typed schema。function_calling 是 OpenAI 兼容 API 的通用解。
+2. **debate 4 个 prompt 显式含 "JSON" 字样**——OpenAI / DeepSeek 的 `response_format=json_object` 强制 prompt 内出现 "json"（case-insensitive），否则 400。`_phase_critique` / `_phase_refine` / `_phase_judge` / `_phase_finalize_converged` 全部在 system prompt 末尾加 "以 JSON 输出"。
+3. **schema 字段名贴合 LLM 自然倾向 + 显式约束基本类型**：`_Critique.text` → `_Critique.critique`，`_Refinement.text` → `_Refinement.refinement`——DeepSeek 在 json_mode 下倾向语义命名（看到"批驳"就用 `critique` key 而非 schema 指定的 `text`）。同时 prompt 要明确"必须是单一字符串，不要数组/对象"，否则 DeepSeek 会自作主张返回结构化数组。
+
+**Trade-offs**：prompt 啰嗦些（多 1-2 句），换来 GPT-5 / DeepSeek / Doubao 三家族同时跑通。
+
+---
+
+## D-030 · PM agent demo 脚本作为后续 agent 开发范本
+**Status**: Accepted · **Date**: 2026-05-25
+**Used by**: 后续 Collector / Insight / Analyst agent 开发
+
+**Context**：D-025～D-029 落地后需要端到端验证，但完整 graph 尚未拼起，且单元测试无法验证多 LLM 串联的真实行为。
+
+**Decision**：写 `scripts/run_pm_demo.py`，直接调用 PM 内部节点函数（不接 LangGraph），上游产出（exploration_result / profiles / review_state）硬编码 mock。提供：
+- `--dry-run` 模式：patch `pm.gpt` 和 `debate.get_llm` 为预制 fake，验证 plumbing 不烧 token
+- 3 种 debate 场景：`accept`（合理挑战，预期 accepted_with_revision）/ `reject`（站不住脚的挑战，预期 rejected → task 清空）/ `none`（跳过 signal）
+- `--skip-report` 隔离 ReAct 工具循环复杂度（report agent 单独跑）
+- Verbose 输出：每阶段 task 全字段 JSON + DecisionRecord + debate 每轮 positions/critiques/refinements/verdict
+
+**Why**：单元测试覆盖控制流，demo 脚本覆盖**多 LLM 串联的语义级行为**——D-029 的兼容性问题就是 demo 跑出来才发现的。后续 Collector / Insight / Analyst 沿用同一模式：`scripts/run_<agent>_demo.py` + dry-run/live 双模式。
+
+**意外验证**：demo 真 LLM 跑出来时撞到 D-028 #6（双方让步 winner 按 families 顺序选）的边角 case，revised_output 没移除腾讯会议——确认了"显式不修"的取舍代价可见，未来若数据观察发现问题再回头修。
+
+---
+
 ## 待决（Pending）
 
 - **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略
