@@ -1,0 +1,8 @@
+# 开发与测试工具（不需要在生产/演示环境安装）
+#
+# 安装：pip install -r requirements-dev.txt
+
+ruff>=0.5.0           # lint + format（替代 black + flake8 + isort）
+pre-commit>=3.7.0     # 提交前自动跑 ruff
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

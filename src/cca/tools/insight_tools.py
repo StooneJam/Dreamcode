@@ -20,7 +20,7 @@ from cca.schema import AgentSignal, ChallengePayload, UserSentiment
 from cca.settings import PROJECT_ROOT, load_config
 from cca.skills.questionnaire.subgraph import run_questionnaire_skill
 from cca.tools.appstore import scrape_app_store  # noqa: F401 — re-exported as agent tool
-from cca.tools.nlp_utils import _bert_sentiment, _nmf_topics
+from cca.utils.nlp_utils import _bert_sentiment, _nmf_topics
 
 
 def _effective_bert_model() -> str:

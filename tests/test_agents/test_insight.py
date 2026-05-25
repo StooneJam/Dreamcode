@@ -27,7 +27,7 @@ from cca.skills.questionnaire.distribute import format_questionnaire
 
 class TestNmfTopics:
     def _run(self, texts, n=3):
-        from cca.tools.nlp_utils import _nmf_topics
+        from cca.utils.nlp_utils import _nmf_topics
         return _nmf_topics(texts, n)
 
     def test_returns_list_of_strings(self):
@@ -47,7 +47,7 @@ class TestNmfTopics:
         assert len(topics) == 1  # n_topics 自动裁剪
 
     def test_empty_texts_returns_empty(self):
-        from cca.tools.nlp_utils import _nmf_topics
+        from cca.utils.nlp_utils import _nmf_topics
         assert _nmf_topics([], n_topics=3) == []
 
 
@@ -146,9 +146,7 @@ class TestInsightNode:
         ]
         mock_agent = MagicMock()
         mock_agent.invoke.return_value = {"messages": msgs}
-        # mock 掉微调触发（测试不依赖 datasets / GPU 环境）
-        with patch("cca.agents.insight.create_react_agent", return_value=mock_agent), \
-             patch("cca.agents.insight._maybe_finetune"):
+        with patch("cca.agents.insight.create_react_agent", return_value=mock_agent):
             from cca.agents.insight import insight_node
             return insight_node(mock_state)
 
@@ -275,14 +273,14 @@ class TestCollectResponsesFillMode:
 
 class TestBertSentiment:
     def test_empty_texts_returns_empty(self):
-        from cca.tools.nlp_utils import _bert_sentiment
+        from cca.utils.nlp_utils import _bert_sentiment
         result = _bert_sentiment([], "fake-model")
         assert result == {"positive": [], "negative": [], "neutral": []}
 
     def test_groups_texts_by_label(self):
         import sys
         from unittest.mock import MagicMock, patch
-        from cca.tools.nlp_utils import _bert_sentiment
+        from cca.utils.nlp_utils import _bert_sentiment
 
         mock_classifier = MagicMock(return_value=[
             [{"label": "positive", "score": 0.9}],
@@ -293,7 +291,7 @@ class TestBertSentiment:
         fake_transformers.pipeline.return_value = mock_classifier
         with patch.dict(sys.modules, {"transformers": fake_transformers}):
             # 清除缓存避免测试间干扰
-            import cca.tools.nlp_utils as nlp_mod
+            import cca.utils.nlp_utils as nlp_mod
             nlp_mod._bert_pipeline_cache.clear()
             result = _bert_sentiment(["好用", "卡顿", "一般"], "fake-model")
 
@@ -304,7 +302,7 @@ class TestBertSentiment:
     def test_unknown_label_falls_back_to_neutral(self):
         import sys
         from unittest.mock import MagicMock, patch
-        from cca.tools.nlp_utils import _bert_sentiment
+        from cca.utils.nlp_utils import _bert_sentiment
 
         mock_classifier = MagicMock(return_value=[
             [{"label": "LABEL_99", "score": 0.6}],
@@ -312,7 +310,7 @@ class TestBertSentiment:
         fake_transformers = MagicMock()
         fake_transformers.pipeline.return_value = mock_classifier
         with patch.dict(sys.modules, {"transformers": fake_transformers}):
-            import cca.tools.nlp_utils as nlp_mod
+            import cca.utils.nlp_utils as nlp_mod
             nlp_mod._bert_pipeline_cache.clear()
             result = _bert_sentiment(["模糊评价"], "fake-model")
 

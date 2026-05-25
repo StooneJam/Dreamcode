@@ -2,6 +2,12 @@
 
 架构位置：Phase 1（与 Collector 第二轮并发），等待 PM TaskPlan 下发后启动。
 NLP 策略：NMF 主题提取（短文本效果优于 LDA）+ BERT/LLM 情感评分（config 可切换）。
+
+BERT 模型选择：
+  - 默认使用 config.nlp.bert_model 指定的预训练模型（开箱即用，无需额外准备）
+  - 若已离线运行 scripts/finetune_bert.py 且 fine_tune.enabled=true，
+    自动切换到本地微调模型（见 tools/insight_tools._effective_bert_model）
+  - 微调是纯离线操作，不在 Agent 请求路径内执行
 """
 from __future__ import annotations
 
@@ -12,8 +18,8 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 
 from cca.llm.factory import deepseek
-from cca.schema import TaskPlan, UserSentiment
-from cca.settings import PROJECT_ROOT, load_config
+from cca.schema import TaskPlan
+from cca.settings import load_config
 from cca.state import CCAState
 from cca.tools.appstore import scrape_app_store
 from cca.tools.insight_tools import (
@@ -51,27 +57,11 @@ def _extract_signals(messages: list) -> list[dict]:
     ]
 
 
-def _maybe_finetune() -> None:
-    """若 config 开启 fine_tune.enabled，在节点启动前触发微调（首次运行较慢）。
-
-    使用 PROJECT_ROOT 解析路径，保证 CWD 无关。
-    """
-    cfg = load_config().get("nlp", {}).get("fine_tune", {})
-    if not cfg.get("enabled", False):
-        return
-    output_dir = PROJECT_ROOT / cfg.get("model_output_dir", "data/models/bert_fine_tuned")
-    if output_dir.exists():
-        return  # 已有微调模型，跳过
-    from cca.skills.bert_finetune.subgraph import run_finetune  # lazy import
-    run_finetune()
-
-
 def insight_node(state: CCAState) -> dict:
     """Insight Agent 节点：为每个产品收集评论并输出 UserSentiment。"""
     if not state.get("task_plan"):
         return {"audit_log": [{"agent": "insight", "event": "skipped", "reason": "task_plan not set"}]}
 
-    _maybe_finetune()
     task_plan = TaskPlan(**state["task_plan"])
     profiles = state.get("profiles", {})
     cfg_nlp = load_config().get("nlp", {})

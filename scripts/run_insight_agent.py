@@ -78,7 +78,7 @@ def run_real_pipeline() -> None:
     from cca.skills.questionnaire.anonymize import anonymize_responses
     from cca.tools.appstore import _run_scraper
     from cca.tools.search import web_search
-    from cca.tools.nlp_utils import _nmf_topics, _bert_sentiment
+    from cca.utils.nlp_utils import _nmf_topics, _bert_sentiment
     from cca.schema import Evidence, ReviewSample, UserSentiment
 
     cfg = load_config()
@@ -292,7 +292,7 @@ def run_real_pipeline() -> None:
 
 def run_mock_pipeline() -> None:
     from cca.schema import Evidence, ReviewSample, UserSentiment
-    from cca.tools.nlp_utils import _nmf_topics
+    from cca.utils.nlp_utils import _nmf_topics
 
     FAKE_TEXTS = {
         "钉钉": [

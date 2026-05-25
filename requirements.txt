@@ -1,17 +1,20 @@
-# CLI（首次环境搭建）：
+# 运行 Agent 系统所需的全部依赖
+#
+# 安装（首次环境搭建）：
 # 1. conda env create -f environment.yml
 # 2. conda activate multi-agent
 # 3. pip install -r requirements.txt
-# 4. pip install -e .                      # 安装 cca 包本身，让 scripts/ 下脚本可 import cca
+# 4. pip install -e .
 # 5. python -m spacy download zh_core_web_sm
+# 6. cd scripts/node && npm install && cd ../..   # App Store 爬取（Node.js）
 #
-# Node.js（App Store 爬取 + BERT 微调数据采集，需另外安装）：
-# 6. 安装 Node.js >= 18（https://nodejs.org 或 conda install -c conda-forge nodejs）
-# 7. cd scripts/node && npm install && cd ../..
-#
-# 更新依赖（队友拉新代码后执行）：
+# 队友拉新代码后只需：
 # pip install -r requirements.txt
 # cd scripts/node && npm install && cd ../..
+#
+# 可选扩展：
+# pip install -r requirements-finetune.txt  # BERT 离线微调（需要大量数据才有效）
+# pip install -r requirements-dev.txt       # 开发/测试工具
 
 # LangGraph
 langgraph>=0.2.0
@@ -19,66 +22,53 @@ langchain>=0.3.0
 langchain-core>=0.3.0
 langgraph-checkpoint-sqlite>=2.0.0
 
-# models
+# LLM 客户端
 openai>=1.40.0
 langchain-openai>=0.2.0
 langchain-deepseek>=0.1.0
+volcengine-python-sdk>=1.0.0      # Doubao（火山方舟）
 
-# Doubao (Volcengine Ark) - 用作最终跨模型 QA
-# LLM chat 仍走 ChatOpenAI + base_url（OpenAI 兼容），SDK 为图像生成/embedding 等高级特性预留
-volcengine-python-sdk>=1.0.0
-
-# State
+# 基础工具
 pydantic>=2.7.0
 pyyaml>=6.0
 python-dotenv>=1.0.0
 
-# information collection
+# 信息采集
 tavily-python>=0.5.0
 requests>=2.32.0
-httpx>=0.27.0                # Collector fetch_url 的 HTTP 客户端（支持 follow_redirects + 超时）
+httpx>=0.27.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
-trafilatura>=2.0.0           # fetch_url 网页正文提取（比 BeautifulSoup 干净，自动剥 nav/广告/脚本）
+trafilatura>=2.0.0
 pypdf>=4.0.0
 pymupdf>=1.24.0
 pillow>=10.0.0
 
-# Data Analysis
+# 数据分析
 pandas>=2.2.0
 numpy>=1.26.0
-matplotlib>=3.8.0            # chart.py 图表渲染
-scikit-learn>=1.4.0          # Insight Agent NMF 主题提取
-transformers>=4.40.0         # Insight Agent BERT 情感分类 + 微调
-datasets>=2.18.0             # BERT 微调训练集构建（bert_finetune/train.py）
-torch>=2.1.0                 # transformers 推理/微调后端（CPU 即可，GPU 加速可选）
+matplotlib>=3.8.0
+scikit-learn>=1.4.0               # NMF 主题提取
+
+# NLP 推理（BERT 情感分类，CPU 即可）
+transformers>=4.40.0
+torch>=2.1.0
 
 # PII 脱敏
 presidio-analyzer>=2.2.0
 presidio-anonymizer>=2.2.0
 spacy>=3.7.0
 
-# front
+# 前端
 streamlit>=1.36.0
 plotly>=5.20.0
 
-# 报告 PDF 渲染（保留：答辩演示需要 PDF 形态）
-# 渲染链：weasyprint（Linux/Mac）→ reportlab 直出（Windows 主路径，无需 GTK）
+# 报告渲染
 markdown-it-py>=3.0.0
-weasyprint>=62.0             # Linux/Mac；Windows 安装失败时代码自动 fallback 到 reportlab
-reportlab>=4.0.0             # Windows PDF 渲染主路径（weasyprint 依赖 GTK，Windows 不自带）
+weasyprint>=62.0                  # Linux/Mac
+reportlab>=4.0.0                  # Windows
 
 # 可观测性
 langsmith>=0.1.0
 loguru>=0.7.0
 tenacity>=8.2.0
-
-# === 开发期依赖 (dev only) ===
-# 备注：未拆 requirements-dev.txt，直接合并以降低 reviewer 认知成本。
-# 生产/演示部署时可手动跳过这一段，不会影响主流程。
-ruff>=0.5.0                 # lint + format 一体（替代 black + flake8 + isort）
-pre-commit>=3.7.0           # 提交前自动跑 ruff，挡格式问题
-
-# 测试
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
