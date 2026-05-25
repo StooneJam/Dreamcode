@@ -443,7 +443,7 @@ def test_apply_debate_result_analyst_target() -> None:
     from cca.agents.pm import _apply_debate_result
 
     result = _make_debate_result(
-        target="analyst_swot",
+        target="analyst_task",
         final_verdict="accepted_with_revision",
         revised_output={"focus_dimensions": ["定价"]},
     )
@@ -613,7 +613,7 @@ def test_handle_signal_node_multiple_debates_all_preserved(
         [
             _make_debate_result(final_verdict="accepted", judge_rationale="r1"),
             _make_debate_result(
-                target="analyst_swot",
+                target="analyst_task",
                 final_verdict="accepted",
                 judge_rationale="r2",
             ),
@@ -745,5 +745,5 @@ def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -
         analyst_task={"focus_dimensions": ["d"], "product_names": ["P"]},
     )
     result = handle_signal_node(state)
-    assert called_targets == ["analyst_swot"]
+    assert called_targets == ["analyst_task"]
     assert result["consumed_signal_ids"] == [new.signal_id]

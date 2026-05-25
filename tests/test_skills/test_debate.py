@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from cca.schema import DebatePosition, DebateResult, DebateRound
+from cca.schema import DebatePosition, DebateResult, DebateRound, TaskPlan
 from cca.skills import debate
 
 
@@ -118,21 +118,33 @@ def test_run_debate_full_flow_to_judge(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_debate_converged_short_circuit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """still_disagrees=False → 收敛短路，跳过 judge 直接返回。"""
+    """still_disagrees=False → 收敛短路，跳过 judge 直接返回。
+    revised_output 走 with_structured_output(TaskPlan)，必须是合规的 TaskPlan dict。
+    """
     from cca.skills.debate import _Critique, _Refinement
+
+    revised_plan = TaskPlan(
+        target_product="飞书",
+        product_type="协作办公SaaS",
+        competitor_names=["钉钉", "企业微信"],
+        collect_tasks=[],
+        insight_tasks=[],
+    )
 
     deepseek_responses = {
         _Critique: [_Critique(text="ds accepts db")],
         _Refinement: [_Refinement(text="ds conceded", still_disagrees=False)],
     }
+    # ds 让步 → 赢家是 doubao（fam_b），由 doubao 产出修订版 TaskPlan
     doubao_responses = {
         _Critique: [_Critique(text="db accepts ds")],
         _Refinement: [_Refinement(text="db conceded", still_disagrees=True)],
+        TaskPlan: [revised_plan],
     }
 
     family_clients = {
-        "deepseek": _FakeLLMClient(deepseek_responses, plain_response='{"revised": "ok"}'),
-        "doubao": _FakeLLMClient(doubao_responses, plain_response='{"revised": "ok"}'),
+        "deepseek": _FakeLLMClient(deepseek_responses),
+        "doubao": _FakeLLMClient(doubao_responses),
     }
     monkeypatch.setattr(debate, "get_llm", lambda family: family_clients[family])
 
@@ -152,7 +164,40 @@ def test_run_debate_converged_short_circuit(monkeypatch: pytest.MonkeyPatch) -> 
     assert result.judge_family is None  # self-converged，无仲裁
     assert "self-converged" in (result.judge_rationale or "")
     assert len(result.rounds) == 1
-    assert result.revised_output == {"revised": "ok"}
+    # revised_output 是完整 TaskPlan，包含 required 字段 — 校验没被绕过
+    assert result.revised_output is not None
+    assert result.revised_output["competitor_names"] == ["钉钉", "企业微信"]
+    assert result.revised_output["product_type"] == "协作办公SaaS"
+    assert "collect_tasks" in result.revised_output
+
+
+def test_phase_finalize_converged_dispatches_to_target_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_phase_finalize_converged 必须按 target 选对应 schema 调 with_structured_output。"""
+    from cca.skills.debate import _phase_finalize_converged
+    from cca.schema import AnalystTask
+
+    captured: dict = {}
+
+    class _CapturingClient:
+        def with_structured_output(self, target_type, method=None):  # noqa: ARG002
+            captured["schema"] = target_type
+            return _FakeStructuredLLM(
+                [AnalystTask(product_names=["飞书"], focus_dimensions=["视频会议"])]
+            )
+
+    monkeypatch.setattr(debate, "get_llm", lambda family: _CapturingClient())  # noqa: ARG005
+
+    out = _phase_finalize_converged(
+        winner_family="deepseek",
+        target="analyst_task",
+        target_content={"product_names": ["飞书"]},
+        winning_refinement="改成 focus_dimensions = ['视频会议']",
+    )
+    assert captured["schema"] is AnalystTask
+    assert out["product_names"] == ["飞书"]
+    assert out["focus_dimensions"] == ["视频会议"]
 
 
 def test_run_debate_two_rounds_propagates_refinement(

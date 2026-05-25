@@ -411,9 +411,9 @@ class ReportTaskOutput(BaseModel):
 
 
 # debate 应用于 3 个 checkpoint：
-#    1. PM 二轮 TaskPlan（精化竞品 / 产品类型）
-#    2. PM 三轮 AnalystTask 后的 SWOT 校验
-#    3. Report 终审（call_report_reviewer skill）
+#    1. pm_taskplan：下游对 PM 阶段二 TaskPlan 的主观挑战（竞品列表 / 产品赛道 / 维度优先级）
+#    2. analyst_task：下游对 PM 阶段三 AnalystTask 的主观挑战（focus_dimensions / product_names）
+#    3. report：Report 终审（call_report_reviewer skill）
 
 
 class DebatePosition(BaseModel):
@@ -440,7 +440,7 @@ class DebateRound(BaseModel):
 class DebateResult(BaseModel):
     """完整 debate 结果：N 轮 + 第三家族仲裁。"""
 
-    target: Literal["pm_taskplan", "analyst_swot", "report"] = Field(description="被审对象类型")
+    target: Literal["pm_taskplan", "analyst_task", "report"] = Field(description="被审对象类型")
     rounds: list[DebateRound]
     final_verdict: Literal["accepted", "rejected", "accepted_with_revision"]
     judge_family: AgentFamily | None = Field(

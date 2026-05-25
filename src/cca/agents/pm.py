@@ -31,9 +31,11 @@ from cca.state import CCAState
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "pm.md"
 
 # 信号 target → debate target 映射
+# 注意：analyst_task 这条辩的是 PM 下发的任务包（focus_dimensions / product_names），
+# 不是 Analyst 产出的 SWOT。SWOT 终审走 call_report_reviewer skill，不在此分发表里。
 _TARGET_TO_DEBATE = {
     "task_plan": "pm_taskplan",
-    "analyst_task": "analyst_swot",
+    "analyst_task": "analyst_task",
     "report_task": "report",
 }
 
@@ -219,7 +221,7 @@ def _apply_debate_result(result) -> dict:
         if result.target == "pm_taskplan":
             updates["task_plan"] = result.revised_output
             updates["competitor_names"] = result.revised_output.get("competitor_names", [])
-        elif result.target == "analyst_swot":
+        elif result.target == "analyst_task":
             updates["analyst_task"] = result.revised_output
         elif result.target == "report":
             updates["report_task"] = result.revised_output

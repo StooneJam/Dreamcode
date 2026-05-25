@@ -2,24 +2,41 @@
 跨家族 debate skill。
 
 应用 checkpoint：
-    1. PM 二轮 TaskPlan 校验
-    2. Analyst SWOT 校验
-    3. Report 终审（call_report_reviewer skill 内部调用）
+    1. pm_taskplan：下游对 PM 阶段二 TaskPlan 的主观挑战
+    2. analyst_task：下游对 PM 阶段三 AnalystTask 的主观挑战
+    3. report：Report 终审（call_report_reviewer skill 内部调用）
 
 流程：caller 注入 seed_positions → Critique → Refine → 任一方让步即收敛，否则Judge 仲裁。
 仲裁方必须异于两个辩方，三家族零重叠。
 """
 from __future__ import annotations
 import json
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from cca.llm.factory import get_llm
-from cca.schema import AgentFamily, DebatePosition, DebateResult, DebateRound
+from cca.schema import (
+    AgentFamily,
+    AnalystTask,
+    DebatePosition,
+    DebateResult,
+    DebateRound,
+    ReportTask,
+    TaskPlan,
+)
 
-DebateTarget = Literal["pm_taskplan", "analyst_swot", "report"]
+DebateTarget = Literal["pm_taskplan", "analyst_task", "report"]
+
+# 收敛阶段产出 revised_output 用的 schema 校验表。
+# LLM 输出必须严格匹配对应 Pydantic 类型，否则在 with_structured_output 内部抛错，
+# 避免下游（如 _apply_debate_result）拿到漏字段的 dict 静默清空数据。
+_REVISED_OUTPUT_SCHEMA: dict[DebateTarget, type[BaseModel]] = {
+    "pm_taskplan": TaskPlan,
+    "analyst_task": AnalystTask,
+    "report": ReportTask,
+}
 
 
 # 是否认可对方观点。
@@ -119,19 +136,25 @@ def _phase_finalize_converged(
     target_content: dict,
     winning_refinement: str,
 ) -> dict:
-    """获胜方把共识结构化为修订版 target_content。"""
-    llm = get_llm(winner_family)
+    """获胜方把共识结构化为修订版 target_content。
+
+    用 with_structured_output 强制按 target 对应的 Pydantic 类型输出，
+    LLM 漏字段时 Pydantic 直接抛 ValidationError，
+    避免下游 _apply_debate_result 拿到不完整 dict 后静默清空 state（例如把 competitor_names 改成 []）。
+    """
+    schema = _REVISED_OUTPUT_SCHEMA[target]
+    llm = get_llm(winner_family).with_structured_output(schema, method="json_mode")
     sys = (
         f"你的观点在辩论中被对方采纳。请基于你的最终 refinement，"
-        f"产出修订版 {target}，结构与原 target_content 一致。"
+        f"产出修订版 {target}，必须严格符合 {schema.__name__} 的字段约束 ——"
+        f"不要遗漏 required 字段，不要保留 original 中已被 refinement 推翻的项。"
     )
     user = json.dumps(
         {"original": target_content, "winning_refinement": winning_refinement},
         ensure_ascii=False,
     )
-    response: Any = llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)])
-    raw = response.content if hasattr(response, "content") else str(response)
-    return json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
+    result = cast(BaseModel, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
+    return result.model_dump()
 
 
 # debate 主流程

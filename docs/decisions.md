@@ -475,7 +475,7 @@ PM 节点处理完一条信号后把其 `signal_id` append 进 `consumed_signal_
 **接口**：
 ```python
 def run_debate(
-    target: str,                  # 被审对象类型 (pm_taskplan / analyst_swot / report)
+    target: str,                  # 被审对象类型 (pm_taskplan / analyst_task / report)
     target_content: dict,
     families: list[str] = ["deepseek", "doubao"],
     judge: str = "gpt-5",         # 第三家族仲裁
