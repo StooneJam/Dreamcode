@@ -78,11 +78,11 @@ logs/*
 !data/README.md
 
 #报告
-#output/
-#reports/*.pdf
-#reports/*.html
-#reports/*.docx
-#!reports/templates/
+output/
+reports/*.pdf
+reports/*.html
+reports/*.docx
+!reports/templates/
 
 
 # 题目原文（仅本地参考，不上传）
