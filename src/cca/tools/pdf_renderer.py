@@ -55,7 +55,7 @@ def _try_weasyprint(md: str, output_path: Path) -> bool:
         )
         weasyprint.HTML(string=html).write_pdf(str(output_path))
         return True
-    except ImportError:
+    except (ImportError, OSError):  # OSError: Windows 无 GTK，fallback 到 reportlab
         return False
 
 
