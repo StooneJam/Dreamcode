@@ -2,7 +2,8 @@
 PM Agent —— 分阶段规划、下发指令、评审下游产出，处理下游信号。
 
 不是 ReAct agent，没有工具，纯结构化规划 + 评审 + 信号分发。
-4 个阶段函数 + 1 个信号处理节点。
+入口节点：4 个阶段节点（initial_brief / task_plan / analyst_task / report_task）+
+handle_signal_node。其余为内部 helper。
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from cca.schema import (
     AgentSignal,
     AnalystTaskOutput,
     DebatePosition,
+    DebateResult,
     DecisionRecord,
     InitialBriefOutput,
     ReportTaskOutput,
@@ -131,7 +133,7 @@ def analyst_task_node(state: CCAState) -> dict:
 
 
 def report_task_node(state: CCAState) -> dict:
-    """阶段四：基于 SWOT 创建 ReportTask，同时落盘决策档案。"""
+    """阶段四：基于 profiles（含 SWOT）+ review_state 创建 ReportTask，同时落盘决策档案。"""
     llm = gpt.with_structured_output(ReportTaskOutput)
     user = _phase_prefix("阶段四 ReportTask") + json.dumps(
         {
@@ -153,7 +155,7 @@ def report_task_node(state: CCAState) -> dict:
     }
 
 
-# 返工信号统一处理
+# 下游信号处理：debate（主观挑战）+ reroute（事实性返工）
 
 
 def _read_defense(target: str, state: CCAState) -> DebatePosition:
@@ -209,7 +211,7 @@ _DEBATE_TARGET_TO_TASK_FIELD = {
 }
 
 
-def _apply_debate_result(result) -> dict:
+def _apply_debate_result(result: DebateResult) -> dict:
     """将 debate 结果转为 state 更新。
 
     rejected：被否决的 task 字段置 None，触发上游路由重派该阶段。
@@ -247,8 +249,9 @@ def _apply_debate_result(result) -> dict:
 def handle_signal_node(state: CCAState) -> dict:
     """处理下游 AgentSignal，独立于 4 阶段主流程。
 
-    requires_debate=true  → debate skill（PM 从 state 读 defense，挑战方从 signal 读 challenge_position）
-    requires_debate=false → reroute skill
+    requires_debate=true  → debate skill（PM 从 decision_log 拼装 defense，
+                            挑战方从 signal.payload 的 ChallengePayload 取 claim / evidence）
+    requires_debate=false → reroute skill（事实性纠错）
 
     同一次调用内多个信号：reroute 先处理（事实性纠错优先清理脏数据），
     debate 后处理（主观分歧基于清理后的状态再裁决）。
