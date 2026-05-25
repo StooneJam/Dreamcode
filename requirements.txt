@@ -1,8 +1,9 @@
 # CLI：
 # conda env create -f environment.yml
 # conda activate multi-agent
-# python -m spacy download zh_core_web_sm
 # pip install -r requirements.txt
+# pip install -e .                      # 安装 cca 包本身，让 scripts/ 下脚本可 import cca
+# python -m spacy download zh_core_web_sm
 
 # LangGraph
 langgraph>=0.2.0
@@ -19,7 +20,7 @@ langchain-deepseek>=0.1.0
 # LLM chat 仍走 ChatOpenAI + base_url（OpenAI 兼容），SDK 为图像生成/embedding 等高级特性预留
 volcengine-python-sdk>=1.0.0
 
-# State 
+# State
 pydantic>=2.7.0
 pyyaml>=6.0
 python-dotenv>=1.0.0
@@ -36,6 +37,7 @@ pillow>=10.0.0
 # Data Analysis
 pandas>=2.2.0
 numpy>=1.26.0
+matplotlib>=3.8.0            # chart.py 图表渲染
 
 # PII 脱敏
 presidio-analyzer>=2.2.0
@@ -47,10 +49,10 @@ streamlit>=1.36.0
 plotly>=5.20.0
 
 # 报告 PDF 渲染（保留：答辩演示需要 PDF 形态）
-# 路径：markdown -> html (markdown-it-py) -> pdf (weasyprint)
-# 若 weasyprint 在 Windows 安装失败，可改为 xhtml2pdf（纯 Python，CSS 支持弱）
+# 渲染链：weasyprint（Linux/Mac）→ reportlab 直出（Windows 主路径，无需 GTK）
 markdown-it-py>=3.0.0
-weasyprint>=62.0
+weasyprint>=62.0             # Linux/Mac；Windows 安装失败时代码自动 fallback 到 reportlab
+reportlab>=4.0.0             # Windows PDF 渲染主路径（weasyprint 依赖 GTK，Windows 不自带）
 
 # 可观测性
 langsmith>=0.1.0
