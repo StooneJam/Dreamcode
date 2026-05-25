@@ -36,8 +36,10 @@ python-dotenv>=1.0.0
 # information collection
 tavily-python>=0.5.0
 requests>=2.32.0
+httpx>=0.27.0                # Collector fetch_url 的 HTTP 客户端（支持 follow_redirects + 超时）
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
+trafilatura>=2.0.0           # fetch_url 网页正文提取（比 BeautifulSoup 干净，自动剥 nav/广告/脚本）
 pypdf>=4.0.0
 pymupdf>=1.24.0
 pillow>=10.0.0
