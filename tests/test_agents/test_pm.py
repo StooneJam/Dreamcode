@@ -426,17 +426,34 @@ def test_apply_debate_result_accepted_revises_task_plan() -> None:
     assert updates["audit_log"][0]["verdict"] == "accepted_with_revision"
 
 
-def test_apply_debate_result_rejected_only_logs() -> None:
+def test_apply_debate_result_rejected_clears_target_task() -> None:
+    """rejected verdict 必须清空对应 task 字段，触发上游路由重派该阶段。"""
     from cca.agents.pm import _apply_debate_result
 
     result = _make_debate_result(
         target="pm_taskplan",
         final_verdict="rejected",
-        revised_output={"product_type": "IM SaaS"},
+        revised_output={"product_type": "IM SaaS"},  # 即使 judge 给了 revision 也不采用
     )
     updates = _apply_debate_result(result)
-    assert "task_plan" not in updates
+    assert updates["task_plan"] is None
     assert updates["audit_log"][0]["verdict"] == "rejected"
+
+
+def test_apply_debate_result_rejected_analyst_clears_analyst_task() -> None:
+    from cca.agents.pm import _apply_debate_result
+
+    result = _make_debate_result(target="analyst_task", final_verdict="rejected")
+    updates = _apply_debate_result(result)
+    assert updates["analyst_task"] is None
+
+
+def test_apply_debate_result_rejected_report_clears_report_task() -> None:
+    from cca.agents.pm import _apply_debate_result
+
+    result = _make_debate_result(target="report", final_verdict="rejected")
+    updates = _apply_debate_result(result)
+    assert updates["report_task"] is None
 
 
 def test_apply_debate_result_analyst_target() -> None:
@@ -536,7 +553,7 @@ def test_handle_signal_node_reroute_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("cca.agents.pm.reroute", lambda s, state_json: decision, raising=False)
     monkeypatch.setattr(
         "cca.agents.pm.apply_reroute",
-        lambda d, s: {"exploration_result": None, "audit_log": [{"agent": "reroute"}]},
+        lambda d: {"exploration_result": None, "audit_log": [{"agent": "reroute"}]},
         raising=False,
     )
 
@@ -572,7 +589,7 @@ def test_handle_signal_node_multiple_signals(monkeypatch: pytest.MonkeyPatch) ->
     )
     monkeypatch.setattr(
         "cca.agents.pm.apply_reroute",
-        lambda d, s: {"task_plan": None, "audit_log": [{"agent": "reroute"}]},
+        lambda d: {"task_plan": None, "audit_log": [{"agent": "reroute"}]},
         raising=False,
     )
 
@@ -747,3 +764,27 @@ def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -
     result = handle_signal_node(state)
     assert called_targets == ["analyst_task"]
     assert result["consumed_signal_ids"] == [new.signal_id]
+
+
+def test_build_reroute_context_excludes_large_fields() -> None:
+    """reroute 上下文只含决策必需切片，不带 profiles / audit_log / decision_log。"""
+    import json as _json
+
+    from cca.agents.pm import _build_reroute_context
+
+    state = _make_minimal_state(
+        exploration_result={"product_type": "X"},
+        task_plan={"product_type": "Y"},
+        profiles={"飞书": {"product_name": "飞书", "dimensions": list(range(1000))}},
+        audit_log=[{"big": "audit"}],
+        decision_log=[{"big": "decision"}],
+        debate_results=[{"big": "debate"}],
+    )
+    ctx_json = _build_reroute_context(state)
+    parsed = _json.loads(ctx_json)
+    assert "exploration_result" in parsed
+    assert "task_plan" in parsed
+    assert "profiles" not in parsed
+    assert "audit_log" not in parsed
+    assert "decision_log" not in parsed
+    assert "debate_results" not in parsed

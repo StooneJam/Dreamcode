@@ -138,7 +138,7 @@ def test_apply_reroute_phase_1_clears_exploration() -> None:
         fix_summary={},
         rationale="重新探索",
     )
-    result = apply_reroute(decision, {})
+    result = apply_reroute(decision)
     assert result["exploration_result"] is None
 
 
@@ -151,7 +151,7 @@ def test_apply_reroute_phase_2_clears_task_plan() -> None:
         fix_summary={"competitor_names": ["钉钉"]},
         rationale="修正后重新生成 TaskPlan",
     )
-    result = apply_reroute(decision, {})
+    result = apply_reroute(decision)
     assert result["task_plan"] is None
 
 
@@ -164,7 +164,7 @@ def test_apply_reroute_phase_3_clears_analyst_task() -> None:
         fix_summary={},
         rationale="修正 AnalystTask",
     )
-    result = apply_reroute(decision, {})
+    result = apply_reroute(decision)
     assert result["analyst_task"] is None
 
 
@@ -177,5 +177,5 @@ def test_apply_reroute_logs_audit() -> None:
         fix_summary={},
         rationale="y",
     )
-    result = apply_reroute(decision, {})
+    result = apply_reroute(decision)
     assert result["audit_log"][0]["agent"] == "reroute"

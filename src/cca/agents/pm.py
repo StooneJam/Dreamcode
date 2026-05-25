@@ -201,8 +201,22 @@ def _read_defense(target: str, state: CCAState) -> DebatePosition:
     )
 
 
+# debate target → 对应的 state 任务字段
+_DEBATE_TARGET_TO_TASK_FIELD = {
+    "pm_taskplan": "task_plan",
+    "analyst_task": "analyst_task",
+    "report": "report_task",
+}
+
+
 def _apply_debate_result(result) -> dict:
-    """将 debate 结果转为 state 更新。"""
+    """将 debate 结果转为 state 更新。
+
+    rejected：被否决的 task 字段置 None，触发上游路由重派该阶段。
+    accepted_with_revision + revised_output：写回修订版（已通过 debate skill 的
+    with_structured_output schema 校验）。
+    accepted（无 revision）：仅记账，不动 task。
+    """
     updates: dict = {
         "debate_results": [result.model_dump()],
         "audit_log": [
@@ -214,17 +228,18 @@ def _apply_debate_result(result) -> dict:
             }
         ],
     }
+
+    task_field = _DEBATE_TARGET_TO_TASK_FIELD.get(result.target)
+
     if result.final_verdict == "rejected":
+        if task_field:
+            updates[task_field] = None
         return updates
 
-    if result.revised_output:
+    if result.revised_output and task_field:
+        updates[task_field] = result.revised_output
         if result.target == "pm_taskplan":
-            updates["task_plan"] = result.revised_output
             updates["competitor_names"] = result.revised_output.get("competitor_names", [])
-        elif result.target == "analyst_task":
-            updates["analyst_task"] = result.revised_output
-        elif result.target == "report":
-            updates["report_task"] = result.revised_output
 
     return updates
 
@@ -298,12 +313,27 @@ def _handle_debate_signal(signal: AgentSignal, state: CCAState) -> dict:
     return _apply_debate_result(result)
 
 
+_REROUTE_CONTEXT_KEYS = (
+    "exploration_result",
+    "task_plan",
+    "analyst_task",
+    "report_task",
+    "review_state",
+    "competitor_names",
+)
+
+
+def _build_reroute_context(state: CCAState) -> str:
+    """提取 reroute 根因分析所需的最小 state 切片。
+
+    刻意剔除 profiles / audit_log / debate_results / decision_log 等大对象，
+    避免 token 浪费——reroute 判断只看采集结果与任务派发，不需要档案明细。
+    """
+    slice_: dict = {k: state.get(k) for k in _REROUTE_CONTEXT_KEYS}
+    return json.dumps(slice_, ensure_ascii=False, default=str)
+
+
 def _handle_reroute_signal(signal: AgentSignal, state: CCAState) -> dict:
     """事实性信号 → reroute skill 根因分析 + 阶段回溯。"""
-    state_json = json.dumps(
-        {k: v for k, v in state.items() if k != "agent_signals"},
-        ensure_ascii=False,
-        default=str,
-    )
-    decision = reroute(signal, state_json)
-    return apply_reroute(decision, dict(state))
+    decision = reroute(signal, _build_reroute_context(state))
+    return apply_reroute(decision)

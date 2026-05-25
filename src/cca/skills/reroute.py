@@ -77,11 +77,8 @@ def reroute(signal: AgentSignal, state_json: str) -> RerouteDecision:
     return result
 
 
-def apply_reroute(decision: RerouteDecision, state: dict) -> dict:
-    """根据 reroute 决策更新 state 中的对应字段。
-
-    返回需要更新的 state 字段 dict，调用方 merge 回 graph state。
-    """
+def apply_reroute(decision: RerouteDecision) -> dict:
+    """根据 reroute 决策生成 state 更新 dict，调用方 merge 回 graph state。"""
     updates: dict = {}
 
     if decision.target_phase == "phase_1":
