@@ -1,0 +1,12 @@
+{
+  "name": "cca-appstore-scraper",
+  "version": "1.0.0",
+  "description": "App Store scraper for CCA project",
+  "main": "app_store_scraper.js",
+  "scripts": {
+    "scrape": "node app_store_scraper.js"
+  },
+  "dependencies": {
+    "app-store-scraper": "^0.18.0"
+  }
+}
