@@ -456,6 +456,30 @@ class DebateResult(BaseModel):
 # Collector/Insight/Analyst 主动向 PM 表达需求或挑战
 
 
+class ChallengePayload(BaseModel):
+    """
+    AgentSignal.payload 的结构化载荷。事实性信号和主观信号共用同一形态：
+    - 事实性信号（reroute 路径）：claim 描述问题，evidence 列已观测的数据/URL
+    - 主观信号（debate 路径）：claim 为挑战方的核心主张，evidence 为支撑材料
+
+    强约束 evidence 至少 1 条，避免出现"零证据挑战"的空壳调用。
+    """
+
+    claim: str = Field(description="挑战或问题的核心陈述")
+    evidence: list[str] = Field(
+        min_length=1,
+        description="支撑 claim 的事实/观测/数据点，至少 1 条",
+    )
+    observed_data: dict = Field(
+        default_factory=dict,
+        description="挑战方观测到的额外结构化数据，因 kind 而异，可为空",
+    )
+    suggested_fix: str | None = Field(
+        None,
+        description="可选：建议的修订方向",
+    )
+
+
 class AgentSignal(BaseModel):
     """
     Agent 反向通道信号。
@@ -474,7 +498,7 @@ class AgentSignal(BaseModel):
     from_agent: Literal["collector", "insight", "analyst", "report"]
     kind: Literal["data_gap", "pm_challenge", "insight_lead", "other"]
     target: str = Field(description="信号所指的 task_id 或 agent 名")
-    payload: dict = Field(description="信号正文，结构因 kind 而异")
+    payload: ChallengePayload = Field(description="结构化挑战/问题载荷")
     requires_debate: bool = Field(
         False,
         description="主观判断时 True，触发跨家族 debate；事实性信号 False",

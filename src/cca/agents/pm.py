@@ -155,31 +155,47 @@ def report_task_node(state: CCAState) -> dict:
 
 
 def _read_defense(target: str, state: CCAState) -> DebatePosition:
-    """从 state 记忆读取 PM 的辩护立场，零 LLM 调用。"""
-    task = state.get(target) or {}
+    """从 decision_log 读取 PM 的辩护立场，零 LLM 调用。
 
-    if target == "task_plan":
-        claim = task.get("rationale", "PM 基于 exploration_result 制定 TaskPlan")
-        evidence = [
-            f"product_type: {task.get('product_type', '')}",
-            f"competitor_names: {task.get('competitor_names', [])}",
-        ]
-    elif target == "analyst_task":
-        claim = f"focus_dimensions: {task.get('focus_dimensions', [])}"
-        evidence = [f"product_names: {task.get('product_names', [])}"]
-    elif target == "report_task":
-        claim = (
-            f"sections: {task.get('sections', [])}, audience: {task.get('target_audience', 'N/A')}"
+    target 是 state 字段名（task_plan / analyst_task / report_task），与
+    DecisionRecord.phase 同名。把该 phase 下所有决策的 rationale / 否决项 /
+    inputs_used 聚合成一份 defense，避免依赖 task 字段的字面值。
+
+    decision_log 内可能有同 phase 的重跑残留（add reducer 永不删），保守起见
+    全量带上——LLM critique 会聚焦最相关的部分。
+    """
+    log: list[dict] = state.get("decision_log", []) or []
+    relevant = [d for d in log if d.get("phase") == target]
+
+    if not relevant:
+        return DebatePosition(
+            agent_family=PM_FAMILY,
+            claim=f"PM {target} 决策（decision_log 中无对应记录）",
+            evidence=["state context"],
         )
-        evidence = [f"competitors: {task.get('competitors', [])}"]
-    else:
-        claim = "PM 决策"
-        evidence = ["state context"]
+
+    claims: list[str] = []
+    evidence: list[str] = []
+    for d in relevant:
+        dtype = d.get("decision_type", "other")
+        rationale = d.get("rationale", "")
+        claims.append(f"[{dtype}] {rationale}")
+        chosen = d.get("chosen")
+        if chosen:
+            evidence.append(f"chosen[{dtype}]={chosen}")
+        for alt in d.get("alternatives_considered", []) or []:
+            opt = alt.get("option")
+            reason = alt.get("rejected_reason")
+            if opt and reason:
+                evidence.append(f"否决 {opt}：{reason}")
+        for path in d.get("inputs_used", []) or []:
+            if path:
+                evidence.append(f"依据 {path}")
 
     return DebatePosition(
         agent_family=PM_FAMILY,
-        claim=claim,
-        evidence=[e for e in evidence if e] or ["决策上下文"],
+        claim=" | ".join(claims),
+        evidence=evidence or ["决策上下文"],
     )
 
 
@@ -262,11 +278,11 @@ def handle_signal_node(state: CCAState) -> dict:
 
 
 def _handle_debate_signal(signal: AgentSignal, state: CCAState) -> dict:
-    """主观信号 → 跨家族 debate。"""
+    """主观信号 → 跨家族 debate。直接读 signal.payload 的结构化 ChallengePayload。"""
     challenge = DebatePosition(
         agent_family=CHALLENGER_FAMILY,
-        claim=signal.payload.get("reason", ""),
-        evidence=[signal.payload.get("reason", "")],
+        claim=signal.payload.claim,
+        evidence=signal.payload.evidence,
     )
     defense = _read_defense(signal.target, state)
     debate_target = cast(DebateTarget, _TARGET_TO_DEBATE.get(signal.target, "pm_taskplan"))

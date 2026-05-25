@@ -14,7 +14,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from cca.llm.factory import gpt
-from cca.schema import AgentSignal, QAResult, ReportTask, ReviewUnit
+from cca.schema import AgentSignal, ChallengePayload, QAResult, ReportTask, ReviewUnit
 from cca.skills.call_report_reviewer import call_report_reviewer
 from cca.state import CCAState
 from cca.tools.chart import render_bar_chart, render_chart
@@ -121,7 +121,8 @@ def report_node(state: CCAState) -> dict:
 
     @tool
     def reject_report_task(
-        reason: str,
+        claim: str,
+        evidence: list[str],
         suggested_fix: str | None = None,
         requires_debate: bool = False,
     ) -> str:
@@ -132,6 +133,13 @@ def report_node(state: CCAState) -> dict:
         - 指定章节与现有数据严重不符，无法支撑（事实性，requires_debate=False）
         - 对目标产品定位或竞品选取有主观分歧（requires_debate=True，触发跨家族辩论）
 
+        参数：
+        - claim：问题/挑战的核心陈述，一句话讲清"哪里不对"
+        - evidence：支撑 claim 的事实/观测/数据点列表，至少 1 条；事实性信号填观测数据，
+          主观信号填支撑判断的依据
+        - suggested_fix：可选，建议的修订方向
+        - requires_debate：True 触发 PM 跨家族辩论；False 走 reroute 事实性纠错
+
         调用后继续按现有数据尽力完成报告；PM 收到信号后会修正任务并重新下发。
         """
         from datetime import datetime, timezone
@@ -139,7 +147,11 @@ def report_node(state: CCAState) -> dict:
             from_agent="report",
             kind="pm_challenge",
             target="report_task",
-            payload={"reason": reason, "suggested_fix": suggested_fix},
+            payload=ChallengePayload(
+                claim=claim,
+                evidence=evidence,
+                suggested_fix=suggested_fix,
+            ),
             requires_debate=requires_debate,
             ts=datetime.now(timezone.utc).isoformat(),
         )

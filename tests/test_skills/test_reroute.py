@@ -25,12 +25,17 @@ def _patch_reroute_gpt(monkeypatch: pytest.MonkeyPatch, response):
     monkeypatch.setattr("cca.skills.reroute.gpt", _FakeGPT(), raising=False)
 
 
+def _mk_payload(text: str, **extra) -> dict:
+    """ChallengePayload dict 形态。"""
+    return {"claim": text, "evidence": [text], **extra}
+
+
 def _make_signal(**overrides) -> AgentSignal:
     defaults = {
         "from_agent": "collector",
         "kind": "data_gap",
         "target": "collector:企业微信",
-        "payload": {"reason": "定价数据缺失"},
+        "payload": _mk_payload("定价数据缺失"),
         "requires_debate": False,
         "ts": "2026-05-23T00:00:00Z",
     }
@@ -63,7 +68,7 @@ def test_reroute_stale_competitor_returns_phase_1(
 
     signal = _make_signal(
         from_agent="analyst",
-        payload={"reason": "竞品 X 已停服 6 个月"},
+        payload=_mk_payload("竞品 X 已停服 6 个月"),
     )
     decision = RerouteDecision(
         target_phase="phase_1",
@@ -86,7 +91,7 @@ def test_reroute_unavailable_dimension_returns_phase_3(
     signal = _make_signal(
         from_agent="analyst",
         kind="pm_challenge",
-        payload={"reason": "指定的 focus_dimensions 中 'AI 助手' 数据不足"},
+        payload=_mk_payload("指定的 focus_dimensions 中 'AI 助手' 数据不足"),
     )
     decision = RerouteDecision(
         target_phase="phase_3",
@@ -107,7 +112,10 @@ def test_reroute_low_confidence_forces_phase_1(
 
     signal = _make_signal(
         from_agent="collector",
-        payload={"reason": "多家竞品的定价和用户口碑数据大面积缺失", "data_confidence": 0.2},
+        payload=_mk_payload(
+            "多家竞品的定价和用户口碑数据大面积缺失",
+            observed_data={"data_confidence": 0.2},
+        ),
     )
     decision = RerouteDecision(
         target_phase="phase_1",

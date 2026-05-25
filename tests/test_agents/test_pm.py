@@ -35,6 +35,11 @@ def _mk_decision(decision_type: str = "other", **overrides) -> DecisionRecord:
     return DecisionRecord(**defaults)
 
 
+def _mk_payload(text: str) -> dict:
+    """构造 ChallengePayload 的 dict 形态供 AgentSignal.payload 用。"""
+    return {"claim": text, "evidence": [text]}
+
+
 class _FakeStructuredLLM:
     """模拟 with_structured_output() 返回的可调用对象。"""
 
@@ -265,61 +270,130 @@ def test_prompt_file_loads() -> None:
 # ── _read_defense ──────────────────────────────────────────────────────
 
 
-def test_read_defense_task_plan() -> None:
+def _mk_decision_dict(
+    phase: str,
+    decision_type: str,
+    rationale: str,
+    chosen: dict | None = None,
+    alternatives: list[dict] | None = None,
+    inputs_used: list[str] | None = None,
+) -> dict:
+    """构造 decision_log 中的单条记录 dict（已 model_dump 形态）。"""
+    return DecisionRecord(
+        phase=phase,  # type: ignore[arg-type]
+        decision_type=decision_type,
+        rationale=rationale,
+        chosen=chosen or {},
+        alternatives_considered=alternatives or [],  # type: ignore[arg-type]
+        inputs_used=inputs_used or [],
+    ).model_dump()
+
+
+def test_read_defense_task_plan_reads_decision_log() -> None:
+    """defense 不再从 task_plan 字段拼装，改从 decision_log 同 phase 决策聚合。"""
     from cca.agents.pm import _read_defense
 
     state = _make_minimal_state(
-        task_plan={
-            "rationale": "exploration 确认竞品列表",
-            "product_type": "协作办公SaaS",
-            "competitor_names": ["钉钉", "企业微信"],
-        },
+        decision_log=[
+            _mk_decision_dict(
+                phase="task_plan",
+                decision_type="competitor_selection",
+                rationale="exploration 确认头部市占率竞品",
+                chosen={"competitors": ["钉钉", "企业微信"]},
+                alternatives=[
+                    {"option": "腾讯会议", "rejected_reason": "属视频会议工具，不对齐"}
+                ],
+                inputs_used=["exploration_result.competitor_names"],
+            ),
+        ],
     )
     pos = _read_defense("task_plan", state)
     assert pos.agent_family == "gpt-5"
-    assert "exploration 确认竞品列表" in pos.claim
-    assert any("协作办公SaaS" in e for e in pos.evidence)
+    assert "exploration 确认头部市占率竞品" in pos.claim
+    assert "[competitor_selection]" in pos.claim
     assert any("钉钉" in e for e in pos.evidence)
+    assert any("腾讯会议" in e for e in pos.evidence)
+    assert any("exploration_result.competitor_names" in e for e in pos.evidence)
 
 
-def test_read_defense_analyst_task() -> None:
+def test_read_defense_analyst_task_reads_decision_log() -> None:
     from cca.agents.pm import _read_defense
 
     state = _make_minimal_state(
-        analyst_task={
-            "focus_dimensions": ["视频会议", "定价"],
-            "product_names": ["飞书", "钉钉"],
-        },
+        decision_log=[
+            _mk_decision_dict(
+                phase="analyst_task",
+                decision_type="analyst_focus",
+                rationale="视频会议是用户 query 显式提到的核心维度",
+                chosen={"focus_dimensions": ["视频会议", "定价"]},
+            ),
+        ],
     )
     pos = _read_defense("analyst_task", state)
-    assert "视频会议" in pos.claim
-    assert any("飞书" in e for e in pos.evidence)
+    assert "视频会议是用户 query 显式提到的核心维度" in pos.claim
+    assert any("视频会议" in e for e in pos.evidence)
 
 
-def test_read_defense_report_task() -> None:
+def test_read_defense_report_task_reads_decision_log() -> None:
     from cca.agents.pm import _read_defense
 
     state = _make_minimal_state(
-        report_task={
-            "sections": ["执行摘要", "SWOT 分析"],
-            "target_audience": "产品负责人",
-            "competitors": ["钉钉"],
-        },
+        decision_log=[
+            _mk_decision_dict(
+                phase="report_task",
+                decision_type="report_structure",
+                rationale="按 SWOT 高亮项组织章节",
+                chosen={"sections": ["执行摘要", "SWOT 分析"]},
+            ),
+            _mk_decision_dict(
+                phase="report_task",
+                decision_type="audience_choice",
+                rationale="用户 query 表明面向产品负责人",
+                chosen={"target_audience": "产品负责人"},
+            ),
+        ],
     )
     pos = _read_defense("report_task", state)
-    assert "执行摘要" in pos.claim
-    assert "产品负责人" in pos.claim
-    assert any("钉钉" in e for e in pos.evidence)
+    # 两条决策都进入 claim
+    assert "[report_structure]" in pos.claim
+    assert "[audience_choice]" in pos.claim
+    assert "按 SWOT 高亮项组织章节" in pos.claim
+    assert "用户 query 表明面向产品负责人" in pos.claim
 
 
-def test_read_defense_unknown_target_falls_back() -> None:
+def test_read_defense_falls_back_when_no_decision() -> None:
+    """decision_log 中无对应 phase 时，给最小占位 defense 而非崩溃。"""
     from cca.agents.pm import _read_defense
 
     state = _make_minimal_state()
-    pos = _read_defense("unknown_key", state)
+    pos = _read_defense("task_plan", state)
     assert pos.agent_family == "gpt-5"
-    assert pos.claim == "PM 决策"
+    assert "decision_log 中无对应记录" in pos.claim
     assert pos.evidence == ["state context"]
+
+
+def test_read_defense_ignores_decisions_from_other_phases() -> None:
+    """task_plan 阶段的 defense 不应混入 initial_brief / analyst_task 的决策。"""
+    from cca.agents.pm import _read_defense
+
+    state = _make_minimal_state(
+        decision_log=[
+            _mk_decision_dict(
+                phase="initial_brief",
+                decision_type="target_product_selection",
+                rationale="不应出现在 task_plan defense",
+            ),
+            _mk_decision_dict(
+                phase="task_plan",
+                decision_type="competitor_selection",
+                rationale="应出现在 task_plan defense",
+                chosen={"competitors": ["X"]},
+            ),
+        ],
+    )
+    pos = _read_defense("task_plan", state)
+    assert "应出现在 task_plan defense" in pos.claim
+    assert "不应出现在 task_plan defense" not in pos.claim
 
 
 # ── _apply_debate_result ───────────────────────────────────────────────
@@ -413,13 +487,13 @@ def test_handle_signal_node_debate_dispatch(monkeypatch: pytest.MonkeyPatch) -> 
         from_agent="analyst",
         kind="pm_challenge",
         target="task_plan",
-        payload={"reason": "竞品列表不完整"},
+        payload=_mk_payload("竞品列表不完整"),
         requires_debate=True,
         ts="2026-05-23T00:00:00Z",
     )
     state = _make_minimal_state(
         agent_signals=[signal.model_dump()],
-        task_plan={"rationale": "test", "product_type": "SaaS", "competitor_names": ["钉钉"]},
+        task_plan={"product_type": "SaaS", "competitor_names": ["钉钉"]},
     )
     result = handle_signal_node(state)
     assert "debate_results" in result
@@ -437,7 +511,7 @@ def test_handle_signal_node_debate_from_payload(monkeypatch: pytest.MonkeyPatch)
         from_agent="insight",
         kind="other",
         target="analyst_task",
-        payload={"reason": "维度不足"},
+        payload=_mk_payload("维度不足"),
         requires_debate=True,
         ts="2026-05-23T00:00:00Z",
     )
@@ -470,7 +544,7 @@ def test_handle_signal_node_reroute_dispatch(monkeypatch: pytest.MonkeyPatch) ->
         from_agent="collector",
         kind="data_gap",
         target="collector:企业微信",
-        payload={"reason": "定价数据缺失"},
+        payload=_mk_payload("定价数据缺失"),
         requires_debate=False,
         ts="2026-05-23T00:00:00Z",
     )
@@ -506,7 +580,7 @@ def test_handle_signal_node_multiple_signals(monkeypatch: pytest.MonkeyPatch) ->
         from_agent="analyst",
         kind="pm_challenge",
         target="task_plan",
-        payload={},
+        payload=_mk_payload("挑战 task_plan"),
         requires_debate=True,
         ts="2026-05-23T00:00:00Z",
     )
@@ -514,13 +588,13 @@ def test_handle_signal_node_multiple_signals(monkeypatch: pytest.MonkeyPatch) ->
         from_agent="collector",
         kind="data_gap",
         target="collector:X",
-        payload={},
+        payload=_mk_payload("数据缺口"),
         requires_debate=False,
         ts="2026-05-23T00:00:00Z",
     )
     state = _make_minimal_state(
         agent_signals=[debate_signal.model_dump(), reroute_signal.model_dump()],
-        task_plan={"rationale": "test"},
+        task_plan={"product_type": "S"},
     )
     result = handle_signal_node(state)
     assert "debate_results" in result
@@ -553,7 +627,7 @@ def test_handle_signal_node_multiple_debates_all_preserved(
         from_agent="analyst",
         kind="pm_challenge",
         target="task_plan",
-        payload={"reason": "竞品列表不完整"},
+        payload=_mk_payload("竞品列表不完整"),
         requires_debate=True,
         ts="2026-05-23T00:00:00Z",
     )
@@ -561,13 +635,13 @@ def test_handle_signal_node_multiple_debates_all_preserved(
         from_agent="insight",
         kind="other",
         target="analyst_task",
-        payload={"reason": "维度不足"},
+        payload=_mk_payload("维度不足"),
         requires_debate=True,
         ts="2026-05-23T00:00:01Z",
     )
     state = _make_minimal_state(
         agent_signals=[sig1.model_dump(), sig2.model_dump()],
-        task_plan={"rationale": "t", "product_type": "SaaS", "competitor_names": ["X"]},
+        task_plan={"product_type": "SaaS", "competitor_names": ["X"]},
         analyst_task={"focus_dimensions": ["d"], "product_names": ["P"]},
     )
     result = handle_signal_node(state)
@@ -594,14 +668,14 @@ def test_handle_signal_node_skips_already_consumed(
         from_agent="analyst",
         kind="pm_challenge",
         target="task_plan",
-        payload={"reason": "x"},
+        payload=_mk_payload("x"),
         requires_debate=True,
         ts="2026-05-23T00:00:00Z",
     )
     state = _make_minimal_state(
         agent_signals=[signal.model_dump()],
         consumed_signal_ids=[signal.signal_id],
-        task_plan={"rationale": "t"},
+        task_plan={"product_type": "S"},
     )
     result = handle_signal_node(state)
     assert result == {}
@@ -624,13 +698,13 @@ def test_handle_signal_node_returns_consumed_ids(
         from_agent="analyst",
         kind="pm_challenge",
         target="task_plan",
-        payload={"reason": "x"},
+        payload=_mk_payload("x"),
         requires_debate=True,
         ts="2026-05-23T00:00:00Z",
     )
     state = _make_minimal_state(
         agent_signals=[signal.model_dump()],
-        task_plan={"rationale": "t"},
+        task_plan={"product_type": "S"},
     )
     result = handle_signal_node(state)
     assert result["consumed_signal_ids"] == [signal.signal_id]
@@ -652,7 +726,7 @@ def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -
         from_agent="analyst",
         kind="pm_challenge",
         target="task_plan",
-        payload={"reason": "old"},
+        payload=_mk_payload("old"),
         requires_debate=True,
         ts="2026-05-23T00:00:00Z",
     )
@@ -660,14 +734,14 @@ def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -
         from_agent="insight",
         kind="other",
         target="analyst_task",
-        payload={"reason": "new"},
+        payload=_mk_payload("new"),
         requires_debate=True,
         ts="2026-05-23T00:00:01Z",
     )
     state = _make_minimal_state(
         agent_signals=[old.model_dump(), new.model_dump()],
         consumed_signal_ids=[old.signal_id],
-        task_plan={"rationale": "t"},
+        task_plan={"product_type": "S"},
         analyst_task={"focus_dimensions": ["d"], "product_names": ["P"]},
     )
     result = handle_signal_node(state)
