@@ -8,6 +8,8 @@ from cca.schema import (
     SWOT,
     AnalystTask,
     CollectTask,
+    DecisionAlternative,
+    DecisionRecord,
     Dimension,
     Evidence,
     Fact,
@@ -296,6 +298,86 @@ def test_user_sentiment_rejects_out_of_range_rating() -> None:
 def test_product_profile_rejects_out_of_range_confidence() -> None:
     with pytest.raises(ValidationError):
         ProductProfile(product_name="飞书", data_confidence=1.5)
+
+
+# ---------------------------------------------------------------------------
+# DecisionRecord
+# ---------------------------------------------------------------------------
+
+
+def test_decision_record_minimal_valid() -> None:
+    record = DecisionRecord(
+        phase="task_plan",
+        decision_type="competitor_selection",
+        chosen={"competitors": ["钉钉", "企业微信"]},
+        rationale="基于 exploration_result 中头部市占率确定",
+        ts="2026-05-25T10:00:00+08:00",
+    )
+    assert record.decision_id.startswith("D-")
+    assert record.alternatives_considered == []
+    assert record.inputs_used == []
+
+
+def test_decision_record_full_fields() -> None:
+    record = DecisionRecord(
+        phase="task_plan",
+        decision_type="competitor_selection",
+        chosen={"competitors": ["钉钉", "企业微信"]},
+        alternatives_considered=[
+            DecisionAlternative(
+                option="腾讯会议",
+                rejected_reason="赛道偏视频会议工具，与协作平台主线不对齐",
+            ),
+        ],
+        rationale="头部市占率 + 同协作平台赛道",
+        inputs_used=[
+            "exploration_result.competitor_names",
+            "exploration_result.product_type",
+        ],
+        ts="2026-05-25T10:00:00+08:00",
+    )
+    assert len(record.alternatives_considered) == 1
+    assert record.alternatives_considered[0].option == "腾讯会议"
+    assert len(record.inputs_used) == 2
+
+
+def test_decision_record_id_unique_across_instances() -> None:
+    a = DecisionRecord(
+        phase="initial_brief",
+        decision_type="other",
+        chosen={},
+        rationale="x",
+        ts="2026-05-25T10:00:00+08:00",
+    )
+    b = DecisionRecord(
+        phase="initial_brief",
+        decision_type="other",
+        chosen={},
+        rationale="x",
+        ts="2026-05-25T10:00:00+08:00",
+    )
+    assert a.decision_id != b.decision_id
+
+
+def test_decision_record_rejects_invalid_phase() -> None:
+    with pytest.raises(ValidationError):
+        DecisionRecord(
+            phase="phase_x",  # type: ignore[arg-type]
+            decision_type="other",
+            chosen={},
+            rationale="x",
+            ts="2026-05-25T10:00:00+08:00",
+        )
+
+
+def test_decision_record_requires_rationale() -> None:
+    with pytest.raises(ValidationError):
+        DecisionRecord(
+            phase="task_plan",
+            decision_type="other",
+            chosen={},
+            ts="2026-05-25T10:00:00+08:00",
+        )  # type: ignore[call-arg]
 
 
 def test_pricing_info_rejects_invalid_model() -> None:

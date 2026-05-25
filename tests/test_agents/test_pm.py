@@ -60,6 +60,7 @@ def _make_minimal_state(**overrides) -> CCAState:
         "debate_results": [],
         "agent_signals": [],
         "consumed_signal_ids": [],
+        "decision_log": [],
     }
     state.update(overrides)  # type: ignore[typeddict-unknown-key]
     return state

@@ -318,6 +318,58 @@ class ReviewUnit(BaseModel):
     reviewed_at: str | None = Field(None, description="ISO 8601 时间戳")
 
 
+# 决策档案：PM 每阶段产出 task 时同步落盘"为什么这么决定"，
+# 支撑离线 Q&A（用户问"为什么选这几家竞品"）+ debate defense（PM 应辩时回读 rationale）
+
+
+class DecisionAlternative(BaseModel):
+    """考虑过但被拒绝的备选项。"""
+
+    option: str = Field(description="备选项内容，如'腾讯会议'、'按维度优先级 A 方案'")
+    rejected_reason: str = Field(description="为什么没选这个，一句话讲清拒绝逻辑")
+
+
+class DecisionRecord(BaseModel):
+    """
+    PM 单次决策档案。一个 phase 通常含多条 DecisionRecord（如 task_plan 阶段
+    同时决定竞品列表 / 维度优先级 / 任务分配，应拆 3 条而非塞进一条）。
+    """
+
+    decision_id: str = Field(
+        default_factory=lambda: f"D-{uuid4().hex[:8]}",
+        description="决策唯一标识，可被报告段落引用（如脚注 [D-a1b2c3d4]）",
+    )
+    phase: Literal["initial_brief", "task_plan", "analyst_task", "report_task"]
+    decision_type: str = Field(
+        description=(
+            "决策类型，自由字符串。建议从以下值中选取以保持一致性："
+            "competitor_selection（竞品列表选取）/ "
+            "product_type_inference（产品赛道判定）/ "
+            "dimension_priority（维度优先级）/ "
+            "task_allocation（任务分派）/ "
+            "analyst_focus（Analyst 重点对比项）/ "
+            "report_structure（报告章节组织）/ "
+            "audience_choice（读者类型）/ "
+            "other（未归类）"
+        )
+    )
+    chosen: dict = Field(description="最终选择，结构因 decision_type 而异")
+    alternatives_considered: list[DecisionAlternative] = Field(
+        default_factory=list,
+        description="考虑过但拒绝的备选项；为空表示没有显式备选",
+    )
+    rationale: str = Field(description="为什么这么决定，一段话讲清逻辑，必填")
+    inputs_used: list[str] = Field(
+        default_factory=list,
+        description=(
+            "决策依据的 state 字段路径，便于 Q&A 回读原始上下文。"
+            "格式：点路径，如 'exploration_result.competitor_names' / "
+            "'profiles.飞书.dimensions[0].facts'"
+        ),
+    )
+    ts: str = Field(description="ISO 8601 时间戳")
+
+
 # debate 应用于 3 个 checkpoint：
 #    1. PM 二轮 TaskPlan（精化竞品 / 产品类型）
 #    2. PM 三轮 AnalystTask 后的 SWOT 校验
