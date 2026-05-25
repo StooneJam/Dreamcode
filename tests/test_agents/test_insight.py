@@ -161,9 +161,13 @@ class TestInsightNode:
         assert result["profiles"]["企业微信"]["sentiment"] is not None
 
     def test_collector_data_preserved(self, mock_state):
-        # Insight 不应覆盖 Collector 写入的 dimensions/pricing 等字段
+        # insight_node 只返回增量 {"sentiment": ...}，由 _merge_profiles reducer 保留 Collector 字段。
+        # 这里模拟 LangGraph 的 reducer 合并行为，验证合并后 dimensions 不丢失。
+        from cca.state import _merge_profiles
         result = self._invoke(mock_state)
-        assert "dimensions" in result["profiles"]["钉钉"]
+        merged = _merge_profiles(mock_state["profiles"], result["profiles"])
+        assert "dimensions" in merged["钉钉"]
+        assert "sentiment" in merged["钉钉"]
 
     def test_audit_log_records_products(self, mock_state):
         result = self._invoke(mock_state)

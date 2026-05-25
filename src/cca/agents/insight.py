@@ -71,6 +71,7 @@ def insight_node(state: CCAState) -> dict:
         [t.model_dump() for t in task_plan.insight_tasks],
         ensure_ascii=False,
     )
+    competitor_names_str = ", ".join(task_plan.competitor_names)
     profiles_hint = json.dumps(
         {name: {"product_type": p.get("product_type"), "website": p.get("website")}
          for name, p in profiles.items()},
@@ -93,6 +94,7 @@ def insight_node(state: CCAState) -> dict:
             SystemMessage(content=_load_prompt()),
             HumanMessage(content=(
                 f"## InsightTask 列表\n```json\n{tasks_json}\n```\n\n"
+                f"## 竞品列表（run_questionnaire 的 competitor_names 参数用这个）\n{competitor_names_str}\n\n"
                 f"## 已知产品基本信息（来自 Collector）\n```json\n{profiles_hint}\n```\n\n"
                 f"## 情感分析策略\n{sentiment_hint}\n\n"
                 "请依次完成每个产品的情感分析，最终对每个产品调用 finalize_sentiment。"
@@ -104,14 +106,16 @@ def insight_node(state: CCAState) -> dict:
     sentiments = _extract_sentiments(messages)
     signals = _extract_signals(messages)
 
-    # 将 sentiment 合并回已有 profiles（不覆盖 Collector 写入的其他字段）
-    updated_profiles = {
-        name: {**profile, "sentiment": sentiments[name]} if name in sentiments else profile
-        for name, profile in profiles.items()
+    # 只返回增量 sentiment 更新，由 _merge_profiles reducer 合并入已有 profiles
+    # 避免并发场景下读出旧值再整体写回导致 Collector 数据被覆盖
+    sentiment_updates = {
+        name: {"sentiment": sentiments[name]}
+        for name in sentiments
+        if name in profiles
     }
 
     return {
-        "profiles": updated_profiles,
+        "profiles": sentiment_updates,
         "agent_signals": signals,
         "audit_log": [{
             "agent": "insight",

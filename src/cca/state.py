@@ -8,6 +8,21 @@ from operator import add
 from typing import Annotated, Literal, TypedDict
 
 
+def _merge_profiles(left: dict[str, dict], right: dict[str, dict]) -> dict[str, dict]:
+    """profiles 的 merge reducer：同 key 时右侧字段覆盖左侧，保留双方独有字段。
+
+    Collector 写 dimensions/pricing/sources，Insight 写 sentiment，Analyst 写 swot。
+    并发写入时各自只更新自己的字段，不丢弃对方已写的字段。
+    """
+    merged = dict(left)
+    for name, profile in right.items():
+        if name in merged:
+            merged[name] = {**merged[name], **profile}
+        else:
+            merged[name] = profile
+    return merged
+
+
 class CCAState(TypedDict):
     """Agent 间共享的工作台。
 
@@ -28,7 +43,8 @@ class CCAState(TypedDict):
     report_task: dict | None             # ReportTask.model_dump() - PM 阶段四填
 
     # 各产品档案（Collector / Insight / Analyst / PM 逐层填充）
-    profiles: dict[str, dict]     # {product_name: ProductProfile.model_dump()}
+    # _merge_profiles reducer：并发写入时各 Agent 只覆盖自己的字段，不清除其他 Agent 已写字段
+    profiles: Annotated[dict[str, dict], _merge_profiles]
 
     # PM 评审台账，累加每一轮评审产出
     # status=forced 的项即报告中"未经充分审核"段落的数据源
