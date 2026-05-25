@@ -48,21 +48,26 @@ FAKE_REPORT_MD = """## 执行摘要
 """
 
 
-def _make_ai_message(content: str):
-    msg = MagicMock()
-    msg.__class__.__name__ = "AIMessage"
-    from langchain_core.messages import AIMessage
-    return AIMessage(content=content)
-
-
 def _make_tool_message(name: str, content: str):
     from langchain_core.messages import ToolMessage
     return ToolMessage(content=content, name=name, tool_call_id="fake-id")
 
 
-def _fake_agent_messages(include_pdf: bool = True, include_reviewer: bool = False):
+def _make_ai_message_with_render_pdf(markdown_content: str) -> object:
+    """构造带 render_pdf tool_call 的 AIMessage，匹配 _extract_final_md 的提取逻辑。"""
     from langchain_core.messages import AIMessage
-    msgs = [AIMessage(content=FAKE_REPORT_MD)]
+    return AIMessage(
+        content="",
+        tool_calls=[{
+            "id": "fake-tc-id",
+            "name": "render_pdf",
+            "args": {"markdown_content": markdown_content, "target_product": "飞书"},
+        }],
+    )
+
+
+def _fake_agent_messages(include_pdf: bool = True, include_reviewer: bool = False):
+    msgs = [_make_ai_message_with_render_pdf(FAKE_REPORT_MD)]
     if include_pdf:
         msgs.append(_make_tool_message("render_pdf", "output/report_飞书.pdf"))
     if include_reviewer:
@@ -192,14 +197,16 @@ class TestSerializeProfiles:
 class TestBuildInitialMessage:
     def test_contains_task_fields(self, mock_state):
         report_task = ReportTask(**mock_state["report_task"])
-        msg = _build_initial_message(mock_state, report_task)
+        profiles_json = _serialize_profiles(mock_state["profiles"], set())
+        msg = _build_initial_message(report_task, profiles_json)
         assert "飞书" in msg
         assert "产品负责人" in msg
         assert "执行摘要" in msg
 
     def test_contains_profiles_json(self, mock_state):
         report_task = ReportTask(**mock_state["report_task"])
-        msg = _build_initial_message(mock_state, report_task)
+        profiles_json = _serialize_profiles(mock_state["profiles"], set())
+        msg = _build_initial_message(report_task, profiles_json)
         assert "钉钉" in msg
         assert "企业微信" in msg
 
@@ -225,8 +232,9 @@ class TestExtractHelpers:
 class TestReportNode:
     def _invoke_node(self, mock_state, extra_messages=None):
         msgs = _fake_agent_messages(include_pdf=True) + (extra_messages or [])
-        with patch("cca.agents.qa_report._agent") as mock_agent:
-            mock_agent.invoke.return_value = {"messages": msgs}
+        mock_agent = MagicMock()
+        mock_agent.invoke.return_value = {"messages": msgs}
+        with patch("cca.agents.qa_report.create_react_agent", return_value=mock_agent):
             from cca.agents.qa_report import report_node
             return report_node(mock_state)
 
@@ -240,8 +248,9 @@ class TestReportNode:
         assert isinstance(result["report_md"], str)
         assert len(result["report_md"]) > 0
 
-    def test_report_status_passed_by_default(self, mock_state):
-        result = self._invoke_node(mock_state)
+    def test_report_status_passed_by_default(self, mock_state_with_reviewer):
+        # reviewer 开启但 fake messages 里无 reviewer 消息 → _extract_reviewer_result 返回默认 passed=True
+        result = self._invoke_node(mock_state_with_reviewer)
         assert result["report_status"] == "passed"
 
     def test_pdf_path_extracted(self, mock_state):
@@ -259,5 +268,5 @@ class TestReportNode:
                      failed_checks=["图文不一致"]).model_dump_json(),
         )
         result = self._invoke_node(mock_state_with_reviewer, extra_messages=[reviewer_msg])
-        assert result["report_status"] == "unreviewed"
+        assert result["report_status"] == "failed"   # reviewer 开启且返回 passed=False → failed
         assert result["qa_results"][0]["passed"] is False

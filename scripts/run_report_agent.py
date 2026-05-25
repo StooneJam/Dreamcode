@@ -20,7 +20,8 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 _root = Path(__file__).parent.parent
-sys.path.insert(0, str(_root / "tests"))
+sys.path.insert(0, str(_root / "src"))    # 让 `cca` 包可被 import（无需 pip install -e .）
+sys.path.insert(0, str(_root / "tests"))  # 让 fixtures 可被 import
 
 import os
 os.chdir(_root)
