@@ -48,9 +48,10 @@ pillow>=10.0.0
 pandas>=2.2.0
 numpy>=1.26.0
 matplotlib>=3.8.0
-scikit-learn>=1.4.0               # NMF 主题提取
+scikit-learn>=1.4.0               # Insight NMF 主题提取（cca/utils/nlp_utils.py）
 
-# NLP 推理（BERT 情感分类，CPU 即可）
+# NLP 推理（Insight BERT 情感分类；CPU 即可，无需 GPU）
+# transformers 推理路径同时也是 bert_finetune 训练的依赖；torch 是 transformers backend
 transformers>=4.40.0
 torch>=2.1.0
 
