@@ -663,38 +663,46 @@ def run_debate(
 
 ---
 
-## D-032 · 用户文档处理架构：domain_seed_node 蒸馏写 state，删除 dimension_discovery skill
-**Status**: Accepted · **Date**: 2026-05-25
+## D-032 · 用户文档处理架构：PM phase 1 多模态原生消化文档，删除 dimension_discovery skill
+**Status**: Revised (2026-05-25) · **Date**: 2026-05-25
 **Used by**: Collector exploration_node、未来 Insight / Analyst 的 focus dimensions
 **Replaces**: V1 占位骨架 `cca/skills/dimension_discovery/`（**删除**，详见下方"取消 skill 抽象"段）
 
-**Context**：实现 `dimension_discovery` skill 前讨论了一个根本架构选择——**用户上传的文档**（PDF / Word / 市场调研报告）如何被多个 agent 消费？讨论中提出了几个候选：
+**修订说明 (2026-05-25)**：初版决策选了"独立 `domain_seed_node` 蒸馏写 state"。当天复盘时发现：用户上传的文档**本质上是用户对 PM 的 brief**，跟 user_query 同源（一个是几十字指令，一个是几千字背景）；GPT-5 既是 PM 的模型且原生支持多模态，让 PM 直接消化文档既省一个节点，又让 PM 的 TaskPlan / AnalystTask 因看到完整上下文而更准确。本修订改为**让 PM phase 1 直接读文档，产出 InitialBrief + 蒸馏的 DomainSeed**。其余设计（蒸馏 over RAG / 不塞全文 / 删 skill）不变。
 
-1. **PM phase 1 自己读文档**：违反 D-020 "PM 纯规划无工具"
-2. **每个 agent 各自读**：重复 LLM 抽取，token 浪费
-3. **塞全文到 state**：state 膨胀（30 页 PDF ~50k 字，checkpoint 序列化拖慢）+ 下游每次读 state 都重复消费同一段原文
+**Context**：实现 `dimension_discovery` skill 前讨论了一个根本架构选择——**用户上传的文档**（PDF / Word / 市场调研报告）如何被多个 agent 消费？候选方案：
+
+1. **PM phase 1 自己读文档** ← **最终选择（本次修订）**：GPT-5 多模态原生支持，PM 同时拿到 user_query + 文档做规划
+2. **每个 agent 各自读**：重复 LLM 抽取，token 浪费 + 不一致风险
+3. **塞全文到 state**：state 膨胀（30 页 PDF ~50k 字，checkpoint 序列化拖慢）+ 下游重复消费
 4. **经典 RAG**（chunks + embedding + 向量库）：跟项目零 RAG 基础不对齐，加 chromadb / sentence-transformers 等依赖，起步 ~1.5 天工程成本
-5. **蒸馏式预处理**：pdf_reader 抽全文 → 一次 LLM 蒸馏成结构化 hint dict 写 state.domain_seed → 多 agent 共享
+5. **独立 `domain_seed_node` 蒸馏写 state**：初版决策，被本次修订替代
 
-**Decision**：选 **方案 5（蒸馏写 state）**。
+**对 D-020 的澄清**：D-020 "PM 纯规划无工具" 的本意是"PM 不联网 / 不爬数据 / 不做 ReAct 工具循环"，**不是** "PM 不能读取用户提供的任何输入"。读 user-uploaded PDF 是 planning input，跟读 user_query 字符串本质相同，只是介质不同。
+
+**Decision**：选 **方案 1（PM phase 1 多模态原生）**。
 
 具体设计：
-- 新增独立节点 `domain_seed_node`，位于 PM phase 1 **之前**
-- 用 `pdf_reader` / `docx_reader` 抽全文 → DeepSeek 单次蒸馏 → 写 `state.domain_seed` 结构化字段
-- 状态 dict 形态：
+- `state.user_files: list[str] | None` 新增字段，承载 CLI/Streamlit 上传的文件路径
+- PM `initial_brief_node` 改造：
+  - 输入除 user_query 外，**多模态 message** 附带 `state.user_files` 文档内容（GPT-5 多模态直传；langchain-openai 不支持原生 PDF 时回落到 `pdf_reader` 抽文本喂 prompt）
+  - 输出从 `InitialBriefOutput` 扩展为同时含 `domain_seed: DomainSeed | None` 字段
+- 新增 `DomainSeed` Pydantic schema，形态：
   ```python
-  state.domain_seed: dict | None = {
-      "source_files": ["uploads/market_report.pdf"],   # 路径，留 lazy 重读通道
-      "extracted_at": "ISO 8601",
-      "dimension_candidates": list[str],                # ≤ 20 项
-      "competitor_mentions": list[str],                 # ≤ 10 项
-      "product_type_hint": str,                         # 1 句
-      "terminology": dict[str, str],                    # ≤ 30 条键值对
-  }
+  class DomainSeed(BaseModel):
+      source_files: list[str]                                    # 路径，留 lazy 重读通道
+      dimension_candidates: list[str] = Field(max_length=20)    # 文档中提到的对比维度
+      competitor_mentions: list[str] = Field(max_length=10)     # 文档中提到的竞品
+      product_type_hint: str | None = None                       # 1 句产品赛道判断
+      terminology: dict[str, str] = Field(default_factory=dict)  # ≤ 30 条术语
+      extracted_at: str = Field(default_factory=_now_iso)
   ```
-- **不存原文 / 不存 raw_excerpt 字段**——state 控制在 ~2KB
-- 用户未上传文件时 `state.domain_seed = None`，下游 skill 走 `from_web` 兜底链
+- `state.domain_seed: dict | None` 仍保留为独立 state 字段（PM 是 producer，下游 Collector / Insight / Analyst 是 consumer）
+- **不存原文 / 不存 raw_excerpt**——state.domain_seed 控制在 ~2KB
+- 用户未上传文件时 `state.user_files = None` → PM phase 1 跳过文档消化 → `state.domain_seed = None`，下游 agent 走联网兜底
 - 现有 V1 骨架 `dimension_discovery/from_memory.py` **删除**——依赖训练知识违反用户"减少幻觉"诉求
+
+**第一版限定单文件**：multi-file 场景 PM phase 1 prompt token 会爆，且 demo 不需要。`user_files` 列表传 ≥ 2 个时取第一个 + 在 audit_log 记 warning。
 
 **Why not 经典 RAG**：
 
@@ -720,19 +728,21 @@ def run_debate(
 
 **答辩叙事**：
 
-> 我们评估过经典 RAG，对**单文档 + 预设查询**场景判定为过度设计。我们用了 lightweight 蒸馏：pdf_reader 抽全文 → 单次 LLM 提取结构化 hint 写 state.domain_seed，原文路径保留供 lazy 重读。这是"无向量库的 RAG 思路"——retrieval 等于蒸馏阶段的指令式抽取，generation 等于后续 agent 用 hint。
+> 我们评估过经典 RAG，对**单文档 + 预设查询**场景判定为过度设计。我们用了**多模态 lightweight 蒸馏**：用户上传文档（PDF/Word）跟 user_query 一起作为 PM phase 1 的输入，由 GPT-5 多模态原生消化，同次 LLM 调用产出 InitialBrief + 结构化 DomainSeed hint。这是"无向量库的 RAG 思路"——retrieval 等于蒸馏阶段的指令式抽取，generation 等于后续 agent 用 hint。PM 在做规划时直接看到用户的完整背景资料，TaskPlan / AnalystTask 比"二段抽取" 更贴需求。
 
 **Trade-offs / 已知限制**：
 - 蒸馏阶段未提取的字段，下游就丢了。当前预设 4 个 hint 字段够覆盖 dimension_discovery 需求，但未来若 Insight 想问"用户文档里提到了哪些用户画像？" 答不上来
 - 不是标准 RAG 叙事；评委如果坚持"为什么不用向量库"需要用上面答辩稿回应
-- 蒸馏 1 次失败影响全局（vs RAG 每次查询独立）；通过严格 schema 校验 + retry 1 次缓解
+- PM phase 1 token 成本翻倍（用户上传文件时，从几千 token 涨到几万）。属于**非固定开销**——只在用户主动上传时产生，不上传 = 不增加，可接受
+- 第一版限定单文件；多文件并存会让 PM phase 1 prompt 爆掉
+- PM 节点变重：除规划外还要做文档蒸馏。但跟 D-020 不冲突（不联网 / 不 ReAct loop / 不爬数据）
 
 **升级到经典 RAG 的触发条件**：
 - 实际 demo 用户上传 > 5 个文档（蒸馏的预设字段顶不住跨文档信息聚合）
 - 出现需要 ad-hoc 查询的 agent（如未来加一个"答疑 agent" 让用户对报告追问）
 - 答辩明确要求 "vector store" 关键词
 
-**与 D-031 producer-owns 的关系**：`domain_seed_node` 是 `state.domain_seed` 的 producer-owner，跟 Collector / Insight / Analyst 各自拥有自己产出字段同构。pre-processing 不破坏 D-031 半步 multi-agent 原则。
+**与 D-031 producer-owns 的关系**：PM 是 `state.domain_seed` 的 producer-owner，跟 PM 拥有规划字段（task_plan / decision_log / ...）同源。PM 既然是用户需求的消化者，由 PM 一并产出"蒸馏后的领域 hint" 给下游消费在职责上自洽。不破坏 D-031 半步 multi-agent 原则。
 
 **source_files 路径字段的意义**：留 lazy 重读通道。任何 agent 想看原文 → `pdf_reader.read(path)` 直接读文件，不走 state。这给"按需查询"留了口子，没引入向量库。
 
@@ -742,12 +752,12 @@ def run_debate(
 
 | 阶段 | dimension 来源 | 实现方式 |
 |---|---|---|
-| domain_seed_node | 用户上传文档蒸馏 | 节点内部 LLM 调用，**不需要 skill** |
+| PM phase 1 (initial_brief_node) | 用户上传文档蒸馏 | GPT-5 多模态原生消化，节点内同次 LLM 调用产出 DomainSeed，**不需要 skill** |
 | Collector exploration_node | 联网搜索 | ReAct 用 web_search + fetch_url 工具，**不需要 skill** |
 | PM TaskPlan / AnalystTask / ReportTask | 综合 domain_seed + exploration_result | PM 读 state 决策，**不需要 skill** |
 | Collector phase 2 / Insight / Analyst | 接收 PM 下发的 priority_dimensions | 用现成的，**不需要 skill** |
 
-skill 抽象的核心价值是"被多个调用方复用"。这里**没有多个调用方**——domain_seed_node（文档源）和 Collector exploration（网页源）是两个完全不同的数据通道，没法共用 skill 实现。`from_memory` 已确认删（依赖训练知识违反"减少幻觉"诉求）。剩下 `from_seed` 是节点而非 skill，`from_web` 是工具调用而非 skill，subgraph 三选一融合的设计在实际使用中没人调。
+skill 抽象的核心价值是"被多个调用方复用"。这里**没有多个调用方**——PM phase 1（文档源）和 Collector exploration（网页源）是两个完全不同的数据通道，没法共用 skill 实现。`from_memory` 已确认删（依赖训练知识违反"减少幻觉"诉求）。剩下 `from_seed` 是节点而非 skill，`from_web` 是工具调用而非 skill，subgraph 三选一融合的设计在实际使用中没人调。
 
 整个文件夹是 V1 命名残留，删除符合 CLAUDE.md "简洁优于完备"。
 
