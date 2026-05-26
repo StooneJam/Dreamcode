@@ -663,6 +663,81 @@ def run_debate(
 
 ---
 
+## D-032 · dimension_discovery 架构：蒸馏写 state，不上经典 RAG
+**Status**: Accepted · **Date**: 2026-05-25
+**Used by**: Collector exploration_node、未来 Insight / Analyst 的 focus dimensions
+**Revises**: V1 占位骨架 `cca/skills/dimension_discovery/` 的隐含设计
+
+**Context**：实现 `dimension_discovery` skill 前讨论了一个根本架构选择——**用户上传的文档**（PDF / Word / 市场调研报告）如何被多个 agent 消费？讨论中提出了几个候选：
+
+1. **PM phase 1 自己读文档**：违反 D-020 "PM 纯规划无工具"
+2. **每个 agent 各自读**：重复 LLM 抽取，token 浪费
+3. **塞全文到 state**：state 膨胀（30 页 PDF ~50k 字，checkpoint 序列化拖慢）+ 下游每次读 state 都重复消费同一段原文
+4. **经典 RAG**（chunks + embedding + 向量库）：跟项目零 RAG 基础不对齐，加 chromadb / sentence-transformers 等依赖，起步 ~1.5 天工程成本
+5. **蒸馏式预处理**：pdf_reader 抽全文 → 一次 LLM 蒸馏成结构化 hint dict 写 state.domain_seed → 多 agent 共享
+
+**Decision**：选 **方案 5（蒸馏写 state）**。
+
+具体设计：
+- 新增独立节点 `domain_seed_node`，位于 PM phase 1 **之前**
+- 用 `pdf_reader` / `docx_reader` 抽全文 → DeepSeek 单次蒸馏 → 写 `state.domain_seed` 结构化字段
+- 状态 dict 形态：
+  ```python
+  state.domain_seed: dict | None = {
+      "source_files": ["uploads/market_report.pdf"],   # 路径，留 lazy 重读通道
+      "extracted_at": "ISO 8601",
+      "dimension_candidates": list[str],                # ≤ 20 项
+      "competitor_mentions": list[str],                 # ≤ 10 项
+      "product_type_hint": str,                         # 1 句
+      "terminology": dict[str, str],                    # ≤ 30 条键值对
+  }
+  ```
+- **不存原文 / 不存 raw_excerpt 字段**——state 控制在 ~2KB
+- 用户未上传文件时 `state.domain_seed = None`，下游 skill 走 `from_web` 兜底链
+- 现有 V1 骨架 `dimension_discovery/from_memory.py` **删除**——依赖训练知识违反用户"减少幻觉"诉求
+
+**Why not 经典 RAG**：
+
+| 维度 | RAG 评估 |
+|---|---|
+| **时间预算** | 17 天项目，今天 day 6，剩 11 天还要做 collect_node / analyst_node / graph 集成 / 前端 / 演示。RAG 起步 ~1.5 天，挤掉 collect_node 的工作量 |
+| **依赖面** | 项目目前零向量库 / 零 embedding 代码。加 chromadb（或 faiss）+ embedding 供应商（OpenAI / BGE 本地）= 多 1 套部署坑 |
+| **问题预设性** | dimension_discovery 要回答的问题是**固定的**（dimension 候选 / competitor mentions / product_type / terminology）。RAG 的核心优势"应对未预设查询"在这里用不上 |
+| **与 V1 命名对齐** | 现有 `from_seed.py` / `from_web.py` / `from_memory.py` 命名暗示"按 source 提取 hint"的蒸馏路径，不是 chunk + retrieve 路径 |
+| **D-020 半步 multi-agent** | RAG 更适合一个集中的 retriever agent 调，跟"半步去中心化"的精神冲突；蒸馏式让 hint 成为 producer-shared 的世界事实，跟 `exploration_result` / `profiles` 同等地位 |
+| **demo 场景** | 评估用户一般上传 1-2 个文档，且 DeepSeek 128k 上下文单文档塞得下 |
+
+**Why not 塞全文到 state**：
+- 30 页 PDF ~50k 字塞 state，checkpoint 写 sqlite 时序列化拖慢
+- 每个读 state 的 agent 都付一次输入 token 成本，重复消费同一段原文
+- state 应该是 agent **产出**的世界，不是输入资料的容器
+- 下游 agent 实际不需要原文：PM 只要 hint，Collector 只要 dimension 候选，Analyst 只要 focus 维度
+
+**Why not 每个 agent 各自读**：
+- 同一文档被 4-5 次 LLM 蒸馏（每个 agent 一次），token 成本 ~5x
+- 各 agent 可能抽出不一致的 hint（同一 PDF，PM 抽出"企业协作"，Collector 抽出"协同办公"）
+- 缺乏审计入口
+
+**答辩叙事**：
+
+> 我们评估过经典 RAG，对**单文档 + 预设查询**场景判定为过度设计。我们用了 lightweight 蒸馏：pdf_reader 抽全文 → 单次 LLM 提取结构化 hint 写 state.domain_seed，原文路径保留供 lazy 重读。这是"无向量库的 RAG 思路"——retrieval 等于蒸馏阶段的指令式抽取，generation 等于后续 agent 用 hint。
+
+**Trade-offs / 已知限制**：
+- 蒸馏阶段未提取的字段，下游就丢了。当前预设 4 个 hint 字段够覆盖 dimension_discovery 需求，但未来若 Insight 想问"用户文档里提到了哪些用户画像？" 答不上来
+- 不是标准 RAG 叙事；评委如果坚持"为什么不用向量库"需要用上面答辩稿回应
+- 蒸馏 1 次失败影响全局（vs RAG 每次查询独立）；通过严格 schema 校验 + retry 1 次缓解
+
+**升级到经典 RAG 的触发条件**：
+- 实际 demo 用户上传 > 5 个文档（蒸馏的预设字段顶不住跨文档信息聚合）
+- 出现需要 ad-hoc 查询的 agent（如未来加一个"答疑 agent" 让用户对报告追问）
+- 答辩明确要求 "vector store" 关键词
+
+**与 D-031 producer-owns 的关系**：`domain_seed_node` 是 `state.domain_seed` 的 producer-owner，跟 Collector / Insight / Analyst 各自拥有自己产出字段同构。pre-processing 不破坏 D-031 半步 multi-agent 原则。
+
+**source_files 路径字段的意义**：留 lazy 重读通道。任何 agent 想看原文 → `pdf_reader.read(path)` 直接读文件，不走 state。这给"按需查询"留了口子，没引入向量库。
+
+---
+
 ## 待决（Pending）
 
 - **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略
