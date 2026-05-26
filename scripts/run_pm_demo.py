@@ -1,7 +1,10 @@
-"""PM Agent + Report Agent end-to-end demo.
+"""PM Agent + Collector + Report Agent end-to-end demo.
 
-直接调用 PM 4 个阶段节点 + handle_signal_node + report_node，不接 LangGraph。
-上游产出（exploration_result / profiles / review_state）用硬编码 mock 喂入。
+直接调用 PM 4 个阶段节点 + handle_signal_node + (可选) Collector exploration_node
++ report_node，不接 LangGraph。
+上游产出（exploration_result / profiles / review_state）默认用硬编码 mock 喂入；
+传 `--live-collector` 后 phase 2 之前会真调 Collector 联网探索；
+传 `--seed-file PATH` 让 PM phase 1 消化用户上传的文档（D-032 修订版路径）。
 
 Usage:
     env:PYTHONPATH="src"; $env:PYTHONIOENCODING="utf-8"    防止中文乱码
@@ -9,6 +12,8 @@ Usage:
     python scripts/run_pm_demo.py                          # 真 LLM 调用 (debate=accept)
     python scripts/run_pm_demo.py --debate reject          # 跑会被 PM 拒掉的 debate 场景
     python scripts/run_pm_demo.py --debate none --skip-report  # 只跑 4 阶段
+    python scripts/run_pm_demo.py --seed-file docs/market.md   # PM phase 1 消化用户文档
+    python scripts/run_pm_demo.py --live-collector             # 真跑 Collector exploration_node
 """
 from __future__ import annotations
 
@@ -22,11 +27,13 @@ from cca.schema import (
     AnalystTask,
     AnalystTaskOutput,
     ChallengePayload,
+    CollectorExplorationResult,
     CollectTask,
     DebateResult,
     DecisionAlternative,
     DecisionRecord,
     Dimension,
+    DomainSeed,
     Evidence,
     Fact,
     InitialBrief,
@@ -57,7 +64,9 @@ def _empty_state(user_query: str, target_product: str) -> CCAState:
     return {
         "user_query": user_query,
         "target_product": target_product,
+        "user_files": None,
         "initial_brief": None,
+        "domain_seed": None,
         "exploration_result": None,
         "competitor_names": [],
         "task_plan": None,
@@ -329,25 +338,45 @@ class _FakePMClient:
         return _FakeStructuredLLM(self._responses.get(target_type, []))
 
 
-def _build_dry_run_pm_responses(scenario: DebateScenario) -> dict[type, list[Any]]:
-    """凑齐 PM 4 个节点的预制响应。debate finalize 走 debate skill，不在这里 mock。"""
+def _build_dry_run_pm_responses(
+    scenario: DebateScenario, with_seed: bool = False
+) -> dict[type, list[Any]]:
+    """凑齐 PM 4 个节点的预制响应。debate finalize 走 debate skill，不在这里 mock。
+
+    with_seed=True 时，InitialBriefOutput 会附带 mock 的 DomainSeed
+    （模拟 PM 消化用户上传文档后产出的领域 hint）。
+    """
+    initial_brief = InitialBrief(
+        target_product="飞书",
+        company_hint="字节跳动",
+        user_query="帮我分析飞书的主要竞品",
+    )
+    initial_decisions = [
+        DecisionRecord(
+            phase="initial_brief",
+            decision_type="target_product_selection",
+            chosen={"target_product": "飞书"},
+            rationale="用户明确指定『飞书』，直接采用",
+            inputs_used=["user_query"],
+        ),
+    ]
+    mock_domain_seed = (
+        DomainSeed(
+            source_files=[],  # 代码端会覆盖
+            dimension_candidates=["视频会议", "AI 助手", "定价", "移动端体验"],
+            competitor_mentions=["钉钉", "企业微信"],
+            product_type_hint="企业协作平台",
+            terminology={"DAU": "日活跃用户"},
+        )
+        if with_seed
+        else None
+    )
     return {
         InitialBriefOutput: [
             InitialBriefOutput(
-                initial_brief=InitialBrief(
-                    target_product="飞书",
-                    company_hint="字节跳动",
-                    user_query="帮我分析飞书的主要竞品",
-                ),
-                decision_records=[
-                    DecisionRecord(
-                        phase="initial_brief",
-                        decision_type="target_product_selection",
-                        chosen={"target_product": "飞书"},
-                        rationale="用户明确指定『飞书』，直接采用",
-                        inputs_used=["user_query"],
-                    ),
-                ],
+                initial_brief=initial_brief,
+                decision_records=initial_decisions,
+                domain_seed=mock_domain_seed,
             ),
         ],
         TaskPlanOutput: [
@@ -483,24 +512,76 @@ def _build_dry_run_debate_clients(scenario: DebateScenario) -> dict[str, _FakeFa
     }
 
 
-def _patch_for_dry_run(scenario: DebateScenario) -> None:
-    """把 PM 和 debate skill 的 LLM 入口替换为 fake。"""
+def _build_dry_run_collector_messages() -> list[Any]:
+    """模拟 Collector ReAct 跑完后的 messages 链：仅一条 finalize_exploration ToolMessage 足够。
+
+    实际 ReAct 会有 web_search / fetch_url 等多步，但 exploration_node 只看
+    finalize_exploration 的输出，所以 mock 一条就行。
+    """
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    exploration = CollectorExplorationResult(
+        target_product="飞书",
+        product_type="企业协作平台",
+        competitor_names=["钉钉", "企业微信", "腾讯会议"],
+        discovered_dimensions=["视频会议", "文档协作", "AI 助手", "定价"],
+        initial_profiles=[],
+        rationale="（dry-run mock）联网发现三家头部协作产品",
+    )
+    return [
+        AIMessage(content="（dry-run mock）总结探索结果"),
+        ToolMessage(
+            content=exploration.model_dump_json(),
+            tool_call_id="dry-run",
+            name="finalize_exploration",
+        ),
+    ]
+
+
+def _patch_for_dry_run(
+    scenario: DebateScenario, with_seed: bool, live_collector: bool
+) -> None:
+    """把 PM / debate skill / (可选) Collector 的 LLM 入口替换为 fake。"""
     import cca.agents.pm as pm_mod
     import cca.skills.debate as debate_mod
 
-    pm_mod.gpt = _FakePMClient(_build_dry_run_pm_responses(scenario))  # type: ignore[assignment]
+    pm_mod.gpt = _FakePMClient(  # type: ignore[assignment]
+        _build_dry_run_pm_responses(scenario, with_seed=with_seed)
+    )
 
     debate_clients = _build_dry_run_debate_clients(scenario)
     debate_mod.get_llm = lambda family: debate_clients[family]  # type: ignore[assignment]
+
+    if live_collector:
+        # 用 mock_agent 替换 create_react_agent；同 test_collector 模式
+        from unittest.mock import MagicMock
+
+        import cca.agents.collector as collector_mod
+
+        mock_agent = MagicMock()
+        mock_agent.invoke.return_value = {"messages": _build_dry_run_collector_messages()}
+        collector_mod.create_react_agent = lambda **_kw: mock_agent  # type: ignore[assignment]
 
 
 # ── 主流程 ──────────────────────────────────────────────────────────────
 
 
-def run_demo(dry_run: bool, scenario: DebateScenario, skip_report: bool) -> None:
+def run_demo(
+    dry_run: bool,
+    scenario: DebateScenario,
+    skip_report: bool,
+    seed_file: str | None,
+    live_collector: bool,
+) -> None:
     if dry_run:
-        _patch_for_dry_run(scenario if scenario != "none" else "accept")
-        print("[dry-run] LLM 调用已 mock\n")
+        _patch_for_dry_run(
+            scenario if scenario != "none" else "accept",
+            with_seed=seed_file is not None,
+            live_collector=live_collector,
+        )
+        print("[dry-run] LLM 调用已 mock"
+              + (" (含 Collector ReAct)" if live_collector else "")
+              + "\n")
 
     # 节点函数在 patch 之后再 import，避免捕获到原始 gpt 引用
     from cca.agents.pm import (
@@ -515,17 +596,44 @@ def run_demo(dry_run: bool, scenario: DebateScenario, skip_report: bool) -> None
         user_query="帮我分析飞书的主要竞品",
         target_product="飞书",
     )
+    if seed_file:
+        from pathlib import Path
+        seed_path = Path(seed_file)
+        if not seed_path.exists():
+            raise SystemExit(f"--seed-file 路径不存在: {seed_path}")
+        state["user_files"] = [str(seed_path)]
+        print(f"[input] user_files = [{seed_path}]\n")
 
     # ── PHASE 1 ──
-    _hr("PHASE 1 · InitialBrief")
+    _hr("PHASE 1 · InitialBrief (+ DomainSeed)")
     out = initial_brief_node(state)
     state = _merge(state, out)
     _dump_json("initial_brief", state["initial_brief"])
+    if state.get("domain_seed"):
+        _dump_json("domain_seed (PM 蒸馏自用户文档)", state["domain_seed"])
+    elif seed_file:
+        print("  [warn] 提供了 --seed-file 但 PM 未产出 domain_seed（见 audit_log）")
     _show_decisions(out)
 
-    # ── PHASE 2 ──（喂 mock exploration_result）──
+    # ── COLLECTOR phase 1 (可选) ──（替换 mock exploration_result）──
+    if live_collector:
+        _hr("COLLECTOR · exploration_node (live)")
+        from cca.agents.collector import exploration_node
+
+        out = exploration_node(state)
+        state = _merge(state, out)
+        if state.get("exploration_result"):
+            _dump_json("exploration_result (Collector 联网产出)", state["exploration_result"])
+        else:
+            print("  [warn] Collector 未产出 exploration_result（finalize_exploration 未调用）")
+            print(f"  audit_log 末尾: {out.get('audit_log', [])[-1] if out.get('audit_log') else '(空)'}")
+            return  # 没产出，后续 PHASE 2 跑不下去
+
+    # ── PHASE 2 ──
     _hr("PHASE 2 · TaskPlan")
-    state["exploration_result"] = _mock_exploration_result()
+    if not live_collector:
+        # 没跑 live Collector，仍用硬编码 mock 喂 exploration_result
+        state["exploration_result"] = _mock_exploration_result()
     _dump_json("INPUT · exploration_result", state["exploration_result"])
     out = task_plan_node(state)
     state = _merge(state, out)
@@ -633,10 +741,27 @@ def main() -> None:
         help="debate 场景：accept（合理挑战）/ reject（站不住脚的挑战）/ none（跳过）",
     )
     p.add_argument("--skip-report", action="store_true", help="跳过 report agent（节省 token）")
+    p.add_argument(
+        "--seed-file",
+        type=str,
+        default=None,
+        help="用户上传文档路径（.pdf / .txt / .md）。给定后 PM phase 1 会消化并蒸馏 DomainSeed",
+    )
+    p.add_argument(
+        "--live-collector",
+        action="store_true",
+        help="phase 2 之前真调 Collector exploration_node，不再走硬编码 mock_exploration_result",
+    )
     args = p.parse_args()
 
     try:
-        run_demo(dry_run=args.dry_run, scenario=args.debate, skip_report=args.skip_report)
+        run_demo(
+            dry_run=args.dry_run,
+            scenario=args.debate,
+            skip_report=args.skip_report,
+            seed_file=args.seed_file,
+            live_collector=args.live_collector,
+        )
     except KeyboardInterrupt:
         print("\n[中断]")
         sys.exit(130)
