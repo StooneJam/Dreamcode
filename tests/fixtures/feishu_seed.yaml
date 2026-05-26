@@ -8,4 +8,4 @@ trusted_sources:
   - "https://www.feishu.cn"
   - "https://www.dingtalk.com"
 notes: |
-  测试用 seed —— 给 dimension_discovery 子图的单元测试用。
+  测试用 seed —— 给 domain_seed_node 单元测试用。

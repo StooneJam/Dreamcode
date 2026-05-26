@@ -1,11 +1,11 @@
 # Domain Seeds（可选）
 
-这个目录放**可选的**领域 seed yaml，给 `dimension_discovery` 子图作为提示。
+这个目录放**可选的**领域 seed yaml，给 `domain_seed_node` 作为输入提示（与用户上传的 PDF 平级，二选一或并用）。
 
 ## 关键原则
 
-- **不填 = 全自动**：系统会通过 web 检索 + LLM 整合自己发现对比维度
-- **填了 = seed**：你的 yaml 作为"我想强调这些维度"的钩子，与自动发现的维度取并集
+- **不填 = 全自动**：Collector 通过 web 检索发现对比维度
+- **填了 = seed**：你的 yaml 作为"我想强调这些维度"的钩子，与 Collector 联网发现的维度取并集
 
 ## yaml 模板
 

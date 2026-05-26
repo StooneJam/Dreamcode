@@ -663,10 +663,10 @@ def run_debate(
 
 ---
 
-## D-032 · dimension_discovery 架构：蒸馏写 state，不上经典 RAG
+## D-032 · 用户文档处理架构：domain_seed_node 蒸馏写 state，删除 dimension_discovery skill
 **Status**: Accepted · **Date**: 2026-05-25
 **Used by**: Collector exploration_node、未来 Insight / Analyst 的 focus dimensions
-**Revises**: V1 占位骨架 `cca/skills/dimension_discovery/` 的隐含设计
+**Replaces**: V1 占位骨架 `cca/skills/dimension_discovery/`（**删除**，详见下方"取消 skill 抽象"段）
 
 **Context**：实现 `dimension_discovery` skill 前讨论了一个根本架构选择——**用户上传的文档**（PDF / Word / 市场调研报告）如何被多个 agent 消费？讨论中提出了几个候选：
 
@@ -735,6 +735,28 @@ def run_debate(
 **与 D-031 producer-owns 的关系**：`domain_seed_node` 是 `state.domain_seed` 的 producer-owner，跟 Collector / Insight / Analyst 各自拥有自己产出字段同构。pre-processing 不破坏 D-031 半步 multi-agent 原则。
 
 **source_files 路径字段的意义**：留 lazy 重读通道。任何 agent 想看原文 → `pdf_reader.read(path)` 直接读文件，不走 state。这给"按需查询"留了口子，没引入向量库。
+
+**取消 skill 抽象**：V1 在 `cca/skills/dimension_discovery/` 设计了 `from_seed.py` / `from_web.py` / `from_memory.py` / `subgraph.py` 四源 fallback subgraph，本决策一并**删除整个 skill 目录**。理由：
+
+跟踪 dimension 在系统里的实际生命周期 → 没有任何调用方需要"运行时按需调用一个 dimension_discovery skill"：
+
+| 阶段 | dimension 来源 | 实现方式 |
+|---|---|---|
+| domain_seed_node | 用户上传文档蒸馏 | 节点内部 LLM 调用，**不需要 skill** |
+| Collector exploration_node | 联网搜索 | ReAct 用 web_search + fetch_url 工具，**不需要 skill** |
+| PM TaskPlan / AnalystTask / ReportTask | 综合 domain_seed + exploration_result | PM 读 state 决策，**不需要 skill** |
+| Collector phase 2 / Insight / Analyst | 接收 PM 下发的 priority_dimensions | 用现成的，**不需要 skill** |
+
+skill 抽象的核心价值是"被多个调用方复用"。这里**没有多个调用方**——domain_seed_node（文档源）和 Collector exploration（网页源）是两个完全不同的数据通道，没法共用 skill 实现。`from_memory` 已确认删（依赖训练知识违反"减少幻觉"诉求）。剩下 `from_seed` 是节点而非 skill，`from_web` 是工具调用而非 skill，subgraph 三选一融合的设计在实际使用中没人调。
+
+整个文件夹是 V1 命名残留，删除符合 CLAUDE.md "简洁优于完备"。
+
+同步删除：
+- `src/cca/skills/dimension_discovery/`（含 5 个空 .py 文件）
+- `tests/test_skills/test_dimension_discovery.py`（占位 skip）
+- `schema.py:Dimension` docstring 引用更新为"由 domain_seed_node 蒸馏或 Collector 联网发现"
+- `domain_seeds/README.md` 引用更新为 `domain_seed_node`
+- `tests/fixtures/feishu_seed.yaml` notes 更新
 
 ---
 

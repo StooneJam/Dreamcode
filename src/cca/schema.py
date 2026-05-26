@@ -37,7 +37,7 @@ class Fact(BaseModel):
 
 class Dimension(BaseModel):
     """
-    单个分析维度，由 dimension_discovery 或 Agent 自主识别。
+    单个分析维度，由 domain_seed_node 蒸馏（用户上传文档）或 Collector 联网发现。
     category 为开放字符串，典型值：'功能' / '定价' / '用户口碑' / '生态' / '市场定位' / '技术架构'。
     """
 
