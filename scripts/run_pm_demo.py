@@ -1,10 +1,13 @@
 """PM Agent + Collector + Report Agent end-to-end demo.
 
-直接调用 PM 4 个阶段节点 + handle_signal_node + (可选) Collector exploration_node
-+ report_node，不接 LangGraph。
-上游产出（exploration_result / profiles / review_state）默认用硬编码 mock 喂入；
-传 `--live-collector` 后 phase 2 之前会真调 Collector 联网探索；
-传 `--seed-file PATH` 让 PM phase 1 消化用户上传的文档（D-032 修订版路径）。
+直接调用 PM 4 个阶段节点 + handle_signal_node + (可选) Collector phase 1/2 + report_node，
+不接 LangGraph。上游产出（exploration_result / profiles / review_state）默认用硬编码
+mock 喂入；通过下面参数逐步换成真节点：
+
+    --seed-file PATH    让 PM phase 1 消化用户上传文档（D-032 修订版路径）
+    --live-explore      真调 Collector exploration_node（phase 1 联网粗探索）
+    --live-collect      真调 Collector collect_node（phase 2 单产品深采集，per-product ReAct）
+                        Insight/Analyst 字段仍走 overlay mock 兜底（未实现）
 
 Usage:
     env:PYTHONPATH="src"; $env:PYTHONIOENCODING="utf-8"    防止中文乱码
@@ -13,7 +16,8 @@ Usage:
     python scripts/run_pm_demo.py --debate reject          # 跑会被 PM 拒掉的 debate 场景
     python scripts/run_pm_demo.py --debate none --skip-report  # 只跑 4 阶段
     python scripts/run_pm_demo.py --seed-file docs/market.md   # PM phase 1 消化用户文档
-    python scripts/run_pm_demo.py --live-collector             # 真跑 Collector exploration_node
+    python scripts/run_pm_demo.py --live-explore               # 真跑 Collector phase 1
+    python scripts/run_pm_demo.py --live-explore --live-collect --skip-report   # 完整 Collector 端到端
 """
 from __future__ import annotations
 
@@ -253,6 +257,115 @@ def _mock_profiles_for_phase_3_4() -> dict[str, dict]:
     return {
         "钉钉": _make_profile("钉钉", rating=4.2, price=30.0),
         "企业微信": _make_profile("企业微信", rating=3.9, price=25.0),
+    }
+
+
+# 用于 --live-collect 路径下的 dry-run mock 和 Insight/Analyst overlay。
+# key 是产品名，value 是 (rating for sentiment mock, price for swot mock + pricing tier)。
+_MOCK_PRODUCT_HINTS: dict[str, tuple[float, float]] = {
+    "钉钉": (4.2, 30.0),
+    "企业微信": (3.9, 25.0),
+    "腾讯会议": (4.0, 20.0),
+    "石墨文档": (4.1, 18.0),
+}
+
+
+def _hints_for(name: str) -> tuple[float, float]:
+    """未识别的产品名给个默认 hint，方便 live-collect 跑任意 task。"""
+    return _MOCK_PRODUCT_HINTS.get(name, (4.0, 20.0))
+
+
+def _collector_only_profile(name: str) -> dict:
+    """构造仅含 Collector owner 字段的 profile（不含 sentiment / swot）。
+
+    模拟 collect_one_product 真跑出来的结构——后续 Insight/Analyst mock 通过
+    _overlay_insight_swot 补齐 sentiment + swot 字段。
+    """
+    _, price = _hints_for(name)
+    ev = _evidence(f"https://{name}.com/pricing", f"{name} Pro {price}元/用户/月")
+    fact = Fact(statement=f"{name} Pro 版按用户每月 {price} 元", evidence=[ev])
+    dimension = Dimension(
+        name="视频会议人数上限",
+        category="功能",
+        facts=[fact],
+        cross_product_note=f"{name} 最大支持 300 人视频会议",
+    )
+    pricing = PricingInfo(
+        has_free_tier=True,
+        pricing_model="per_user",
+        tiers=[PricingTier(name="Pro", price_per_user_monthly=price, currency="CNY")],
+    )
+    return ProductProfile(
+        product_name=name,
+        company=f"{name} Inc.",
+        website=f"https://{name}.com",
+        product_type="协作办公SaaS",
+        target_users="中小企业团队",
+        dimensions=[dimension],
+        pricing=pricing,
+        sentiment=None,   # Insight 填
+        swot=None,        # Analyst 填
+        sources=[ev],
+    ).model_dump()
+
+
+def _overlay_insight_swot(profile: dict, name: str) -> dict:
+    """给 Collector-only profile 补 Insight (sentiment) + Analyst (swot) mock。
+
+    用于 --live-collect 后让 Phase 3/4 跑下去——Insight / Analyst 真节点
+    实现前的桩。已有 sentiment / swot 时不覆盖。
+    """
+    rating, price = _hints_for(name)
+    enriched = dict(profile)
+    if not enriched.get("sentiment"):
+        enriched["sentiment"] = UserSentiment(
+            appstore_cn_rating=rating,
+            appstore_cn_review_count=12000,
+            positive_themes=["界面简洁", "通知及时"],
+            negative_themes=["偶发卡顿"],
+            representative_reviews=[
+                ReviewSample(text="整体好用，偶尔卡顿", rating=4, platform="appstore_cn")
+            ],
+        ).model_dump()
+    if not enriched.get("swot"):
+        enriched["swot"] = SWOT(
+            strengths=[SWOTPoint(
+                point="定价低于竞品均值",
+                supporting_fact_statements=[f"{name} Pro 版按用户每月 {price} 元"],
+            )],
+            weaknesses=[SWOTPoint(
+                point="移动端稳定性待提升",
+                supporting_fact_statements=["偶发卡顿"],
+            )],
+            opportunities=[SWOTPoint(
+                point="AI 集成场景增长",
+                supporting_fact_statements=[f"{name} Pro 版按用户每月 {price} 元"],
+            )],
+            threats=[SWOTPoint(
+                point="头部厂商竞争加剧",
+                supporting_fact_statements=["偶发卡顿"],
+            )],
+        ).model_dump()
+    return enriched
+
+
+def _fake_collect_one_product(task: Any, _context: dict) -> dict:  # noqa: ANN001
+    """Dry-run mock for collect_one_product —— 返回 Collector-only profile + audit。
+
+    比 mock create_react_agent + 拼 ToolMessage 更直接：在 collect_node 的循环里
+    直接替换 per-product 函数，留下 collect_node 本身的真实迭代/aggregate 路径。
+    """
+    profile = _collector_only_profile(task.product_name)
+    return {
+        "profiles": {task.product_name: profile},
+        "audit_log": [{
+            "agent": "collector",
+            "event": "collect_done",
+            "product_name": task.product_name,
+            "dimensions_count": len(profile.get("dimensions", [])),
+            "signals_raised": 0,
+            "_dry_run_mock": True,
+        }],
     }
 
 
@@ -539,9 +652,16 @@ def _build_dry_run_collector_messages() -> list[Any]:
 
 
 def _patch_for_dry_run(
-    scenario: DebateScenario, with_seed: bool, live_collector: bool
+    scenario: DebateScenario,
+    with_seed: bool,
+    live_explore: bool,
+    live_collect: bool,
 ) -> None:
-    """把 PM / debate skill / (可选) Collector 的 LLM 入口替换为 fake。"""
+    """把 PM / debate skill / (可选) Collector 的 LLM 入口替换为 fake。
+
+    live_explore: 替换 phase 1 exploration_node 内部的 ReAct
+    live_collect: 替换 phase 2 collect_node 调用的 collect_one_product
+    """
     import cca.agents.pm as pm_mod
     import cca.skills.debate as debate_mod
 
@@ -552,8 +672,8 @@ def _patch_for_dry_run(
     debate_clients = _build_dry_run_debate_clients(scenario)
     debate_mod.get_llm = lambda family: debate_clients[family]  # type: ignore[assignment]
 
-    if live_collector:
-        # 用 mock_agent 替换 create_react_agent；同 test_collector 模式
+    if live_explore:
+        # phase 1: mock create_react_agent 返回单条 finalize_exploration ToolMessage
         from unittest.mock import MagicMock
 
         import cca.agents.collector as collector_mod
@@ -561,6 +681,12 @@ def _patch_for_dry_run(
         mock_agent = MagicMock()
         mock_agent.invoke.return_value = {"messages": _build_dry_run_collector_messages()}
         collector_mod.create_react_agent = lambda **_kw: mock_agent  # type: ignore[assignment]
+
+    if live_collect:
+        # phase 2: 直接替换 collect_one_product（绕开 ReAct 内部 mock 的复杂性）
+        import cca.agents.collector as collector_mod
+
+        collector_mod.collect_one_product = _fake_collect_one_product  # type: ignore[assignment]
 
 
 # ── 主流程 ──────────────────────────────────────────────────────────────
@@ -571,17 +697,23 @@ def run_demo(
     scenario: DebateScenario,
     skip_report: bool,
     seed_file: str | None,
-    live_collector: bool,
+    live_explore: bool,
+    live_collect: bool,
 ) -> None:
     if dry_run:
         _patch_for_dry_run(
             scenario if scenario != "none" else "accept",
             with_seed=seed_file is not None,
-            live_collector=live_collector,
+            live_explore=live_explore,
+            live_collect=live_collect,
         )
-        print("[dry-run] LLM 调用已 mock"
-              + (" (含 Collector ReAct)" if live_collector else "")
-              + "\n")
+        live_tags = []
+        if live_explore:
+            live_tags.append("phase1 exploration")
+        if live_collect:
+            live_tags.append("phase2 collect")
+        suffix = f" (含 {' + '.join(live_tags)})" if live_tags else ""
+        print(f"[dry-run] LLM 调用已 mock{suffix}\n")
 
     # 节点函数在 patch 之后再 import，避免捕获到原始 gpt 引用
     from cca.agents.pm import (
@@ -616,8 +748,8 @@ def run_demo(
     _show_decisions(out)
 
     # ── COLLECTOR phase 1 (可选) ──（替换 mock exploration_result）──
-    if live_collector:
-        _hr("COLLECTOR · exploration_node (live)")
+    if live_explore:
+        _hr("COLLECTOR · exploration_node (phase 1, live)")
         from cca.agents.collector import exploration_node
 
         out = exploration_node(state)
@@ -631,8 +763,8 @@ def run_demo(
 
     # ── PHASE 2 ──
     _hr("PHASE 2 · TaskPlan")
-    if not live_collector:
-        # 没跑 live Collector，仍用硬编码 mock 喂 exploration_result
+    if not live_explore:
+        # 没跑 live Collector phase 1，仍用硬编码 mock 喂 exploration_result
         state["exploration_result"] = _mock_exploration_result()
     _dump_json("INPUT · exploration_result", state["exploration_result"])
     out = task_plan_node(state)
@@ -682,11 +814,43 @@ def run_demo(
         print("  task_plan 被 rejected 清空，后续阶段需 PM 重派；demo 到此为止。")
         return
 
-    # ── PHASE 3 ──（喂 mock profiles）──
+    # ── COLLECTOR phase 2 (可选) ──（替换硬编码 _mock_profiles_for_phase_3_4）──
+    if live_collect:
+        _hr("COLLECTOR · collect_node (phase 2, live)")
+        from cca.agents.collector import collect_node
+
+        out = collect_node(state)
+        state = _merge(state, out)
+        if state.get("profiles"):
+            _sub(f"profiles 已填实 × {len(state['profiles'])}")
+            for name, profile in state["profiles"].items():
+                website = profile.get("website") or "（无）"
+                pricing = profile.get("pricing")
+                price_str = "（无）" if not pricing else f"{len(pricing.get('tiers', []))} 个定价层"
+                dims = len(profile.get("dimensions", []))
+                print(f"    · {name}: website={website} / {price_str} / {dims} 个 dimension")
+            replacement_sigs = [
+                s for s in (out.get("agent_signals") or [])
+                if s.get("kind") == "data_gap" and s.get("target") == "task_plan"
+            ]
+            if replacement_sigs:
+                _sub(f"申请换产品的信号 × {len(replacement_sigs)}")
+                for s in replacement_sigs:
+                    print(f"    · {s['payload']['claim']}")
+        # Insight / Analyst 还没实现，用 mock 补齐 sentiment + swot 让 phase 3/4 跑下去
+        state["profiles"] = {
+            name: _overlay_insight_swot(p, name) for name, p in state["profiles"].items()
+        }
+        state["review_state"] = _mock_review_state()
+        print(f"  (post-collect overlay) profiles 现已含 Insight/Analyst mock 字段")
+    else:
+        # 没跑 live phase 2 → 走旧路径，注入完整 mock profiles
+        state["profiles"] = _mock_profiles_for_phase_3_4()
+        state["review_state"] = _mock_review_state()
+        state["competitor_names"] = ["钉钉", "企业微信"]  # 与 mock profiles 对齐
+
+    # ── PHASE 3 ──
     _hr("PHASE 3 · AnalystTask")
-    state["profiles"] = _mock_profiles_for_phase_3_4()
-    state["review_state"] = _mock_review_state()
-    state["competitor_names"] = ["钉钉", "企业微信"]  # 与 mock profiles 对齐
     print(f"  INPUT · profiles 包含: {list(state['profiles'].keys())}")
     print(f"  INPUT · review_state 条目数: {len(state['review_state'])}")
     out = analyst_task_node(state)
@@ -748,9 +912,16 @@ def main() -> None:
         help="用户上传文档路径（.pdf / .txt / .md）。给定后 PM phase 1 会消化并蒸馏 DomainSeed",
     )
     p.add_argument(
-        "--live-collector",
+        "--live-explore",
+        "--live-collector",  # 兼容旧参数名（D-033 重命名前的 --live-collector 指的就是 phase 1）
         action="store_true",
-        help="phase 2 之前真调 Collector exploration_node，不再走硬编码 mock_exploration_result",
+        help="phase 2 之前真调 Collector exploration_node (phase 1 联网粗探索)，不走 mock_exploration_result",
+    )
+    p.add_argument(
+        "--live-collect",
+        action="store_true",
+        help="PM phase 2 之后真调 Collector collect_node (phase 2 per-product 深采集)，"
+             "不走 _mock_profiles_for_phase_3_4。Insight/Analyst 字段仍 mock 补齐",
     )
     args = p.parse_args()
 
@@ -760,7 +931,8 @@ def main() -> None:
             scenario=args.debate,
             skip_report=args.skip_report,
             seed_file=args.seed_file,
-            live_collector=args.live_collector,
+            live_explore=args.live_explore,
+            live_collect=args.live_collect,
         )
     except KeyboardInterrupt:
         print("\n[中断]")
