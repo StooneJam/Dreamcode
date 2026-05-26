@@ -2,6 +2,12 @@
 
 架构位置：Phase 1（与 Collector 第二轮并发），等待 PM TaskPlan 下发后启动。
 NLP 策略：NMF 主题提取（短文本效果优于 LDA）+ BERT/LLM 情感评分（config 可切换）。
+
+BERT 模型选择：
+  - 默认使用 config.nlp.bert_model 指定的预训练模型（开箱即用，无需额外准备）
+  - 若已离线运行 scripts/finetune_bert.py 且 fine_tune.enabled=true，
+    自动切换到本地微调模型（见 tools/insight_tools._effective_bert_model）
+  - 微调是纯离线操作，不在 Agent 请求路径内执行
 """
 from __future__ import annotations
 
@@ -12,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 
 from cca.llm.factory import deepseek
-from cca.schema import TaskPlan, UserSentiment
+from cca.schema import TaskPlan
 from cca.settings import load_config
 from cca.state import CCAState
 from cca.tools.appstore import scrape_app_store
@@ -51,21 +57,11 @@ def _extract_signals(messages: list) -> list[dict]:
     ]
 
 
-def _maybe_finetune() -> None:
-    """若 config 开启 fine_tune.enabled，在节点启动前触发微调（首次运行较慢）。"""
-    cfg = load_config().get("nlp", {}).get("fine_tune", {})
-    if not cfg.get("enabled", False):
-        return
-    output_dir = cfg.get("model_output_dir", "data/models/bert_fine_tuned")
-    if Path(output_dir).exists():
-        return  # 已有微调模型，跳过
-    from cca.skills.bert_finetune.subgraph import run_finetune  # lazy import
-    run_finetune()
-
-
 def insight_node(state: CCAState) -> dict:
     """Insight Agent 节点：为每个产品收集评论并输出 UserSentiment。"""
-    _maybe_finetune()
+    if not state.get("task_plan"):
+        return {"audit_log": [{"agent": "insight", "event": "skipped", "reason": "task_plan not set"}]}
+
     task_plan = TaskPlan(**state["task_plan"])
     profiles = state.get("profiles", {})
     cfg_nlp = load_config().get("nlp", {})
@@ -75,6 +71,7 @@ def insight_node(state: CCAState) -> dict:
         [t.model_dump() for t in task_plan.insight_tasks],
         ensure_ascii=False,
     )
+    competitor_names_str = ", ".join(task_plan.competitor_names)
     profiles_hint = json.dumps(
         {name: {"product_type": p.get("product_type"), "website": p.get("website")}
          for name, p in profiles.items()},
@@ -87,7 +84,6 @@ def insight_node(state: CCAState) -> dict:
         else "情感分析请综合问卷回答和网络评论，直接用 LLM 判断正负面主题。"
     )
 
-    # 若 config 指向微调后的本地路径，bert_model 已自动更新；insight 无需额外处理
     agent = create_react_agent(
         model=deepseek,
         tools=[scrape_app_store, web_search, run_questionnaire, extract_topics,
@@ -98,6 +94,7 @@ def insight_node(state: CCAState) -> dict:
             SystemMessage(content=_load_prompt()),
             HumanMessage(content=(
                 f"## InsightTask 列表\n```json\n{tasks_json}\n```\n\n"
+                f"## 竞品列表（run_questionnaire 的 competitor_names 参数用这个）\n{competitor_names_str}\n\n"
                 f"## 已知产品基本信息（来自 Collector）\n```json\n{profiles_hint}\n```\n\n"
                 f"## 情感分析策略\n{sentiment_hint}\n\n"
                 "请依次完成每个产品的情感分析，最终对每个产品调用 finalize_sentiment。"
@@ -109,14 +106,16 @@ def insight_node(state: CCAState) -> dict:
     sentiments = _extract_sentiments(messages)
     signals = _extract_signals(messages)
 
-    # 将 sentiment 合并回已有 profiles（不覆盖 Collector 写入的其他字段）
-    updated_profiles = {
-        name: {**profile, "sentiment": sentiments[name]} if name in sentiments else profile
-        for name, profile in profiles.items()
+    # 只返回增量 sentiment 更新，由 _merge_profiles reducer 合并入已有 profiles
+    # 避免并发场景下读出旧值再整体写回导致 Collector 数据被覆盖
+    sentiment_updates = {
+        name: {"sentiment": sentiments[name]}
+        for name in sentiments
+        if name in profiles
     }
 
     return {
-        "profiles": updated_profiles,
+        "profiles": sentiment_updates,
         "agent_signals": signals,
         "audit_log": [{
             "agent": "insight",

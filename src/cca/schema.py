@@ -25,7 +25,10 @@ class Evidence(BaseModel):
 
     source_url: str
     snippet: str | None = Field(None, description="来源页面中支撑该结论的原文摘录")
-    fetched_at: str = Field(description="ISO 8601 时间戳")
+    fetched_at: str = Field(
+        default_factory=_now_iso,
+        description="ISO 8601 时间戳，默认填写当前时刻",
+    )
 
 
 class Fact(BaseModel):
@@ -78,7 +81,8 @@ class ReviewSample(BaseModel):
     text: str
     rating: int | None = Field(None, ge=1, le=5)
     platform: Literal["appstore_cn", "appstore_us", "zhihu", "weibo", "other"] = Field(
-        description="评论来源平台",
+        default="other",
+        description="评论来源平台，默认 'other'；App Store 中文区填 'appstore_cn'",
     )
     source: Evidence | None = None
 

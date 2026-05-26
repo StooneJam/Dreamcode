@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cca.settings import load_config
+from cca.settings import PROJECT_ROOT, load_config
 from cca.skills.bert_finetune.collect import crawl_domain_samples, load_samples, save_samples
 from cca.skills.bert_finetune.train import fine_tune
 
-_SAMPLE_CACHE = Path("data/bert_finetune/samples.jsonl")
+_SAMPLE_CACHE = PROJECT_ROOT / "data" / "bert_finetune" / "samples.jsonl"
 
 
 def run_finetune(force: bool = False) -> str:

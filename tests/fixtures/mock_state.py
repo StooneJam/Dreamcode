@@ -113,6 +113,10 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         user_query="帮我分析飞书的主要竞品钉钉和企业微信",
         target_product="飞书",
         competitor_names=["钉钉", "企业微信"],
+        # PM 阶段一/一点五（mock 中已略过，设为 None）
+        initial_brief=None,
+        exploration_result=None,
+        # PM 阶段二~四任务
         task_plan=TaskPlan(
             target_product="飞书",
             product_type="协作办公SaaS",
@@ -132,6 +136,11 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         report_status="pending",
         report_md=None,
         report_pdf_path=None,
+        # 累加型 reducer 字段，初始为空列表
         qa_notes=["企业微信定价数据来源不稳定，已 forced 放行"],
         audit_log=[],
+        debate_results=[],
+        agent_signals=[],
+        consumed_signal_ids=[],
+        decision_log=[],
     )

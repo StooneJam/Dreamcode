@@ -27,7 +27,7 @@ from cca.skills.questionnaire.distribute import format_questionnaire
 
 class TestNmfTopics:
     def _run(self, texts, n=3):
-        from cca.tools.nlp_utils import _nmf_topics
+        from cca.utils.nlp_utils import _nmf_topics
         return _nmf_topics(texts, n)
 
     def test_returns_list_of_strings(self):
@@ -47,7 +47,7 @@ class TestNmfTopics:
         assert len(topics) == 1  # n_topics 自动裁剪
 
     def test_empty_texts_returns_empty(self):
-        from cca.tools.nlp_utils import _nmf_topics
+        from cca.utils.nlp_utils import _nmf_topics
         assert _nmf_topics([], n_topics=3) == []
 
 
@@ -161,9 +161,13 @@ class TestInsightNode:
         assert result["profiles"]["企业微信"]["sentiment"] is not None
 
     def test_collector_data_preserved(self, mock_state):
-        # Insight 不应覆盖 Collector 写入的 dimensions/pricing 等字段
+        # insight_node 只返回增量 {"sentiment": ...}，由 _merge_profiles reducer 保留 Collector 字段。
+        # 这里模拟 LangGraph 的 reducer 合并行为，验证合并后 dimensions 不丢失。
+        from cca.state import _merge_profiles
         result = self._invoke(mock_state)
-        assert "dimensions" in result["profiles"]["钉钉"]
+        merged = _merge_profiles(mock_state["profiles"], result["profiles"])
+        assert "dimensions" in merged["钉钉"]
+        assert "sentiment" in merged["钉钉"]
 
     def test_audit_log_records_products(self, mock_state):
         result = self._invoke(mock_state)
@@ -273,14 +277,14 @@ class TestCollectResponsesFillMode:
 
 class TestBertSentiment:
     def test_empty_texts_returns_empty(self):
-        from cca.tools.nlp_utils import _bert_sentiment
+        from cca.utils.nlp_utils import _bert_sentiment
         result = _bert_sentiment([], "fake-model")
         assert result == {"positive": [], "negative": [], "neutral": []}
 
     def test_groups_texts_by_label(self):
         import sys
         from unittest.mock import MagicMock, patch
-        from cca.tools.nlp_utils import _bert_sentiment
+        from cca.utils.nlp_utils import _bert_sentiment
 
         mock_classifier = MagicMock(return_value=[
             [{"label": "positive", "score": 0.9}],
@@ -291,7 +295,7 @@ class TestBertSentiment:
         fake_transformers.pipeline.return_value = mock_classifier
         with patch.dict(sys.modules, {"transformers": fake_transformers}):
             # 清除缓存避免测试间干扰
-            import cca.tools.nlp_utils as nlp_mod
+            import cca.utils.nlp_utils as nlp_mod
             nlp_mod._bert_pipeline_cache.clear()
             result = _bert_sentiment(["好用", "卡顿", "一般"], "fake-model")
 
@@ -302,7 +306,7 @@ class TestBertSentiment:
     def test_unknown_label_falls_back_to_neutral(self):
         import sys
         from unittest.mock import MagicMock, patch
-        from cca.tools.nlp_utils import _bert_sentiment
+        from cca.utils.nlp_utils import _bert_sentiment
 
         mock_classifier = MagicMock(return_value=[
             [{"label": "LABEL_99", "score": 0.6}],
@@ -310,8 +314,160 @@ class TestBertSentiment:
         fake_transformers = MagicMock()
         fake_transformers.pipeline.return_value = mock_classifier
         with patch.dict(sys.modules, {"transformers": fake_transformers}):
-            import cca.tools.nlp_utils as nlp_mod
+            import cca.utils.nlp_utils as nlp_mod
             nlp_mod._bert_pipeline_cache.clear()
             result = _bert_sentiment(["模糊评价"], "fake-model")
 
         assert "模糊评价" in result["neutral"]
+
+
+# ---------------------------------------------------------------------------
+# challenge_pm 工具：AgentSignal 结构与 schema 对齐
+# ---------------------------------------------------------------------------
+
+class TestChallengePmTool:
+    def test_returns_valid_agent_signal_json(self):
+        from cca.schema import AgentSignal
+        from cca.tools.insight_tools import challenge_pm
+
+        result = challenge_pm.invoke({
+            "claim": "产品名称有误，App Store 搜不到该应用",
+            "evidence": ["scrape_app_store 返回 error: app_not_found"],
+        })
+        signal = AgentSignal.model_validate_json(result)
+        assert signal.from_agent == "insight"
+        assert signal.kind == "pm_challenge"
+
+    def test_claim_and_evidence_in_payload(self):
+        from cca.schema import AgentSignal
+        from cca.tools.insight_tools import challenge_pm
+
+        result = challenge_pm.invoke({
+            "claim": "竞品列表不合理",
+            "evidence": ["飞书与钉钉不在同一赛道"],
+            "requires_debate": True,
+        })
+        signal = AgentSignal.model_validate_json(result)
+        assert signal.payload.claim == "竞品列表不合理"
+        assert len(signal.payload.evidence) >= 1
+        assert signal.requires_debate is True
+
+    def test_signal_id_is_auto_generated(self):
+        from cca.schema import AgentSignal
+        from cca.tools.insight_tools import challenge_pm
+
+        r1 = challenge_pm.invoke({"claim": "c1", "evidence": ["e1"]})
+        r2 = challenge_pm.invoke({"claim": "c2", "evidence": ["e2"]})
+        s1 = AgentSignal.model_validate_json(r1)
+        s2 = AgentSignal.model_validate_json(r2)
+        assert s1.signal_id != s2.signal_id  # UUID，每次唯一
+
+
+# ---------------------------------------------------------------------------
+# finalize_sentiment 工具：UserSentiment 验证与输出结构
+# ---------------------------------------------------------------------------
+
+class TestFinalizeSentimentTool:
+    def _valid_sentiment_json(self) -> str:
+        from cca.schema import UserSentiment
+        return UserSentiment(
+            appstore_cn_rating=4.2,
+            appstore_cn_review_count=50000,
+            appstore_region="cn",
+            positive_themes=["协同效率高", "通知及时"],
+            negative_themes=["偶发卡顿"],
+        ).model_json()
+
+    def test_returns_product_name_and_sentiment(self):
+        from cca.tools.insight_tools import finalize_sentiment
+        from cca.schema import UserSentiment
+        s_json = UserSentiment(
+            appstore_cn_rating=4.1,
+            positive_themes=["好用"],
+            negative_themes=["卡顿"],
+        ).model_dump_json()
+
+        result = json.loads(finalize_sentiment.invoke({
+            "product_name": "钉钉",
+            "sentiment_json": s_json,
+        }))
+        assert result["product_name"] == "钉钉"
+        assert result["sentiment"]["appstore_cn_rating"] == 4.1
+        assert "好用" in result["sentiment"]["positive_themes"]
+
+    def test_invalid_rating_raises(self):
+        import pytest
+        from pydantic import ValidationError
+        from cca.tools.insight_tools import finalize_sentiment
+
+        bad_json = '{"appstore_cn_rating": 99, "positive_themes": [], "negative_themes": []}'
+        with pytest.raises((ValidationError, Exception)):
+            finalize_sentiment.invoke({"product_name": "X", "sentiment_json": bad_json})
+
+    def test_schema_fields_preserved(self):
+        from cca.tools.insight_tools import finalize_sentiment
+        from cca.schema import UserSentiment
+        s = UserSentiment(
+            appstore_cn_rating=3.5,
+            appstore_cn_review_count=1000,
+            appstore_region="cn",
+            positive_themes=["a", "b"],
+            negative_themes=["c"],
+        )
+        result = json.loads(finalize_sentiment.invoke({
+            "product_name": "飞书",
+            "sentiment_json": s.model_dump_json(),
+        }))
+        sent = result["sentiment"]
+        assert sent["appstore_cn_review_count"] == 1000
+        assert sent["appstore_region"] == "cn"
+        assert sent["positive_themes"] == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# _effective_bert_model：微调模型自动切换
+# ---------------------------------------------------------------------------
+
+class TestEffectiveBertModel:
+    def test_returns_config_model_when_no_finetune_dir(self, tmp_path):
+        from unittest.mock import patch
+        from cca.tools import insight_tools as it_mod
+
+        with patch.object(it_mod, "PROJECT_ROOT", tmp_path):
+            with patch.object(it_mod, "load_config", return_value={
+                "nlp": {
+                    "bert_model": "lxyuan/distilbert",
+                    "fine_tune": {"enabled": True, "model_output_dir": "data/models/ft"},
+                }
+            }):
+                model = it_mod._effective_bert_model()
+        assert model == "lxyuan/distilbert"
+
+    def test_returns_finetuned_path_when_dir_exists(self, tmp_path):
+        from unittest.mock import patch
+        from cca.tools import insight_tools as it_mod
+
+        ft_dir = tmp_path / "data" / "models" / "ft"
+        ft_dir.mkdir(parents=True)
+
+        with patch.object(it_mod, "PROJECT_ROOT", tmp_path):
+            with patch.object(it_mod, "load_config", return_value={
+                "nlp": {
+                    "bert_model": "lxyuan/distilbert",
+                    "fine_tune": {"enabled": True, "model_output_dir": "data/models/ft"},
+                }
+            }):
+                model = it_mod._effective_bert_model()
+        assert model == str(ft_dir)
+
+
+# ---------------------------------------------------------------------------
+# insight_node：task_plan 为 None 时优雅跳过
+# ---------------------------------------------------------------------------
+
+class TestInsightNodeGuards:
+    def test_skips_when_task_plan_none(self, mock_state):
+        from cca.agents.insight import insight_node
+        state = {**mock_state, "task_plan": None}
+        result = insight_node(state)
+        assert result["audit_log"][0]["event"] == "skipped"
