@@ -5,8 +5,7 @@
 # 2. conda activate multi-agent
 # 3. pip install -r requirements.txt
 # 4. pip install -e .
-# 5. python -m spacy download zh_core_web_sm
-# 6. cd scripts/node && npm install && cd ../..   # App Store 爬取（Node.js）
+# 5. cd scripts/node && npm install && cd ../..   # App Store 爬取（Node.js）
 #
 # 队友拉新代码后只需：
 # pip install -r requirements.txt
@@ -34,20 +33,18 @@ pyyaml>=6.0
 python-dotenv>=1.0.0
 
 # 信息采集
-tavily-python>=0.5.0
+tavily-python>=0.5.0              # web_search
 requests>=2.32.0
-httpx>=0.27.0
+httpx>=0.27.0                     # fetcher
 beautifulsoup4>=4.12.0
-lxml>=5.0.0
-trafilatura>=2.0.0
-pypdf>=4.0.0
-pymupdf>=1.24.0
-pillow>=10.0.0
+lxml>=5.0.0                       # trafilatura 解析后端
+trafilatura>=2.0.0                # fetcher 正文提取
+pypdf>=4.0.0                      # pdf_reader 文档抽取
 
 # 数据分析
 pandas>=2.2.0
 numpy>=1.26.0
-matplotlib>=3.8.0
+matplotlib>=3.8.0                 # 图表渲染
 scikit-learn>=1.4.0               # Insight NMF 主题提取（cca/utils/nlp_utils.py）
 
 # NLP 推理（Insight BERT 情感分类；CPU 即可，无需 GPU）
@@ -55,17 +52,11 @@ scikit-learn>=1.4.0               # Insight NMF 主题提取（cca/utils/nlp_uti
 transformers>=4.40.0
 torch>=2.1.0
 
-# PII 脱敏
-presidio-analyzer>=2.2.0
-presidio-anonymizer>=2.2.0
-spacy>=3.7.0
-
 # 前端
 streamlit>=1.36.0
-plotly>=5.20.0
 
 # 报告渲染
-markdown-it-py>=3.0.0
+markdown-it-py>=3.0.0             # pdf_renderer
 weasyprint>=62.0                  # Linux/Mac
 reportlab>=4.0.0                  # Windows
 
