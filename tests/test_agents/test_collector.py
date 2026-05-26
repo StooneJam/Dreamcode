@@ -14,11 +14,13 @@ def _empty_state(**overrides) -> CCAState:
     state: CCAState = {
         "user_query": "帮我分析飞书的主要竞品",
         "target_product": "飞书",
+        "user_files": None,
         "initial_brief": {
             "target_product": "飞书",
             "company_hint": "字节跳动",
             "user_query": "帮我分析飞书的主要竞品",
         },
+        "domain_seed": None,
         "exploration_result": None,
         "competitor_names": [],
         "task_plan": None,
@@ -225,6 +227,69 @@ def test_exploration_node_collects_signals_alongside_exploration() -> None:
     assert len(result["agent_signals"]) == 1
     assert result["agent_signals"][0]["from_agent"] == "collector"
     assert result["audit_log"][0]["signals_raised"] == 1
+
+
+def test_exploration_node_injects_domain_seed_hint_into_prompt() -> None:
+    """state.domain_seed 存在时，prompt 应含其 dimension_candidates / competitor_mentions。"""
+    exploration = CollectorExplorationResult(
+        target_product="飞书",
+        product_type="企业协作平台",
+        competitor_names=["钉钉"],
+        discovered_dimensions=["视频会议"],
+        initial_profiles=[],
+    )
+    mock_agent = _make_mock_agent([
+        ToolMessage(
+            content=exploration.model_dump_json(),
+            tool_call_id="x",
+            name="finalize_exploration",
+        ),
+    ])
+    with patch("cca.agents.collector.create_react_agent", return_value=mock_agent):
+        from cca.agents.collector import exploration_node
+        state = _empty_state(
+            domain_seed={
+                "source_files": ["uploads/m.pdf"],
+                "dimension_candidates": ["视频会议", "AI 助手"],
+                "competitor_mentions": ["钉钉", "企业微信"],
+                "product_type_hint": "协同办公平台",
+                "terminology": {},
+                "extracted_at": "2026-05-25T10:00:00Z",
+            },
+        )
+        exploration_node(state)
+
+    # 校验 ReAct agent 收到的 prompt 含 domain_seed 内容
+    call_args = mock_agent.invoke.call_args[0][0]
+    human_msg = call_args["messages"][1]
+    assert "PM 从用户上传文档蒸馏" in human_msg.content
+    assert "视频会议" in human_msg.content
+    assert "企业微信" in human_msg.content
+
+
+def test_exploration_node_omits_seed_hint_when_no_domain_seed() -> None:
+    """state.domain_seed 为 None 时 prompt 不出现 hint 段，回到纯联网路径。"""
+    exploration = CollectorExplorationResult(
+        target_product="飞书",
+        product_type="企业协作平台",
+        competitor_names=["钉钉"],
+        discovered_dimensions=["视频会议"],
+        initial_profiles=[],
+    )
+    mock_agent = _make_mock_agent([
+        ToolMessage(
+            content=exploration.model_dump_json(),
+            tool_call_id="x",
+            name="finalize_exploration",
+        ),
+    ])
+    with patch("cca.agents.collector.create_react_agent", return_value=mock_agent):
+        from cca.agents.collector import exploration_node
+        exploration_node(_empty_state(domain_seed=None))
+
+    call_args = mock_agent.invoke.call_args[0][0]
+    human_msg = call_args["messages"][1]
+    assert "PM 从用户上传文档蒸馏" not in human_msg.content
 
 
 def test_exploration_node_uses_target_product_from_brief() -> None:

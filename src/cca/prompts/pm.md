@@ -20,10 +20,10 @@
 
 **写作风格**：rationale 要可被用户离线 Q&A 检索到——避免"基于上下文判断"这种空话，具体可以写"X 市占率头部 + 同赛道，腾讯会议虽然品牌大但属视频会议工具不对齐"。
 
-## 阶段一：InitialBrief
+## 阶段一：InitialBrief（+ 可选 DomainSeed）
 
-**输入**：用户原始查询 + 可选的 domain_seed yaml
-**输出类型**：`InitialBriefOutput`（含 `initial_brief: InitialBrief` + `decision_records`）
+**输入**：用户原始查询 + （可选）用户上传文档的抽取文本
+**输出类型**：`InitialBriefOutput`（含 `initial_brief` + `decision_records` + **可选 `domain_seed`**）
 **触发**：会话起点
 
 凭训练知识起草 `initial_brief`：
@@ -36,6 +36,21 @@
 - `target_product_selection`（如果用户指令模糊，必须落一条解释为什么选 XX 而非 YY）
 
 你不联网。公司名、产品赛道等信息留给 Collector 验证和修正。
+
+### 处理用户上传文档（D-032 修订版）
+
+如果 input payload 含 `uploaded_file.content`（用户上传的市场报告/PRD/行业白皮书等），你需要：
+
+1. **优先用文档语境消歧 `target_product`**：若 user_query 模糊但文档里反复提到某产品，应优先选该产品而非凭训练知识猜
+2. **同时填写 `domain_seed`** 字段（输出 `InitialBriefOutput.domain_seed`），形态：
+   - `dimension_candidates: list[str]`（≤ 20）—— 文档中提到的对比维度，如"视频会议人数"、"AI 助手"
+   - `competitor_mentions: list[str]`（≤ 10）—— 文档中点名提到的竞品（不做联网验证，仅作 hint）
+   - `product_type_hint: str | None` —— 一句话产品赛道判断
+   - `terminology: dict[str, str]`（≤ 30）—— 文档反复出现的领域术语 → 简短解释
+   - `source_files`：**留空 `[]`**，代码端会覆盖为实际路径，**不要自己写**
+3. **没有 uploaded_file 时**：`domain_seed` 必须设为 `null`/不填，**不要凭训练知识硬编造**
+
+**为什么由 PM 做这一步**：用户上传的文档本质上是 brief 的延伸，跟 user_query 同源 —— PM 是天然的消费者。完整文档上下文也会让你后续阶段的 TaskPlan/AnalystTask 决策更准。下游 Collector / Analyst 通过 `state.domain_seed` 拿到结构化 hint，避免重复消化原文。
 
 ## 阶段二：TaskPlan
 

@@ -29,6 +29,7 @@ from cca.schema import (
 from cca.skills.debate import DebateTarget, run_debate
 from cca.skills.reroute import apply_reroute, reroute
 from cca.state import CCAState
+from cca.tools.pdf_reader import UnsupportedFormat, read_file
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "pm.md"
 
@@ -43,6 +44,10 @@ _TARGET_TO_DEBATE = {
 
 PM_FAMILY: AgentFamily = "gpt-5"
 CHALLENGER_FAMILY: AgentFamily = "deepseek"
+
+# PM phase 1 消化用户文档时，单文件文本最大字符数截断保护（防 prompt 爆）
+# 50k 字符 ≈ 20-30 页 PDF；GPT-5 128k 上下文够装但单 prompt 留余量给 system + decisions
+_MAX_FILE_CHARS = 50_000
 
 
 def _load_system_prompt() -> str:
@@ -71,21 +76,86 @@ def _stamp_decisions(
     return out
 
 
+def _load_user_file(state: CCAState) -> tuple[str | None, str | None, list[dict]]:
+    """读取 state.user_files 第一个文件，返回 (path, text, audit_events)。
+
+    第一版只取第一个文件（D-032 修订版）；多文件会在 audit_log 记 warning。
+    读取失败（找不到 / 格式不支持）也只记 audit_log，不抛 —— PM 仍能凭 user_query 工作。
+    """
+    user_files = state.get("user_files") or []
+    if not user_files:
+        return None, None, []
+
+    audit: list[dict] = []
+    if len(user_files) > 1:
+        audit.append({
+            "agent": "pm",
+            "event": "multi_file_warning",
+            "got": user_files,
+            "kept": user_files[0],
+            "note": "第一版仅消化第一个文件，其余忽略",
+        })
+
+    path = user_files[0]
+    try:
+        text = read_file(path)
+    except (FileNotFoundError, UnsupportedFormat) as e:
+        audit.append({
+            "agent": "pm",
+            "event": "file_read_failed",
+            "path": path,
+            "error": str(e),
+        })
+        return None, None, audit
+
+    if len(text) > _MAX_FILE_CHARS:
+        audit.append({
+            "agent": "pm",
+            "event": "file_truncated",
+            "path": path,
+            "original_chars": len(text),
+            "kept_chars": _MAX_FILE_CHARS,
+        })
+        text = text[:_MAX_FILE_CHARS]
+    return path, text, audit
+
+
 def initial_brief_node(state: CCAState) -> dict:
-    """阶段一：凭训练知识起草 InitialBrief，同时落盘决策档案。"""
+    """阶段一：消化 user_query + (可选)用户上传文档，产出 InitialBrief + 决策档案 + (可选)DomainSeed。
+
+    D-032 修订版：若 state.user_files 非空，本节点用 pdf_reader 抽全文喂 prompt，
+    让 GPT-5 在同一次 LLM 调用里同时产出 InitialBrief 和 DomainSeed —— 避免独立
+    pre-processing 节点的双调用开销，且让 PM 看到完整用户背景做规划。
+    """
+    file_path, file_text, file_audit = _load_user_file(state)
+
+    payload: dict = {"user_query": state["user_query"]}
+    if file_text is not None:
+        payload["uploaded_file"] = {"path": file_path, "content": file_text}
+
     llm = gpt.with_structured_output(InitialBriefOutput, method="function_calling")
-    user = _phase_prefix("阶段一 InitialBrief") + json.dumps(
-        {"user_query": state["user_query"]},
-        ensure_ascii=False,
-    )
+    user = _phase_prefix("阶段一 InitialBrief") + json.dumps(payload, ensure_ascii=False)
     result = cast(
         InitialBriefOutput,
         llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]),
     )
-    return {
+
+    updates: dict = {
         "initial_brief": result.initial_brief.model_dump(),
         "decision_log": _stamp_decisions(result.decision_records, "initial_brief"),
     }
+
+    # domain_seed：仅当文件被成功读入且 LLM 填了 DomainSeed 时落盘
+    if result.domain_seed is not None and file_path is not None:
+        ds = result.domain_seed.model_dump()
+        # 代码端强制覆盖 source_files，防 LLM 自报错路径
+        ds["source_files"] = [file_path]
+        updates["domain_seed"] = ds
+
+    if file_audit:
+        updates["audit_log"] = file_audit
+
+    return updates
 
 
 def task_plan_node(state: CCAState) -> dict:

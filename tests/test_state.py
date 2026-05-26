@@ -8,7 +8,9 @@ from cca.state import CCAState
 REQUIRED_FIELDS = {
     "user_query",
     "target_product",
+    "user_files",            # 上传机制写入的文件路径列表
     "initial_brief",         # PM 阶段一产物
+    "domain_seed",           # PM phase 1 文档蒸馏产物
     "exploration_result",    # Collector 一轮探索产物
     "competitor_names",
     "task_plan",             # PM 阶段二

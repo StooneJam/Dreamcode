@@ -32,8 +32,15 @@ class CCAState(TypedDict):
     user_query: str
     target_product: str
 
+    # 用户上传文档路径（CLI/Streamlit 在调用 graph 前写入），第一版只取第一个
+    # D-032 修订版：PM phase 1 直接消化这些文件，不再走独立 pre-processing 节点
+    user_files: list[str] | None
+
     # PM 阶段一 InitialBrief；Collector 一轮 ExplorationResult（debate 收敛后写回）
     initial_brief: dict | None           # InitialBrief.model_dump()
+    # PM phase 1 蒸馏用户文档产出的领域 hint（仅当 user_files 非空时填）；
+    # 下游 Collector / Insight / Analyst 共享
+    domain_seed: dict | None             # DomainSeed.model_dump()
     exploration_result: dict | None      # CollectorExplorationResult.model_dump()
 
     # PM 阶段二~四下发的任务

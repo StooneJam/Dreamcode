@@ -13,6 +13,7 @@ from cca.schema import (
     AnalystTaskOutput,
     DebateResult,
     DecisionRecord,
+    DomainSeed,
     InitialBrief,
     InitialBriefOutput,
     ReportTask,
@@ -65,7 +66,9 @@ def _make_minimal_state(**overrides) -> CCAState:
     state: CCAState = {
         "user_query": "分析飞书",
         "target_product": "飞书",
+        "user_files": None,
         "initial_brief": None,
+        "domain_seed": None,
         "exploration_result": None,
         "competitor_names": [],
         "task_plan": None,
@@ -111,6 +114,120 @@ def test_initial_brief_node_returns_initial_brief(monkeypatch: pytest.MonkeyPatc
     assert len(result["decision_log"]) == 1
     assert result["decision_log"][0]["phase"] == "initial_brief"
     assert result["decision_log"][0]["decision_type"] == "target_product_selection"
+    # 没上传文件 → domain_seed 不在 updates 里
+    assert "domain_seed" not in result
+
+
+def test_initial_brief_node_consumes_user_file_and_produces_domain_seed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """state.user_files 有路径 → 抽文本喂 prompt → LLM 返回 DomainSeed → 落 state.domain_seed。"""
+    seed_file = tmp_path / "market.md"
+    seed_file.write_text(
+        "# 市场调研\n飞书在协同办公赛道，主要对手是钉钉、企业微信。\n关键维度：视频会议、AI 助手、定价。",
+        encoding="utf-8",
+    )
+
+    output = InitialBriefOutput(
+        initial_brief=InitialBrief(
+            target_product="飞书",
+            company_hint="字节跳动",
+            user_query="分析飞书",
+        ),
+        decision_records=[_mk_decision("target_product_selection")],
+        domain_seed=DomainSeed(
+            source_files=[],  # LLM 留空，节点端覆盖
+            dimension_candidates=["视频会议", "AI 助手", "定价"],
+            competitor_mentions=["钉钉", "企业微信"],
+            product_type_hint="协同办公平台",
+        ),
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import initial_brief_node
+
+    result = initial_brief_node(
+        _make_minimal_state(user_query="分析飞书", user_files=[str(seed_file)])
+    )
+    assert "domain_seed" in result
+    ds = result["domain_seed"]
+    assert ds["source_files"] == [str(seed_file)]  # 节点端强制覆盖
+    assert ds["dimension_candidates"] == ["视频会议", "AI 助手", "定价"]
+    assert ds["competitor_mentions"] == ["钉钉", "企业微信"]
+
+
+def test_initial_brief_node_missing_user_file_logs_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """文件路径不存在 → 不抛异常，audit_log 记 file_read_failed，无 domain_seed。"""
+    output = InitialBriefOutput(
+        initial_brief=InitialBrief(
+            target_product="飞书", company_hint=None, user_query="分析飞书",
+        ),
+        decision_records=[_mk_decision("target_product_selection")],
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import initial_brief_node
+
+    result = initial_brief_node(
+        _make_minimal_state(user_files=["/no/such/file.pdf"])
+    )
+    assert "domain_seed" not in result
+    assert any(
+        e.get("event") == "file_read_failed" for e in result.get("audit_log", [])
+    )
+
+
+def test_initial_brief_node_multi_file_keeps_first_logs_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """多文件 → 只读第一个 + audit_log 记 multi_file_warning。"""
+    f1 = tmp_path / "a.md"
+    f2 = tmp_path / "b.md"
+    f1.write_text("first", encoding="utf-8")
+    f2.write_text("second", encoding="utf-8")
+
+    output = InitialBriefOutput(
+        initial_brief=InitialBrief(
+            target_product="飞书", company_hint=None, user_query="x",
+        ),
+        decision_records=[_mk_decision("target_product_selection")],
+        domain_seed=DomainSeed(source_files=[], dimension_candidates=["d"]),
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import initial_brief_node
+
+    result = initial_brief_node(
+        _make_minimal_state(user_files=[str(f1), str(f2)])
+    )
+    assert result["domain_seed"]["source_files"] == [str(f1)]
+    assert any(
+        e.get("event") == "multi_file_warning" for e in result.get("audit_log", [])
+    )
+
+
+def test_initial_brief_node_skips_domain_seed_when_llm_returns_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """文件读到了但 LLM 没返回 domain_seed → state.domain_seed 不写入。"""
+    p = tmp_path / "x.md"
+    p.write_text("noise", encoding="utf-8")
+
+    output = InitialBriefOutput(
+        initial_brief=InitialBrief(
+            target_product="飞书", company_hint=None, user_query="x",
+        ),
+        decision_records=[_mk_decision("target_product_selection")],
+        domain_seed=None,  # LLM 判断没有 hint 可提
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import initial_brief_node
+
+    result = initial_brief_node(_make_minimal_state(user_files=[str(p)]))
+    assert "domain_seed" not in result
 
 
 # ── Phase 2: TaskPlan ──────────────────────────────────────────────────

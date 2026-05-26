@@ -11,8 +11,11 @@ from cca.schema import (
     DecisionAlternative,
     DecisionRecord,
     Dimension,
+    DomainSeed,
     Evidence,
     Fact,
+    InitialBrief,
+    InitialBriefOutput,
     InsightTask,
     PricingInfo,
     PricingTier,
@@ -393,3 +396,75 @@ def test_review_unit_rejects_invalid_agent() -> None:
 def test_review_unit_rejects_invalid_status() -> None:
     with pytest.raises(ValidationError):
         ReviewUnit(agent="collector", product_name="钉钉", status="ok", retry_count=0)
+
+
+# ---------------------------------------------------------------------------
+# DomainSeed + InitialBriefOutput.domain_seed
+# ---------------------------------------------------------------------------
+
+
+def test_domain_seed_minimal_valid() -> None:
+    seed = DomainSeed(source_files=["uploads/x.pdf"])
+    assert seed.source_files == ["uploads/x.pdf"]
+    assert seed.dimension_candidates == []
+    assert seed.competitor_mentions == []
+    assert seed.product_type_hint is None
+    assert seed.terminology == {}
+
+
+def test_domain_seed_with_all_fields() -> None:
+    seed = DomainSeed(
+        source_files=["uploads/m.pdf"],
+        dimension_candidates=["视频会议", "AI 助手"],
+        competitor_mentions=["钉钉", "企业微信"],
+        product_type_hint="协同办公平台",
+        terminology={"DAU": "日活跃用户"},
+    )
+    assert len(seed.dimension_candidates) == 2
+    assert seed.product_type_hint == "协同办公平台"
+
+
+def test_domain_seed_rejects_too_many_dimensions() -> None:
+    """dimension_candidates 上限 20 项。"""
+    with pytest.raises(ValidationError):
+        DomainSeed(
+            source_files=["uploads/m.pdf"],
+            dimension_candidates=[f"d{i}" for i in range(21)],
+        )
+
+
+def test_initial_brief_output_domain_seed_optional() -> None:
+    """domain_seed 字段是可选的，None 时不影响其他字段。"""
+    out = InitialBriefOutput(
+        initial_brief=InitialBrief(
+            target_product="飞书", company_hint=None, user_query="x",
+        ),
+        decision_records=[
+            DecisionRecord(
+                phase="initial_brief",
+                decision_type="other",
+                chosen={},
+                rationale="x",
+            ),
+        ],
+    )
+    assert out.domain_seed is None
+
+
+def test_initial_brief_output_with_domain_seed() -> None:
+    out = InitialBriefOutput(
+        initial_brief=InitialBrief(
+            target_product="飞书", company_hint=None, user_query="x",
+        ),
+        decision_records=[
+            DecisionRecord(
+                phase="initial_brief",
+                decision_type="other",
+                chosen={},
+                rationale="x",
+            ),
+        ],
+        domain_seed=DomainSeed(source_files=["uploads/x.pdf"]),
+    )
+    assert out.domain_seed is not None
+    assert out.domain_seed.source_files == ["uploads/x.pdf"]

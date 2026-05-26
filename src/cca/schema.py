@@ -381,16 +381,62 @@ class DecisionRecord(BaseModel):
     )
 
 
+# 用户文档蒸馏产物 (D-032 修订版)
+# 由 PM phase 1 多模态消化用户上传文档时产出；下游 Collector / Insight / Analyst 共享。
+
+
+class DomainSeed(BaseModel):
+    """用户上传文档蒸馏出的领域 hint，供下游 agent 在做 dimension / competitor 选择时参考。
+
+    生产者：PM `initial_brief_node`（D-032 修订后由 PM 直接消化文档，不再走独立节点）。
+    消费者：Collector exploration_node（优先采用 dimension_candidates 而非凭空联网发现）、
+            未来 PM TaskPlan / AnalystTask（结合 exploration_result 决策）。
+
+    state 控制在 ~2KB，不存原文 —— `source_files` 留 lazy 重读通道。
+    """
+
+    source_files: list[str] = Field(
+        description="PM 消化的文件路径（绝对或相对项目根），给后续 agent lazy 重读用。代码端覆盖，LLM 不填",
+    )
+    dimension_candidates: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="用户文档中提到的对比维度候选，如『视频会议人数』『AI 助手』",
+    )
+    competitor_mentions: list[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="用户文档中提到的竞品名，未联网验证，仅作 hint",
+    )
+    product_type_hint: str | None = Field(
+        None,
+        description="一句话产品赛道判断，从文档语境推断",
+    )
+    terminology: dict[str, str] = Field(
+        default_factory=dict,
+        description="领域术语表，key=术语 value=简短解释；≤ 30 条",
+    )
+    extracted_at: str = Field(default_factory=_now_iso)
+
+
 # PM 4 阶段节点的联合输出：task 主体 + 该阶段产生的若干 DecisionRecord。
 # 用 with_structured_output(*Output) 一次 LLM 调用同时拿到任务和决策档案，
 # 避免双倍 token 成本。decision_records min_length=1 强制 LLM 至少落一条决策。
 
 
 class InitialBriefOutput(BaseModel):
-    """阶段一联合输出：InitialBrief + 决策档案。"""
+    """阶段一联合输出：InitialBrief + 决策档案 + （可选）用户文档蒸馏 DomainSeed。
+
+    D-032 修订版：PM phase 1 多模态消化用户上传文档，同次 LLM 调用产出全部三块。
+    domain_seed 仅在用户上传文件时填，否则为 None。
+    """
 
     initial_brief: InitialBrief
     decision_records: list[DecisionRecord] = Field(min_length=1)
+    domain_seed: DomainSeed | None = Field(
+        None,
+        description="若 prompt 含 uploaded_file 内容则填，否则 None；source_files 字段由代码端覆盖",
+    )
 
 
 class TaskPlanOutput(BaseModel):
