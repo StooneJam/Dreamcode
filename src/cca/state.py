@@ -33,7 +33,7 @@ class CCAState(TypedDict):
     target_product: str
 
     # 用户上传文档路径（CLI/Streamlit 在调用 graph 前写入），第一版只取第一个
-    # D-032 修订版：PM phase 1 直接消化这些文件，不再走独立 pre-processing 节点
+    # PM phase 1 直接消化这些文件。
     user_files: list[str] | None
 
     # PM 阶段一 InitialBrief；Collector 一轮 ExplorationResult（debate 收敛后写回）

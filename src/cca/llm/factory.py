@@ -29,6 +29,7 @@ deepseek = ChatOpenAI(
     base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
     timeout=60,
     temperature=0.3,
+    extra_body={"thinking": {"type": "disabled"}}
 )
 
 # Doubao（火山方舟 Ark）—— 报告终审 debate 辩方

@@ -75,3 +75,88 @@ def test_challenge_pm_requires_debate_flag_propagates() -> None:
     })
     signal = json.loads(output)
     assert signal["requires_debate"] is True
+
+
+# ── Phase 2 工具 ───────────────────────────────────────────────────────
+
+
+def _valid_profile_json(product_name: str = "钉钉") -> str:
+    """构造一个最小可通过 ProductProfile 校验的 JSON。"""
+    return json.dumps({
+        "product_name": product_name,
+        "company": "阿里巴巴",
+        "product_type": "企业协作平台",
+        "target_users": "中大型企业",
+        "website": "https://www.dingtalk.com",
+        "dimensions": [],
+        "pricing": None,
+        "sources": [],
+    }, ensure_ascii=False)
+
+
+def test_finalize_profile_accepts_valid_schema() -> None:
+    from cca.tools.collector_tools import finalize_profile
+
+    output = finalize_profile.invoke({
+        "product_name": "钉钉",
+        "profile_json": _valid_profile_json("钉钉"),
+    })
+    parsed = json.loads(output)
+    assert parsed["product_name"] == "钉钉"
+    assert parsed["profile"]["company"] == "阿里巴巴"
+    assert parsed["profile"]["website"] == "https://www.dingtalk.com"
+
+
+def test_finalize_profile_overrides_mismatched_product_name() -> None:
+    """profile_json 里的 product_name 跟参数不一致 → 以参数为准（防 LLM 拼错）。"""
+    from cca.tools.collector_tools import finalize_profile
+
+    output = finalize_profile.invoke({
+        "product_name": "钉钉",
+        "profile_json": _valid_profile_json("DingTalk"),  # 不一致
+    })
+    parsed = json.loads(output)
+    assert parsed["product_name"] == "钉钉"
+    assert parsed["profile"]["product_name"] == "钉钉"
+
+
+def test_finalize_profile_rejects_invalid_schema() -> None:
+    from cca.tools.collector_tools import finalize_profile
+
+    invalid = json.dumps({"product_name": "X", "product_type": 12345})  # type 错
+    with pytest.raises(ValidationError):
+        finalize_profile.invoke({"product_name": "X", "profile_json": invalid})
+
+
+def test_request_product_replacement_constructs_data_gap_signal() -> None:
+    from cca.tools.collector_tools import request_product_replacement
+
+    output = request_product_replacement.invoke({
+        "product_name": "某幽灵产品",
+        "reason": "官网 404，应用商店零搜索结果",
+        "evidence": [
+            "https://example.com/ghost-product 返回 404",
+            "App Store 中文区搜索『某幽灵产品』命中 0 条",
+        ],
+    })
+    signal = json.loads(output)
+    assert signal["from_agent"] == "collector"
+    assert signal["kind"] == "data_gap"
+    assert signal["target"] == "task_plan"
+    assert signal["requires_debate"] is False
+    assert "某幽灵产品" in signal["payload"]["claim"]
+    assert "404" in signal["payload"]["claim"]
+    assert len(signal["payload"]["evidence"]) == 2
+    assert "移除 某幽灵产品" in signal["payload"]["suggested_fix"]
+
+
+def test_request_product_replacement_rejects_empty_evidence() -> None:
+    """ChallengePayload 强制 evidence min_length=1；空 evidence 应被拒。"""
+    from cca.tools.collector_tools import request_product_replacement
+
+    with pytest.raises(ValidationError):
+        request_product_replacement.invoke({
+            "product_name": "X",
+            "reason": "无理由",
+            "evidence": [],
+        })
