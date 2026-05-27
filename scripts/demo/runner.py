@@ -271,7 +271,7 @@ def _dry_pm_responses(with_seed: bool) -> dict[type, list[Any]]:
 
 
 def _dry_debate_clients(scenario: DebateScenario) -> dict[str, _FakeLLM]:
-    from cca.schema import DebateResult, TaskPlan
+    from cca.schema import CollectTask, DebateResult, InsightTask, TaskPlan
     from cca.skills.debate import _Critique, _Refinement
 
     if scenario == "accept":
@@ -423,7 +423,7 @@ def _run_manual(args: argparse.Namespace) -> None:
     _dump("initial_brief", state["initial_brief"])
     if state.get("domain_seed"):
         _dump("domain_seed", state["domain_seed"])
-    show_decisions(out)
+    show_decisions(out.get("decision_log", []))
 
     # ── Exploration ──
     if args.live_explore:
@@ -442,7 +442,7 @@ def _run_manual(args: argparse.Namespace) -> None:
     hr("PHASE 2 · TaskPlan")
     _merge(state, out := task_plan_node(state))
     _dump("task_plan", state["task_plan"])
-    show_decisions(out)
+    show_decisions(out.get("decision_log", []))
 
     # ── Debate（若指定）──
     if has_debate:
@@ -524,7 +524,7 @@ def _run_manual(args: argparse.Namespace) -> None:
     print(f"  review_state: {len(state['review_state'])} 条")
     _merge(state, out := report_task_node(state))
     _dump("report_task", state["report_task"])
-    show_decisions(out)
+    show_decisions(out.get("decision_log", []))
 
     # ── Report ──
     if args.skip_report:
