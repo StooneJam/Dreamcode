@@ -80,9 +80,11 @@ def challenge_pm(
         suggested_fix: 可选，建议的修订方向
         requires_debate: 主观判断分歧时为 True；事实性错误为 False
     """
+    # 事实性信号（requires_debate=False）→ data_gap；主观分歧 → pm_challenge
+    kind = "data_gap" if not requires_debate else "pm_challenge"
     signal = AgentSignal(
         from_agent="analyst",
-        kind="pm_challenge",
+        kind=kind,
         target="analyst_task",
         payload=ChallengePayload(
             claim=claim,
