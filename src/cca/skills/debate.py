@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Literal, cast
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from cca.llm.factory import get_llm
@@ -37,6 +37,37 @@ _REVISED_OUTPUT_SCHEMA: dict[DebateTarget, type[BaseModel]] = {
     "analyst_task": AnalystTask,
     "report": ReportTask,
 }
+
+# target_platforms 允许的字面量枚举值
+_VALID_PLATFORMS: frozenset[str] = frozenset(
+    {"appstore_cn", "appstore_us", "zhihu", "weibo", "other"}
+)
+
+
+def _repair_for_schema(data: dict, target: DebateTarget) -> dict:
+    """修复 LLM 在 revised_output 中常见的 schema 偏差，避免 Pydantic 校验抛错。
+
+    已知偏差：
+    - pm_taskplan: LLM 用 competitor_groups 代替 competitor_names
+    - pm_taskplan: insight_tasks[].target_platforms 写成中文自由文本而非枚举值
+    """
+    if target != "pm_taskplan":
+        return data
+    data = dict(data)
+    # competitor_names 缺失时，从 LLM 自造的 competitor_groups 中提取
+    if "competitor_names" not in data and "competitor_groups" in data:
+        data["competitor_names"] = [
+            g["product_name"] for g in data["competitor_groups"]
+            if isinstance(g, dict) and "product_name" in g
+        ]
+    # target_platforms 非法枚举值统一 fallback 到 "other"
+    for task in data.get("insight_tasks") or []:
+        if isinstance(task, dict) and "target_platforms" in task:
+            task["target_platforms"] = [
+                p if p in _VALID_PLATFORMS else "other"
+                for p in task["target_platforms"]
+            ]
+    return data
 
 
 # 单方/单轮的轻量结构化输出类型
@@ -147,24 +178,32 @@ def _phase_finalize_converged(
 ) -> dict:
     """获胜方把共识结构化为修订版 target_content。
 
-    用 with_structured_output 强制按 target 对应的 Pydantic 类型输出，
-    LLM 漏字段时 Pydantic 直接抛 ValidationError，
-    避免下游 _apply_debate_result 拿到不完整 dict 后静默清空 state（例如把 competitor_names 改成 []）。
+    不用 with_structured_output：它在 parse 前无法插入 repair 步骤。
+    改为：json_mode 裸调用 → 手动解 JSON → _repair_for_schema 修复已知偏差 → Pydantic validate。
     """
     schema = _REVISED_OUTPUT_SCHEMA[target]
-    llm = get_llm(winner_family).with_structured_output(schema, method="json_mode")
+    schema_json = json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=2)
     sys = (
         f"你的观点在辩论中被对方采纳。请基于你的最终 refinement，"
-        f"产出修订版 {target}，必须严格符合 {schema.__name__} 的字段约束 ——"
-        f"不要遗漏 required 字段，不要保留 original 中已被 refinement 推翻的项。"
-        f"以 JSON 输出。"
+        f"产出修订版 {target} 的 JSON 对象。\n\n"
+        f"严格遵守以下 JSON Schema（required 字段不可缺失，enum 值必须逐字匹配）：\n"
+        f"{schema_json}\n\n"
+        f"输出纯 JSON，不加 markdown 包裹，不加任何解释。"
     )
     user = json.dumps(
         {"original": target_content, "winning_refinement": winning_refinement},
         ensure_ascii=False,
     )
-    result = cast(BaseModel, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
-    return result.model_dump()
+    llm = get_llm(winner_family).bind(response_format={"type": "json_object"})
+    raw: AIMessage = cast(AIMessage, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
+    raw_str = raw.content.strip()
+    # 剥掉 LLM 偶尔多加的 markdown 代码块包裹
+    if raw_str.startswith("```"):
+        parts = raw_str.split("```", 2)
+        raw_str = parts[1].lstrip("json").strip() if len(parts) >= 3 else raw_str
+    raw_dict = json.loads(raw_str)
+    raw_dict = _repair_for_schema(raw_dict, target)
+    return schema.model_validate(raw_dict).model_dump()
 
 
 # debate 主流程
