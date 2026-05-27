@@ -133,7 +133,7 @@ def exploration_node(state: CCAState) -> dict:
                 HumanMessage(content=initial_msg),
             ]
         },
-        config={"recursion_limit": 20},
+        config={"recursion_limit": 40},
     )
 
     messages = result["messages"]
@@ -251,7 +251,7 @@ def collect_one_product(task: CollectTask, context: dict) -> dict:
                 HumanMessage(content=_build_collect_prompt_payload(task, context)),
             ]
         },
-        config={"recursion_limit": 20},
+        config={"recursion_limit": 60},
     )
 
     messages = result["messages"]

@@ -121,7 +121,7 @@ def insight_node(state: CCAState) -> dict:
                 )),
             ]
         },
-        config={"recursion_limit": 20},
+        config={"recursion_limit": 50},
     )
 
     messages = result["messages"]
