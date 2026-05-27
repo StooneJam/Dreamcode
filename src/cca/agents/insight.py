@@ -39,22 +39,41 @@ def _load_prompt() -> str:
 
 
 def _extract_sentiments(messages: list) -> dict[str, dict]:
-    """从 finalize_sentiment 工具调用结果中提取各产品的 UserSentiment。"""
+    """从 finalize_sentiment 工具调用结果中提取各产品的 UserSentiment。
+
+    跳过 content 为空或非 JSON 的条目（工具调用失败时）。
+    """
     results: dict[str, dict] = {}
     for msg in messages:
-        if isinstance(msg, ToolMessage) and msg.name == "finalize_sentiment":
+        if not (isinstance(msg, ToolMessage) and msg.name == "finalize_sentiment"):
+            continue
+        if not msg.content:
+            continue
+        try:
             data = json.loads(msg.content)
+        except json.JSONDecodeError:
+            continue
+        if "product_name" in data and "sentiment" in data:
             results[data["product_name"]] = data["sentiment"]
     return results
 
 
 def _extract_signals(messages: list) -> list[dict]:
-    """提取 challenge_pm 工具调用产出的 AgentSignal。"""
-    return [
-        json.loads(msg.content)
-        for msg in messages
-        if isinstance(msg, ToolMessage) and msg.name == "challenge_pm"
-    ]
+    """提取 challenge_pm 工具调用产出的 AgentSignal。
+
+    跳过 content 为空或非 JSON 的条目。
+    """
+    results = []
+    for msg in messages:
+        if not (isinstance(msg, ToolMessage) and msg.name == "challenge_pm"):
+            continue
+        if not msg.content:
+            continue
+        try:
+            results.append(json.loads(msg.content))
+        except json.JSONDecodeError:
+            continue
+    return results
 
 
 def insight_node(state: CCAState) -> dict:

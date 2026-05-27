@@ -55,21 +55,36 @@ def _load_collect_prompt() -> str:
 def _extract_exploration(messages: list) -> dict | None:
     """从 finalize_exploration 工具调用结果中提取 CollectorExplorationResult dict。
 
-    取最后一次调用——LLM 偶尔会多次 finalize，以最新一次为准。
+    取最后一次成功调用；跳过 content 为空或非 JSON 的条目。
     """
     for msg in reversed(messages):
-        if isinstance(msg, ToolMessage) and msg.name == "finalize_exploration":
+        if not (isinstance(msg, ToolMessage) and msg.name == "finalize_exploration"):
+            continue
+        if not msg.content:
+            continue
+        try:
             return json.loads(msg.content)
+        except json.JSONDecodeError:
+            continue
     return None
 
 
 def _extract_signals(messages: list) -> list[dict]:
-    """提取 challenge_pm 工具调用产出的 AgentSignal 列表。"""
-    return [
-        json.loads(msg.content)
-        for msg in messages
-        if isinstance(msg, ToolMessage) and msg.name == "challenge_pm"
-    ]
+    """提取 challenge_pm 工具调用产出的 AgentSignal 列表。
+
+    跳过 content 为空或非 JSON 的条目。
+    """
+    results = []
+    for msg in messages:
+        if not (isinstance(msg, ToolMessage) and msg.name == "challenge_pm"):
+            continue
+        if not msg.content:
+            continue
+        try:
+            results.append(json.loads(msg.content))
+        except json.JSONDecodeError:
+            continue
+    return results
 
 
 def exploration_node(state: CCAState) -> dict:
@@ -155,21 +170,40 @@ def exploration_node(state: CCAState) -> dict:
 
 
 def _extract_finalized_profile(messages: list) -> dict | None:
-    """从 finalize_profile 工具调用结果取最后一次提交。"""
+    """从 finalize_profile 工具调用结果取最后一次成功提交。
+
+    跳过 content 为空或非 JSON 的条目（工具调用失败时 LangGraph 返回错误文本或空串）。
+    """
     for msg in reversed(messages):
-        if isinstance(msg, ToolMessage) and msg.name == "finalize_profile":
+        if not (isinstance(msg, ToolMessage) and msg.name == "finalize_profile"):
+            continue
+        if not msg.content:
+            continue
+        try:
             data = json.loads(msg.content)
-            return data.get("profile")
+        except json.JSONDecodeError:
+            continue  # 工具抛错，content 是错误文本，跳过
+        if profile := data.get("profile"):
+            return profile
     return None
 
 
 def _extract_replacement_signals(messages: list) -> list[dict]:
-    """提取 request_product_replacement 工具调用产出的 AgentSignal。"""
-    return [
-        json.loads(msg.content)
-        for msg in messages
-        if isinstance(msg, ToolMessage) and msg.name == "request_product_replacement"
-    ]
+    """提取 request_product_replacement 工具调用产出的 AgentSignal。
+
+    跳过 content 为空或非 JSON 的条目。
+    """
+    results = []
+    for msg in messages:
+        if not (isinstance(msg, ToolMessage) and msg.name == "request_product_replacement"):
+            continue
+        if not msg.content:
+            continue
+        try:
+            results.append(json.loads(msg.content))
+        except json.JSONDecodeError:
+            continue
+    return results
 
 
 def _build_collect_prompt_payload(task: CollectTask, context: dict) -> str:
