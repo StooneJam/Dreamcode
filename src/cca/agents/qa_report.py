@@ -88,19 +88,37 @@ def _extract_pdf_path(messages: list) -> str | None:
 
 
 def _extract_agent_signals(messages: list) -> list[dict]:
-    """收集 reject_report_task 工具调用产出的 AgentSignal。"""
-    return [
-        json.loads(msg.content)
-        for msg in messages
-        if isinstance(msg, ToolMessage) and msg.name == "reject_report_task"
-    ]
+    """收集 reject_report_task 工具调用产出的 AgentSignal。
+
+    跳过 content 为空或非 JSON 的条目（工具调用失败时）。
+    """
+    results = []
+    for msg in messages:
+        if not (isinstance(msg, ToolMessage) and msg.name == "reject_report_task"):
+            continue
+        if not msg.content:
+            continue
+        try:
+            results.append(json.loads(msg.content))
+        except json.JSONDecodeError:
+            continue
+    return results
 
 
 def _extract_reviewer_result(messages: list) -> QAResult:
-    """从工具调用结果中找 call_reviewer 返回并反序列化，未调用时返回默认通过。"""
+    """从工具调用结果中找 call_reviewer 返回并反序列化，未调用时返回默认通过。
+
+    跳过 content 为空或无法反序列化的条目。
+    """
     for msg in messages:
-        if isinstance(msg, ToolMessage) and msg.name == "call_reviewer":
+        if not (isinstance(msg, ToolMessage) and msg.name == "call_reviewer"):
+            continue
+        if not msg.content:
+            continue
+        try:
             return QAResult.model_validate_json(msg.content)
+        except (json.JSONDecodeError, ValueError):
+            continue
     return QAResult(product_name="__report__", passed=True, note="reviewer 未被调用")
 
 

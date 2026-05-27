@@ -347,7 +347,10 @@ class DecisionRecord(BaseModel):
         default_factory=lambda: f"D-{uuid4().hex[:8]}",
         description="决策唯一标识，可被报告段落引用（如脚注 [D-a1b2c3d4]）",
     )
-    phase: Literal["initial_brief", "task_plan", "analyst_task", "report_task"]
+    phase: Literal["initial_brief", "task_plan", "analyst_task", "report_task"] | None = Field(
+        None,
+        description="由代码端 _stamp_decisions 强制覆盖，LLM 无需填写",
+    )
     decision_type: str = Field(
         description=(
             "决策类型，自由字符串。建议从以下值中选取以保持一致性："
