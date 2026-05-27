@@ -104,9 +104,15 @@ def finalize_profile(product_name: str, profile_json: str) -> str:
             **不要**填 sentiment（Insight owner）或 swot（Analyst owner）。
             state.profiles 用 _merge_profiles reducer，并发写入只覆盖自己的字段。
     """
-    profile = ProductProfile.model_validate_json(profile_json)
+    raw = json.loads(profile_json)
+    # 剔除无证据的 Fact，避免 min_length=1 ValidationError 阻断整个产品采集
+    for dim in raw.get("dimensions") or []:
+        dim["facts"] = [
+            f for f in (dim.get("facts") or [])
+            if f.get("evidence")
+        ]
+    profile = ProductProfile.model_validate(raw)
     if profile.product_name != product_name:
-        # 不一致则以参数为准，防 LLM 拼 JSON 时漏填或写错
         profile = profile.model_copy(update={"product_name": product_name})
     return json.dumps(
         {"product_name": product_name, "profile": profile.model_dump()},
