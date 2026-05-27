@@ -16,11 +16,13 @@
 - rankings_json: JSON 数组，每项 `{"product_name": str, "rank": int, "note": str}`
 - 若 cross_product_comparison_required=true，必须覆盖所有 product_names
 
-### 第二步：SWOT 分析（finalize_swot）
+### 第二步：SWOT 分析（finalize_swot，仅当 require_swot=true 时执行）
 
-对 product_names 中每个产品，生成四象限 SWOT：
+**若 analyst_task.require_swot=false，跳过本步骤，不调用 finalize_swot。**
+
+对 product_names 中每个产品，生成四象限 SWOT；以 target_product 为主体视角：
 - Strengths / Weaknesses：必须基于 profiles 中已有的 dimensions.facts.statement 事实
-- Opportunities / Threats：可基于竞品格局推断，但须有逻辑依据
+- Opportunities / Threats：以 target_product 视角推断竞品构成的机会或威胁，须有逻辑依据
 - 每条 SWOTPoint.supporting_fact_statements 至少 1 项，引用 dimensions.facts.statement 原文（逐字匹配）
 - 四象限各至少 1 条 SWOTPoint
 - **必须**对每个产品调用一次 finalize_swot

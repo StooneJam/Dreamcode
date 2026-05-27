@@ -142,7 +142,8 @@ class TestChallengePmTool:
         })
         signal = AgentSignal.model_validate_json(result)
         assert signal.from_agent == "analyst"
-        assert signal.kind == "pm_challenge"
+        # requires_debate 默认 False（事实性信号）→ kind 应为 data_gap
+        assert signal.kind == "data_gap"
         assert signal.target == "analyst_task"
 
     def test_requires_debate_propagated(self):
@@ -161,6 +162,26 @@ class TestChallengePmTool:
         r1 = challenge_pm.invoke({"claim": "c1", "evidence": ["e1"]})
         r2 = challenge_pm.invoke({"claim": "c2", "evidence": ["e2"]})
         assert AgentSignal.model_validate_json(r1).signal_id != AgentSignal.model_validate_json(r2).signal_id
+
+    def test_factual_signal_uses_data_gap_kind(self):
+        from cca.schema import AgentSignal
+        from cca.tools.analyst_tools import challenge_pm
+        result = challenge_pm.invoke({
+            "claim": "product X 在 profiles 中完全缺失",
+            "evidence": ["profiles dict 无 key 'X'"],
+            "requires_debate": False,
+        })
+        assert AgentSignal.model_validate_json(result).kind == "data_gap"
+
+    def test_subjective_signal_uses_pm_challenge_kind(self):
+        from cca.schema import AgentSignal
+        from cca.tools.analyst_tools import challenge_pm
+        result = challenge_pm.invoke({
+            "claim": "focus_dimensions 不适合该产品领域",
+            "evidence": ["维度均为硬件规格"],
+            "requires_debate": True,
+        })
+        assert AgentSignal.model_validate_json(result).kind == "pm_challenge"
 
     def test_payload_claim_matches(self):
         from cca.schema import AgentSignal
@@ -238,6 +259,36 @@ class TestAnalystNode:
         state = {**mock_state, "analyst_task": None}
         result = analyst_node(state)
         assert result["audit_log"][0]["event"] == "skipped"
+
+    def test_require_swot_false_suppresses_finalize_swot(self, mock_state):
+        """require_swot=False 时 human message 提示不调 finalize_swot，且无 SWOT 产出。"""
+        from cca.schema import AnalystTask
+        state = {
+            **mock_state,
+            "analyst_task": AnalystTask(
+                product_names=["钉钉"],
+                focus_dimensions=["定价"],
+                require_swot=False,
+            ).model_dump(),
+        }
+        # 模拟 agent 没有调 finalize_swot（遵从指令）
+        mock_agent = MagicMock()
+        mock_agent.invoke.return_value = {"messages": [
+            _ranking_msg("定价", ["钉钉"]),
+        ]}
+        with patch("cca.agents.analyst.create_react_agent", return_value=mock_agent):
+            from cca.agents.analyst import analyst_node
+            result = analyst_node(state)
+        assert result["profiles"] == {}
+
+    def test_target_product_in_human_message(self, mock_state):
+        """target_product 必须出现在传给 LLM 的 human message 中。"""
+        from cca.schema import AnalystTask
+        from cca.agents.analyst import _build_human_message
+        task = AnalystTask(product_names=["飞书", "钉钉"], focus_dimensions=["定价"])
+        msg = _build_human_message(task, {}, "飞书")
+        assert "飞书" in msg
+        assert "target_product" in msg
 
     def test_collector_fields_preserved_via_reducer(self, mock_state):
         """analyst_node 只写 swot 增量；_merge_profiles reducer 保留 Collector 字段。"""

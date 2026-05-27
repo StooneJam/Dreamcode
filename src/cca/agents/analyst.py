@@ -52,14 +52,23 @@ def _slim_profile(profile: dict) -> dict:
     }
 
 
-def _build_human_message(task: AnalystTask, profiles: dict) -> str:
+def _build_human_message(task: AnalystTask, profiles: dict, target_product: str) -> str:
     """组装 Analyst ReAct 的 human message。"""
     slim = {name: _slim_profile(p) for name, p in profiles.items()}
-    payload = {"analyst_task": task.model_dump(), "profiles": slim}
+    payload = {
+        "analyst_task": task.model_dump(),
+        "target_product": target_product,
+        "profiles": slim,
+    }
+    swot_instruction = (
+        f"再对 product_names 中**每个产品**调用 finalize_swot 提交 SWOT。"
+        if task.require_swot
+        else "本次任务 require_swot=False，无需调用 finalize_swot。"
+    )
     return (
         f"## AnalystTask\n```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```\n\n"
-        "请先对每个 focus_dimension 调用 submit_dimension_ranking，"
-        "再对 product_names 中**每个产品**调用 finalize_swot 提交 SWOT。"
+        f"注意：target_product={target_product!r} 是主体分析产品，product_names 中其余均为竞品。\n"
+        f"请先对每个 focus_dimension 调用 submit_dimension_ranking，{swot_instruction}"
     )
 
 
@@ -147,7 +156,7 @@ def analyst_node(state: CCAState) -> dict:
         {
             "messages": [
                 SystemMessage(content=_load_prompt()),
-                HumanMessage(content=_build_human_message(task, profiles)),
+                HumanMessage(content=_build_human_message(task, profiles, state["target_product"])),
             ]
         },
         config={"recursion_limit": 20},
