@@ -18,7 +18,7 @@ load_dotenv(override=True)
 gpt = ChatOpenAI(
     model=os.getenv("OPENAI_MODEL", "gpt-5"),
     api_key=os.getenv("OPENAI_API_KEY"),
-    timeout=60,
+    timeout=120,
     temperature=0.3,
 )
 
