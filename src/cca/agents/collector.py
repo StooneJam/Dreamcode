@@ -111,12 +111,15 @@ def exploration_node(state: CCAState) -> dict:
         model=deepseek,
         tools=[web_search, fetch_url, finalize_exploration, challenge_pm],
     )
-    result = agent.invoke({
-        "messages": [
-            SystemMessage(content=_load_exploration_prompt()),
-            HumanMessage(content=initial_msg),
-        ]
-    })
+    result = agent.invoke(
+        {
+            "messages": [
+                SystemMessage(content=_load_exploration_prompt()),
+                HumanMessage(content=initial_msg),
+            ]
+        },
+        config={"recursion_limit": 20},
+    )
 
     messages = result["messages"]
     exploration = _extract_exploration(messages)
@@ -207,12 +210,15 @@ def collect_one_product(task: CollectTask, context: dict) -> dict:
         model=deepseek,
         tools=[web_search, fetch_url, finalize_profile, request_product_replacement],
     )
-    result = agent.invoke({
-        "messages": [
-            SystemMessage(content=_load_collect_prompt()),
-            HumanMessage(content=_build_collect_prompt_payload(task, context)),
-        ]
-    })
+    result = agent.invoke(
+        {
+            "messages": [
+                SystemMessage(content=_load_collect_prompt()),
+                HumanMessage(content=_build_collect_prompt_payload(task, context)),
+            ]
+        },
+        config={"recursion_limit": 20},
+    )
 
     messages = result["messages"]
     profile = _extract_finalized_profile(messages)

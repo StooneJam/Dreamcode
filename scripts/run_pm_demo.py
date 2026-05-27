@@ -864,10 +864,32 @@ def run_demo(
     # ── COLLECTOR phase 2 (可选) ──（替换硬编码 _mock_profiles_for_phase_3_4）──
     if live_collect:
         _hr("COLLECTOR · collect_node (phase 2, live)")
-        from cca.agents.collector import collect_node
+        import cca.agents.collector as _collector_mod
+        from cca.schema import CollectTask
 
-        out = collect_node(state)
-        state = _merge(state, out)
+        task_plan_dict = state.get("task_plan") or {}
+        raw_tasks = task_plan_dict.get("collect_tasks", [])
+        n = len(raw_tasks)
+        all_signals: list[dict] = []
+        all_audit: list[dict] = []
+
+        for i, raw in enumerate(raw_tasks, 1):
+            task = CollectTask(**raw) if isinstance(raw, dict) else raw
+            print(f"  [{i}/{n}] 采集中：{task.product_name} ...", flush=True)
+            context = _collector_mod._build_per_product_context(state, task.product_name)
+            partial = _collector_mod.collect_one_product(task, context)
+            # profiles 用 _merge_profiles 合并（与 collect_node 内部逻辑等价）
+            for prod_name, profile in (partial.get("profiles") or {}).items():
+                from cca.state import _merge_profiles as _mp
+                state["profiles"] = _mp(state.get("profiles", {}), {prod_name: profile})
+            all_signals.extend(partial.get("agent_signals") or [])
+            all_audit.extend(partial.get("audit_log") or [])
+            dims = len((partial.get("profiles") or {}).get(task.product_name, {}).get("dimensions", []))
+            status = "profile" if partial.get("profiles") else ("replacement_requested" if partial.get("agent_signals") else "failed")
+            print(f"  [{i}/{n}] 完成：{task.product_name} — {status}, {dims} 个 dimension", flush=True)
+
+        state = _merge(state, {"agent_signals": all_signals, "audit_log": all_audit})
+
         if state.get("profiles"):
             _sub(f"profiles 已填实 × {len(state['profiles'])}")
             for name, profile in state["profiles"].items():
@@ -877,7 +899,7 @@ def run_demo(
                 dims = len(profile.get("dimensions", []))
                 print(f"    · {name}: website={website} / {price_str} / {dims} 个 dimension")
             replacement_sigs = [
-                s for s in (out.get("agent_signals") or [])
+                s for s in all_signals
                 if s.get("kind") == "data_gap" and s.get("target") == "task_plan"
             ]
             if replacement_sigs:

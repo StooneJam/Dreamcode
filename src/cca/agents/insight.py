@@ -89,18 +89,21 @@ def insight_node(state: CCAState) -> dict:
         tools=[scrape_app_store, web_search, run_questionnaire, extract_topics,
                analyze_sentiment_bert, finalize_sentiment, challenge_pm],
     )
-    result = agent.invoke({
-        "messages": [
-            SystemMessage(content=_load_prompt()),
-            HumanMessage(content=(
-                f"## InsightTask 列表\n```json\n{tasks_json}\n```\n\n"
-                f"## 竞品列表（run_questionnaire 的 competitor_names 参数用这个）\n{competitor_names_str}\n\n"
-                f"## 已知产品基本信息（来自 Collector）\n```json\n{profiles_hint}\n```\n\n"
-                f"## 情感分析策略\n{sentiment_hint}\n\n"
-                "请依次完成每个产品的情感分析，最终对每个产品调用 finalize_sentiment。"
-            )),
-        ]
-    })
+    result = agent.invoke(
+        {
+            "messages": [
+                SystemMessage(content=_load_prompt()),
+                HumanMessage(content=(
+                    f"## InsightTask 列表\n```json\n{tasks_json}\n```\n\n"
+                    f"## 竞品列表（run_questionnaire 的 competitor_names 参数用这个）\n{competitor_names_str}\n\n"
+                    f"## 已知产品基本信息（来自 Collector）\n```json\n{profiles_hint}\n```\n\n"
+                    f"## 情感分析策略\n{sentiment_hint}\n\n"
+                    "请依次完成每个产品的情感分析，最终对每个产品调用 finalize_sentiment。"
+                )),
+            ]
+        },
+        config={"recursion_limit": 20},
+    )
 
     messages = result["messages"]
     sentiments = _extract_sentiments(messages)
