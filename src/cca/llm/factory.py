@@ -21,11 +21,12 @@ _DEEPSEEK_TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT", "180"))
 _DOUBAO_TIMEOUT = int(os.getenv("DOUBAO_TIMEOUT", "120"))
 
 # GPT-5 —— PM Agent / Report Agent / debate 辩方
+# temperature=0：求 PM 三阶段输出确定性，让下游 cache key 稳定（D-036 + DP-006）
 gpt = ChatOpenAI(
     model=os.getenv("OPENAI_MODEL", "gpt-5"),
     api_key=os.getenv("OPENAI_API_KEY"),
     timeout=_GPT_TIMEOUT,
-    temperature=0.3,
+    temperature=0,
 )
 
 # DeepSeek —— Collector / Insight ReAct / debate 辩方

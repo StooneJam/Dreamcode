@@ -97,6 +97,18 @@ def deepseek_bullets(state: HelloState) -> dict:
 
 ## 4. LangGraph / Agent 项目特定
 
+### ReAct 工具开发协议
+
+写新的 `@tool`（registered to `create_react_agent`）前必读 [`docs/tool_protocol.md`](docs/tool_protocol.md)：
+
+- **永不 raise**：LangGraph `ToolNode` 默认对工具异常直接传播，会中断 ReAct loop。
+  失败一律 `return` 错误字符串，让 LLM 看到 ToolMessage 自修。
+- **入参 JSON + Pydantic 校验**：统一走 `cca.tools._validation.safe_load_validate(json_str, schema, hint=...)`，返回 `(obj, error_str)`
+- **错误信息 LLM-friendly**：含字段路径 + 修复 hint
+- **外部资源失败**（subprocess / 网络）：catch + 返 `{"error": ...}` dict
+
+例外：PM 阶段节点（`agents/pm.py`）非 ReAct 路径，可用 try/except + retry self-heal。
+
 ### Node 函数签名（统一约定）
 
 ```python

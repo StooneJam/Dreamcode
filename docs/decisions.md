@@ -828,6 +828,107 @@ prompt 显式规定 "snippet 必须是 fetch_url 返回 text 的原样片段"。
 
 ---
 
+## D-034 · Analyst 并入 Reporter（5 → 4 agent）
+**Status**: Accepted · **Date**: 2026-05-27
+**Supersedes**: D-002（5 角色定型）的角色数；D-020 半步架构的 Analyst 部分
+
+**Context**：D-020 定的 Analyst Agent 职责是横向维度排序 + SWOT，但实际：
+- Analyst 没有独立工具或数据采集职责，只是消费 profiles
+- SWOT / 维度排序天然属于报告产出环节，与 Reporter 紧耦合
+- 5 角色对答辩展示是亮点，但**职责重复**比角色数更影响印象分
+
+**Decision**：删除 Analyst Agent，职责整体并入 Reporter ReAct：
+- 维度横向排序 → `submit_dimension_ranking` tool（Reporter 工具）
+- SWOT 分析 → `finalize_swot` tool（Reporter 工具）
+- `ReportTask` 吸收原 `AnalystTask` 字段：`focus_dimensions` / `require_swot` /
+  `cross_product_comparison_required` / `product_names`
+- PM 从 4 阶段（InitialBrief / TaskPlan / AnalystTask / ReportTask）缩为 3 阶段
+- `ProductProfile.swot` 字段删除——SWOT 由 Reporter 工具产并直接进 MD，不回写 state
+
+**Alternatives**：
+- 保留 Analyst 但减权（仅做评审）—— 角色名跟实际不符更混乱
+- Analyst 独立但跟 Reporter 共享工具 —— 跨 agent 工具状态难管理
+
+**Trade-offs**：
+- 5 → 4 角色，演讲时少一个"协作分工"亮点
+- Reporter 单 ReAct loop 工具集变大（ranking + SWOT + chart + PDF + reviewer），但 LLM 按章节顺序调度问题不大
+- DebateTarget 从 3 个 checkpoint 缩为 2 个（去掉 analyst_task）
+
+**升级触发**：若 Reporter ReAct 因工具过多失控（recursion 超限 / 工具顺序混乱）→ 拆 phase 3 为 analysis_node（ranking+SWOT）+ writer_node（章节+PDF）两子节点。
+
+---
+
+## D-035 · ReAct 工具失败协议：永不 raise，return LLM-friendly 错误字符串
+**Status**: Accepted · **Date**: 2026-05-27
+
+**Context**：跑真 LLM 端到端时反复遇到「工具内部异常 → ReAct loop 死亡」被迫一处处打补丁的现象：
+- `finalize_profile` raise `ValidationError` → 中断
+- 改 `raise ToolException(...)` 想做 LLM-friendly 错误返回 → 仍然中断
+- `scrape_app_store` raise `RuntimeError` → 中断
+- `finalize_*` 系列 `json.loads` 未 catch → `JSONDecodeError` 中断
+
+根因：LangGraph `create_react_agent` 内部的 `ToolNode` 默认对工具异常**直接 raise**（不像 LangChain `AgentExecutor` 自动包成 ToolMessage 让 LLM 重试）。这本应是工具协议第一天就定的契约。
+
+**Decision**：所有 ReAct 工具遵守统一失败协议：
+1. **永不向 ToolNode raise**：任何错误都 catch + `return` 错误字符串
+2. **错误字符串必须 LLM-friendly**：含字段路径 + 修复 hint，让 LLM 看到 ToolMessage 后自修参数重试
+3. 统一 helper：`src/cca/tools/_validation.py::safe_load_validate(json_str, schema, pre_clean, hint)`，返回 `(obj, None)` 或 `(None, error_str)`
+4. PM 阶段节点（非 ReAct）也加 retry self-heal：第一次 LLM 输出 `ValidationError` → 把错误反馈给 LLM 调第二次
+5. 工具自动清洗常见 LLM schema 偏差（如 `finalize_profile._clean_profile`：剔除缺 `source_url` 的 Evidence、清 tier.source、清 sources）
+
+**Alternatives**：
+- LangGraph ToolNode 设 `handle_tool_errors=True` —— 错误字符串不可控
+- 每个工具单独 try/except —— 重复模板 + 容易漏
+
+**Trade-offs**：
+- 工具 size 略增（每个 +5-10 行 catch）
+- 失败信号不再走 Python 异常，要靠 LLM 读 ToolMessage 自修；理论上 LLM 可能不修就重复同样错误（实测 GPT-5 / DeepSeek 在 ToolMessage 含字段路径时一次自修成功率 > 90%）
+
+**升级触发**：若某工具自修率 < 70% → 在 prompt 中加该工具常见错例 + 修复样例。
+
+---
+
+## D-036 · ReAct 流式输出 + per-node 缓存兜底
+**Status**: Accepted · **Date**: 2026-05-27
+
+**Context**：答辩 demo 现场要展示 agent 协作过程，但真 LLM 跑 5-7 产品 collect + Insight 需 20-30 分钟，无法接受现场等待。同时观众想看「agent 在干什么」，纯结果输出不够。
+
+**Decision**：两个独立但配合的机制：
+
+**1. `stream_react` 流式 helper**（`src/cca/agents/_streaming.py`）
+- 包装 `agent.stream(stream_mode="values")`，逐 step 把新 message inline 打印：
+  `[Collector] thinking: ...` / `→ web_search({...})` / `← finalize_profile (1.2kB)`
+- `print(..., flush=True)` 保证不被 stdout buffer 卡住
+- `MagicMock` 默认 `__iter__` 返空时自动 fallback 到 `.invoke`，测试 / dry-run 透明兼容
+
+**2. `react_cache` 节点级缓存**（`src/cca/memory/react_cache.py`）
+- 缓存粒度：每个 ReAct 节点的 messages list（不是节点返回 dict，因为视觉上要保留流式打印效果）
+- SQLite 存储（复用 `data/memory/store.db`），key = `{node_name}:sha256(input_slice)[:16]`
+- 4 模式（环境变量 `CCA_CACHE_MODE`）：
+  - `off`：不读不写（默认）
+  - `write`：真跑后写缓存
+  - `replay`：强制读，未命中抛错（**答辩现场用**）
+  - `auto`：优先读，未命中真跑+写（开发期友好）
+- `stream_react(cache_key=..., cache_node=...)` 在 replay 时直接把 cached messages 喂给 `_print_message`，视觉跟真跑一致但秒级完成
+
+**3. 答辩工作流**
+- 答辩前一天：`--cache write` 跑一次真 LLM，把所有 ReAct 节点 messages 落盘
+- 答辩现场：`--cache replay`，PM 三阶段 + debate 仍真跑（PM 快，可演示决策），下游 ReAct 全 replay
+
+**Alternatives**：
+- 录屏 + 现场重放 —— 失去"现场跑"的可信度
+- 完整缓存整次 demo 的 state snapshot —— 失去 agent 思考过程的视觉
+- 缓存 final return dict —— 无法保留流式打印
+
+**Trade-offs**：
+- PM 输出非确定性导致下游 cache key 浮动，cache 命中率有限（同一逻辑产品 task 可能产生多个 cache entry）。**DP-006 跟进**：PM `temperature=0` + 三阶段也接 cache hook
+- `--dry-run` 写入的 mock cache 会污染真 LLM cache → demo 已强制 `dry-run` 时 `cache=off`
+- 缓存粒度是 messages 而非 token，单 entry 几百 KB 不小
+
+**升级触发**：DP-006 跟进 cache 命中率；缓存超 100MB 时加 expiry / 容量限制。
+
+---
+
 ## 待决（Pending）
 
 - **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略
@@ -835,3 +936,6 @@ prompt 显式规定 "snippet 必须是 fetch_url 返回 text 的原样片段"。
 - **DP-003**：答辩 demo 时长（影响 streaming 节奏）
 - **DP-004**：Doubao 具体 model id / endpoint
 - **DP-005**：debate 不收敛率 > 阈值时是否打断流程（v1 走 forced，v2 可加 alert）
+- **DP-006**：PM 三阶段接 cache hook + `temperature=0`，消除全链路 cache miss（D-036 跟进项）
+- **DP-007**：LangGraph 主图接通（`graph.py` 当前空文件，demo 用 `_merge()` 串）
+- **DP-008**：fetch_url 优化（robots.txt timeout、httpx 连接复用）

@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
 
 from cca.llm.factory import gpt
+from cca.memory import react_cache
 from cca.schema import (
     AgentFamily,
     AgentSignal,
@@ -90,17 +91,34 @@ def _load_user_file(state: CCAState) -> tuple[str | None, str | None, list[dict]
     return path, text, audit
 
 
-def _invoke_pm(output_type, phase_label: str, payload: dict):
-    """PM 统一调用模板：with_structured_output + 一次 schema 自修重试。
+def _invoke_pm(output_type, phase_label: str, payload: dict, cache_node: str | None = None):
+    """PM 统一调用模板：cache hook + with_structured_output + 一次 schema 自修重试。
 
     function_calling 不保证 100% schema 合规（GPT-5 偶尔漏 required 字段），
     捕到 ValidationError 把错误反馈给 LLM 再调一次。
+
+    cache_node 非 None 且 CCA_CACHE_MODE 允许时：replay 直接反序列化 cached JSON；
+    write/auto 真跑后落 SQLite。详见 D-036 / DP-006。
     """
+    mode = react_cache.get_mode()
+    use_cache = cache_node is not None
+    cache_key = {"phase": phase_label, "payload": payload} if use_cache else None
+
+    if use_cache and mode in ("replay", "auto"):
+        cached = react_cache.get(cache_node, cache_key)
+        if cached is not None:
+            print(f"  [pm:{cache_node}] (cache replay)", flush=True)
+            return output_type.model_validate_json(cached["json"])
+        if mode == "replay":
+            raise RuntimeError(
+                f"[react_cache] mode=replay 但 PM 缓存未命中：node={cache_node}。请先 mode=write 跑一次。"
+            )
+
     llm = gpt.with_structured_output(output_type, method="function_calling")
     user = _phase_prefix(phase_label) + json.dumps(payload, ensure_ascii=False)
     messages = [SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]
     try:
-        return llm.invoke(messages)
+        result = llm.invoke(messages)
     except ValidationError as e:
         repair = HumanMessage(content=(
             f"上一次输出有 schema 错误，请严格按 {output_type.__name__} schema 重新输出。\n"
@@ -108,7 +126,12 @@ def _invoke_pm(output_type, phase_label: str, payload: dict):
             f"特别注意：DecisionRecord.rationale 是必填字符串，"
             f"每条 DecisionRecord 都必须有 rationale 字段。"
         ))
-        return llm.invoke(messages + [repair])
+        result = llm.invoke(messages + [repair])
+
+    if use_cache and mode in ("write", "auto"):
+        react_cache.put(cache_node, cache_key, {"json": result.model_dump_json()})
+        print(f"  [pm:{cache_node}] (cache write)", flush=True)
+    return result
 
 
 def initial_brief_node(state: CCAState) -> dict:
@@ -118,7 +141,10 @@ def initial_brief_node(state: CCAState) -> dict:
     if file_text is not None:
         payload["uploaded_file"] = {"path": file_path, "content": file_text}
 
-    result = cast(InitialBriefOutput, _invoke_pm(InitialBriefOutput, "阶段一 InitialBrief", payload))
+    result = cast(InitialBriefOutput, _invoke_pm(
+        InitialBriefOutput, "阶段一 InitialBrief", payload,
+        cache_node="pm.initial_brief",
+    ))
 
     updates: dict = {
         "initial_brief": result.initial_brief.model_dump(),
@@ -142,6 +168,7 @@ def task_plan_node(state: CCAState) -> dict:
             "exploration_result": state.get("exploration_result", {}),
             "competitor_names": state.get("competitor_names", []),
         },
+        cache_node="pm.task_plan",
     ))
     return {
         "task_plan": result.task_plan.model_dump(),
@@ -165,6 +192,7 @@ def report_task_node(state: CCAState) -> dict:
             "profiles": state.get("profiles", {}),
             "review_state": state.get("review_state", []),
         },
+        cache_node="pm.report_task",
     ))
     return {
         "report_task": result.report_task.model_dump(),
