@@ -172,11 +172,11 @@ def _show_debate_rounds(result: dict) -> None:
         if critiques:
             print(f"    critiques (key = 被批驳方):")
             for fam, text in critiques.items():
-                print(f"      → {fam}: {text}")
+                print(f"      > {fam}: {text}")
         if refinements:
             print(f"    refinements (key = 修订方):")
             for fam, text in refinements.items():
-                print(f"      ← {fam}: {text}")
+                print(f"      < {fam}: {text}")
 
 
 # ── mock 上游产出 ──────────────────────────────────────────────────────
@@ -976,8 +976,8 @@ def run_demo(
         print(f"  report_status: {state['report_status']}")
         print(f"  report_pdf:    {state['report_pdf_path']}")
         if state["report_md"]:
-            preview = state["report_md"][:300].replace("\n", " ⏎ ")
-            print(f"  md 前 300 字: {preview}…")
+            preview = state["report_md"][:300].replace("\n", " | ")
+            print(f"  md 前 300 字: {preview}...")
 
     # ── 终态摘要 ──
     _hr("END · 终态摘要")
