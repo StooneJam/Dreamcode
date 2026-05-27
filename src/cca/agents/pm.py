@@ -1,24 +1,20 @@
-"""
-PM Agent —— 分阶段规划、下发指令、评审下游产出，处理下游信号。
+"""PM Agent —— 三阶段规划 + 信号分发，纯结构化 LLM 调用，无 ReAct 工具。
 
-不是 ReAct agent，没有工具，纯结构化规划 + 评审 + 信号分发。
-入口节点：4 个阶段节点（initial_brief / task_plan / analyst_task / report_task）+
-handle_signal_node。其余为内部 helper。
+阶段节点：initial_brief / task_plan / report_task。下游信号统一进 handle_signal_node。
 """
-
 from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Literal, cast
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from pydantic import ValidationError
 
 from cca.llm.factory import gpt
 from cca.schema import (
     AgentFamily,
     AgentSignal,
-    AnalystTaskOutput,
     DebatePosition,
     DebateResult,
     DecisionRecord,
@@ -33,21 +29,18 @@ from cca.tools.pdf_reader import UnsupportedFormat, read_file
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "pm.md"
 
-# 信号 target → debate target 映射
-# 注意：analyst_task 这条辩的是 PM 下发的任务包（focus_dimensions / product_names），
-# 不是 Analyst 产出的 SWOT。SWOT 终审走 call_report_reviewer skill，不在此分发表里。
-_TARGET_TO_DEBATE = {
-    "task_plan": "pm_taskplan",
-    "analyst_task": "analyst_task",
-    "report_task": "report",
-}
-
 PM_FAMILY: AgentFamily = "gpt-5"
 CHALLENGER_FAMILY: AgentFamily = "deepseek"
 
-# PM phase 1 消化用户文档时，单文件文本最大字符数截断保护（防 prompt 爆）
-# 50k 字符 ≈ 20-30 页 PDF；GPT-5 128k 上下文够装但单 prompt 留余量给 system + decisions
+# signal.target → debate target
+_TARGET_TO_DEBATE = {"task_plan": "pm_taskplan", "report_task": "report"}
+# debate target → 对应的 state 任务字段
+_DEBATE_TARGET_TO_TASK_FIELD = {"pm_taskplan": "task_plan", "report": "report_task"}
+
+# 单文档截断保护，防 prompt 爆
 _MAX_FILE_CHARS = 50_000
+
+PMPhase = Literal["initial_brief", "task_plan", "report_task"]
 
 
 def _load_system_prompt() -> str:
@@ -55,20 +48,12 @@ def _load_system_prompt() -> str:
 
 
 def _phase_prefix(phase: str) -> str:
-    """标注当前阶段，让 LLM 在完整 prompt 中定位到对应阶段规则。"""
     return f"## 当前阶段：{phase}\n\n"
 
 
-def _stamp_decisions(
-    records: list[DecisionRecord],
-    phase: Literal["initial_brief", "task_plan", "analyst_task", "report_task"],
-) -> list[dict]:
-    """覆盖 phase，把 DecisionRecord 列表落盘为 dict 列表。
-
-    phase 字段由代码强制覆盖，防止 LLM 自报错值；ts 由 schema 的 default_factory
-    在 LLM 缺省时填当前时刻，LLM 主动填写的也予以保留（审计层面可信即可）。
-    """
-    out: list[dict] = []
+def _stamp_decisions(records: list[DecisionRecord], phase: PMPhase) -> list[dict]:
+    """落盘前强制覆盖 phase 字段，防 LLM 自报错值。"""
+    out = []
     for r in records:
         d = r.model_dump()
         d["phase"] = phase
@@ -77,102 +62,87 @@ def _stamp_decisions(
 
 
 def _load_user_file(state: CCAState) -> tuple[str | None, str | None, list[dict]]:
-    """读取 state.user_files 第一个文件，返回 (path, text, audit_events)。
-
-    第一版只取第一个文件（D-032 修订版）；多文件会在 audit_log 记 warning。
-    读取失败（找不到 / 格式不支持）也只记 audit_log，不抛 —— PM 仍能凭 user_query 工作。
-    """
-    user_files = state.get("user_files") or []
-    if not user_files:
+    """读 state.user_files 第一个文件 → (path, text, audit)。多文件 / 失败仅记 audit，不抛。"""
+    files = state.get("user_files") or []
+    if not files:
         return None, None, []
 
     audit: list[dict] = []
-    if len(user_files) > 1:
+    if len(files) > 1:
         audit.append({
-            "agent": "pm",
-            "event": "multi_file_warning",
-            "got": user_files,
-            "kept": user_files[0],
-            "note": "第一版仅消化第一个文件，其余忽略",
+            "agent": "pm", "event": "multi_file_warning",
+            "got": files, "kept": files[0],
         })
 
-    path = user_files[0]
+    path = files[0]
     try:
         text = read_file(path)
     except (FileNotFoundError, UnsupportedFormat) as e:
-        audit.append({
-            "agent": "pm",
-            "event": "file_read_failed",
-            "path": path,
-            "error": str(e),
-        })
+        audit.append({"agent": "pm", "event": "file_read_failed", "path": path, "error": str(e)})
         return None, None, audit
 
     if len(text) > _MAX_FILE_CHARS:
         audit.append({
-            "agent": "pm",
-            "event": "file_truncated",
-            "path": path,
-            "original_chars": len(text),
-            "kept_chars": _MAX_FILE_CHARS,
+            "agent": "pm", "event": "file_truncated", "path": path,
+            "original_chars": len(text), "kept_chars": _MAX_FILE_CHARS,
         })
         text = text[:_MAX_FILE_CHARS]
     return path, text, audit
 
 
-def initial_brief_node(state: CCAState) -> dict:
-    """阶段一：消化 user_query + (可选)用户上传文档，产出 InitialBrief + 决策档案 + (可选)DomainSeed。
+def _invoke_pm(output_type, phase_label: str, payload: dict):
+    """PM 统一调用模板：with_structured_output + 一次 schema 自修重试。
 
-    D-032 修订版：若 state.user_files 非空，本节点用 pdf_reader 抽全文喂 prompt，
-    让 GPT-5 在同一次 LLM 调用里同时产出 InitialBrief 和 DomainSeed —— 避免独立
-    pre-processing 节点的双调用开销，且让 PM 看到完整用户背景做规划。
+    function_calling 不保证 100% schema 合规（GPT-5 偶尔漏 required 字段），
+    捕到 ValidationError 把错误反馈给 LLM 再调一次。
     """
-    file_path, file_text, file_audit = _load_user_file(state)
+    llm = gpt.with_structured_output(output_type, method="function_calling")
+    user = _phase_prefix(phase_label) + json.dumps(payload, ensure_ascii=False)
+    messages = [SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]
+    try:
+        return llm.invoke(messages)
+    except ValidationError as e:
+        repair = HumanMessage(content=(
+            f"上一次输出有 schema 错误，请严格按 {output_type.__name__} schema 重新输出。\n"
+            f"错误详情：\n{e}\n\n"
+            f"特别注意：DecisionRecord.rationale 是必填字符串，"
+            f"每条 DecisionRecord 都必须有 rationale 字段。"
+        ))
+        return llm.invoke(messages + [repair])
 
+
+def initial_brief_node(state: CCAState) -> dict:
+    """阶段一：消化 user_query + 可选文档，产 InitialBrief + 决策档案 + 可选 DomainSeed。"""
+    file_path, file_text, file_audit = _load_user_file(state)
     payload: dict = {"user_query": state["user_query"]}
     if file_text is not None:
         payload["uploaded_file"] = {"path": file_path, "content": file_text}
 
-    llm = gpt.with_structured_output(InitialBriefOutput, method="function_calling")
-    user = _phase_prefix("阶段一 InitialBrief") + json.dumps(payload, ensure_ascii=False)
-    result = cast(
-        InitialBriefOutput,
-        llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]),
-    )
+    result = cast(InitialBriefOutput, _invoke_pm(InitialBriefOutput, "阶段一 InitialBrief", payload))
 
     updates: dict = {
         "initial_brief": result.initial_brief.model_dump(),
         "decision_log": _stamp_decisions(result.decision_records, "initial_brief"),
     }
-
-    # domain_seed：仅当文件被成功读入且 LLM 填了 DomainSeed 时落盘
     if result.domain_seed is not None and file_path is not None:
         ds = result.domain_seed.model_dump()
-        # 代码端强制覆盖 source_files，防 LLM 自报错路径
-        ds["source_files"] = [file_path]
+        ds["source_files"] = [file_path]  # 代码端强制覆盖
         updates["domain_seed"] = ds
-
     if file_audit:
         updates["audit_log"] = file_audit
-
     return updates
 
 
 def task_plan_node(state: CCAState) -> dict:
-    """阶段二：基于 CollectorExplorationResult 创建 TaskPlan，同时落盘决策档案。"""
-    llm = gpt.with_structured_output(TaskPlanOutput, method="function_calling")
-    user = _phase_prefix("阶段二 TaskPlan") + json.dumps(
+    """阶段二：基于 exploration_result 产出 TaskPlan + 决策档案。"""
+    result = cast(TaskPlanOutput, _invoke_pm(
+        TaskPlanOutput, "阶段二 TaskPlan",
         {
             "user_query": state["user_query"],
             "exploration_result": state.get("exploration_result", {}),
             "competitor_names": state.get("competitor_names", []),
         },
-        ensure_ascii=False,
-    )
-    result = cast(
-        TaskPlanOutput,
-        llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]),
-    )
+    ))
     return {
         "task_plan": result.task_plan.model_dump(),
         "competitor_names": result.task_plan.competitor_names,
@@ -180,32 +150,14 @@ def task_plan_node(state: CCAState) -> dict:
     }
 
 
-def analyst_task_node(state: CCAState) -> dict:
-    """阶段三：基于 profiles 创建 AnalystTask，同时落盘决策档案。"""
-    llm = gpt.with_structured_output(AnalystTaskOutput, method="function_calling")
-    user = _phase_prefix("阶段三 AnalystTask") + json.dumps(
-        {
-            "user_query": state["user_query"],
-            "target_product": state["target_product"],
-            "competitor_names": state.get("competitor_names", []),
-            "profiles": state.get("profiles", {}),
-        },
-        ensure_ascii=False,
-    )
-    result = cast(
-        AnalystTaskOutput,
-        llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]),
-    )
-    return {
-        "analyst_task": result.analyst_task.model_dump(),
-        "decision_log": _stamp_decisions(result.decision_records, "analyst_task"),
-    }
-
-
 def report_task_node(state: CCAState) -> dict:
-    """阶段四：基于 profiles（含 SWOT）+ review_state 创建 ReportTask，同时落盘决策档案。"""
-    llm = gpt.with_structured_output(ReportTaskOutput, method="function_calling")
-    user = _phase_prefix("阶段四 ReportTask") + json.dumps(
+    """阶段三：基于 profiles + review_state 产 ReportTask（含分析任务）+ 决策档案。
+
+    Analyst 已并入 Reporter——ReportTask 同时携带 focus_dimensions / require_swot
+    和 sections / target_audience，Reporter ReAct 据此调内部分析工具。
+    """
+    result = cast(ReportTaskOutput, _invoke_pm(
+        ReportTaskOutput, "阶段三 ReportTask",
         {
             "user_query": state["user_query"],
             "target_product": state["target_product"],
@@ -213,34 +165,20 @@ def report_task_node(state: CCAState) -> dict:
             "profiles": state.get("profiles", {}),
             "review_state": state.get("review_state", []),
         },
-        ensure_ascii=False,
-    )
-    result = cast(
-        ReportTaskOutput,
-        llm.invoke([SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]),
-    )
+    ))
     return {
         "report_task": result.report_task.model_dump(),
         "decision_log": _stamp_decisions(result.decision_records, "report_task"),
     }
 
 
-# 下游信号处理：debate（主观挑战）+ reroute（事实性返工）
+# ── 信号处理：debate（主观）+ reroute（事实性） ──────────────────────
 
 
 def _read_defense(target: str, state: CCAState) -> DebatePosition:
-    """从 decision_log 读取 PM 的辩护立场，零 LLM 调用。
-
-    target 是 state 字段名（task_plan / analyst_task / report_task），与
-    DecisionRecord.phase 同名。把该 phase 下所有决策的 rationale / 否决项 /
-    inputs_used 聚合成一份 defense，避免依赖 task 字段的字面值。
-
-    decision_log 内可能有同 phase 的重跑残留（add reducer 永不删），保守起见
-    全量带上——LLM critique 会聚焦最相关的部分。
-    """
-    log: list[dict] = state.get("decision_log", []) or []
+    """从 decision_log 同 phase 决策聚合 PM 的辩护立场，零 LLM 调用。"""
+    log = state.get("decision_log") or []
     relevant = [d for d in log if d.get("phase") == target]
-
     if not relevant:
         return DebatePosition(
             agent_family=PM_FAMILY,
@@ -248,21 +186,16 @@ def _read_defense(target: str, state: CCAState) -> DebatePosition:
             evidence=["state context"],
         )
 
-    claims: list[str] = []
-    evidence: list[str] = []
+    claims, evidence = [], []
     for d in relevant:
         dtype = d.get("decision_type", "other")
-        rationale = d.get("rationale", "")
-        claims.append(f"[{dtype}] {rationale}")
-        chosen = d.get("chosen")
-        if chosen:
+        claims.append(f"[{dtype}] {d.get('rationale', '')}")
+        if chosen := d.get("chosen"):
             evidence.append(f"chosen[{dtype}]={chosen}")
-        for alt in d.get("alternatives_considered", []) or []:
-            opt = alt.get("option")
-            reason = alt.get("rejected_reason")
-            if opt and reason:
+        for alt in d.get("alternatives_considered") or []:
+            if (opt := alt.get("option")) and (reason := alt.get("rejected_reason")):
                 evidence.append(f"否决 {opt}：{reason}")
-        for path in d.get("inputs_used", []) or []:
+        for path in d.get("inputs_used") or []:
             if path:
                 evidence.append(f"依据 {path}")
 
@@ -273,34 +206,15 @@ def _read_defense(target: str, state: CCAState) -> DebatePosition:
     )
 
 
-# debate target → 对应的 state 任务字段
-_DEBATE_TARGET_TO_TASK_FIELD = {
-    "pm_taskplan": "task_plan",
-    "analyst_task": "analyst_task",
-    "report": "report_task",
-}
-
-
 def _apply_debate_result(result: DebateResult) -> dict:
-    """将 debate 结果转为 state 更新。
-
-    rejected：被否决的 task 字段置 None，触发上游路由重派该阶段。
-    accepted_with_revision + revised_output：写回修订版（已通过 debate skill 的
-    with_structured_output schema 校验）。
-    accepted（无 revision）：仅记账，不动 task。
-    """
+    """debate 结果 → state 更新：rejected 清空 task；revision 写回；accepted 仅记账。"""
     updates: dict = {
         "debate_results": [result.model_dump()],
-        "audit_log": [
-            {
-                "agent": "pm",
-                "event": "debate_applied",
-                "target": result.target,
-                "verdict": result.final_verdict,
-            }
-        ],
+        "audit_log": [{
+            "agent": "pm", "event": "debate_applied",
+            "target": result.target, "verdict": result.final_verdict,
+        }],
     }
-
     task_field = _DEBATE_TARGET_TO_TASK_FIELD.get(result.target)
 
     if result.final_verdict == "rejected":
@@ -312,49 +226,67 @@ def _apply_debate_result(result: DebateResult) -> dict:
         updates[task_field] = result.revised_output
         if result.target == "pm_taskplan":
             updates["competitor_names"] = result.revised_output.get("competitor_names", [])
-
     return updates
 
 
+def _handle_debate_signal(signal: AgentSignal, state: CCAState) -> dict:
+    """主观信号 → 跨家族 debate。"""
+    challenge = DebatePosition(
+        agent_family=CHALLENGER_FAMILY,
+        claim=signal.payload.claim,
+        evidence=signal.payload.evidence,
+    )
+    defense = _read_defense(signal.target, state)
+    debate_target = cast(DebateTarget, _TARGET_TO_DEBATE.get(signal.target, "pm_taskplan"))
+    target_content = state.get(signal.target) or {}
+    result = run_debate(
+        target=debate_target,
+        target_content=target_content if isinstance(target_content, dict) else {},
+        seed_positions={PM_FAMILY: defense, CHALLENGER_FAMILY: challenge},
+    )
+    return _apply_debate_result(result)
+
+
+_REROUTE_CONTEXT_KEYS = (
+    "exploration_result", "task_plan", "report_task", "review_state", "competitor_names",
+)
+
+
+def _build_reroute_context(state: CCAState) -> str:
+    """提供 reroute 根因分析所需的最小 state 切片——剔除 profiles / log 等大对象。"""
+    slice_ = {k: state.get(k) for k in _REROUTE_CONTEXT_KEYS}
+    return json.dumps(slice_, ensure_ascii=False, default=str)
+
+
+def _handle_reroute_signal(signal: AgentSignal, state: CCAState) -> dict:
+    """事实性信号 → reroute skill 根因分析 + 阶段回溯。"""
+    return apply_reroute(reroute(signal, _build_reroute_context(state)))
+
+
 def handle_signal_node(state: CCAState) -> dict:
-    """处理下游 AgentSignal，独立于 4 阶段主流程。
+    """处理下游 AgentSignal。
 
-    requires_debate=true  → debate skill（PM 从 decision_log 拼装 defense，
-                            挑战方从 signal.payload 的 ChallengePayload 取 claim / evidence）
-    requires_debate=false → reroute skill（事实性纠错）
-
-    同一次调用内多个信号：reroute 先处理（事实性纠错优先清理脏数据），
-    debate 后处理（主观分歧基于清理后的状态再裁决）。
-    list 字段（debate_results / audit_log）本地累加再返回，避免节点内 dict.update 同 key 覆盖。
-
-    去重：state.consumed_signal_ids 记录已处理的 signal_id，本次跳过其中的信号；
-    本次处理的新 signal_id 写回 consumed_signal_ids（add reducer 累加）。
-    信号本体留在 agent_signals 中不删除，供回溯审计。
+    去重：state.consumed_signal_ids 中的信号本次跳过；新处理的 signal_id 累加回写。
+    顺序：reroute 先（清脏数据）→ debate 后（基于干净状态裁决）。
     """
-    raw = state.get("agent_signals", [])
+    raw = state.get("agent_signals") or []
     if not raw:
         return {}
 
-    consumed = set(state.get("consumed_signal_ids", []))
+    consumed = set(state.get("consumed_signal_ids") or [])
     signals = [AgentSignal(**s) if isinstance(s, dict) else s for s in raw]
     pending = [s for s in signals if s.signal_id not in consumed]
     if not pending:
         return {}
 
-    ordered = [s for s in pending if not s.requires_debate] + [
-        s for s in pending if s.requires_debate
-    ]
+    ordered = [s for s in pending if not s.requires_debate] + \
+              [s for s in pending if s.requires_debate]
 
-    debate_results: list[dict] = []
-    audit_log: list[dict] = []
+    debate_results, audit_log = [], []
     scalar_updates: dict = {}
-
-    for signal in ordered:
-        partial = (
-            _handle_debate_signal(signal, state)
-            if signal.requires_debate
-            else _handle_reroute_signal(signal, state)
-        )
+    for sig in ordered:
+        partial = _handle_debate_signal(sig, state) if sig.requires_debate \
+                  else _handle_reroute_signal(sig, state)
         debate_results.extend(partial.pop("debate_results", []))
         audit_log.extend(partial.pop("audit_log", []))
         scalar_updates.update(partial)
@@ -365,48 +297,3 @@ def handle_signal_node(state: CCAState) -> dict:
         "audit_log": audit_log,
         "consumed_signal_ids": [s.signal_id for s in ordered],
     }
-
-
-def _handle_debate_signal(signal: AgentSignal, state: CCAState) -> dict:
-    """主观信号 → 跨家族 debate。直接读 signal.payload 的结构化 ChallengePayload。"""
-    challenge = DebatePosition(
-        agent_family=CHALLENGER_FAMILY,
-        claim=signal.payload.claim,
-        evidence=signal.payload.evidence,
-    )
-    defense = _read_defense(signal.target, state)
-    debate_target = cast(DebateTarget, _TARGET_TO_DEBATE.get(signal.target, "pm_taskplan"))
-    target_content = state.get(signal.target) or {}
-
-    result = run_debate(
-        target=debate_target,
-        target_content=target_content if isinstance(target_content, dict) else {},
-        seed_positions={PM_FAMILY: defense, CHALLENGER_FAMILY: challenge},
-    )
-    return _apply_debate_result(result)
-
-
-_REROUTE_CONTEXT_KEYS = (
-    "exploration_result",
-    "task_plan",
-    "analyst_task",
-    "report_task",
-    "review_state",
-    "competitor_names",
-)
-
-
-def _build_reroute_context(state: CCAState) -> str:
-    """提取 reroute 根因分析所需的最小 state 切片。
-
-    刻意剔除 profiles / audit_log / debate_results / decision_log 等大对象，
-    避免 token 浪费——reroute 判断只看采集结果与任务派发，不需要档案明细。
-    """
-    slice_: dict = {k: state.get(k) for k in _REROUTE_CONTEXT_KEYS}
-    return json.dumps(slice_, ensure_ascii=False, default=str)
-
-
-def _handle_reroute_signal(signal: AgentSignal, state: CCAState) -> dict:
-    """事实性信号 → reroute skill 根因分析 + 阶段回溯。"""
-    decision = reroute(signal, _build_reroute_context(state))
-    return apply_reroute(decision)

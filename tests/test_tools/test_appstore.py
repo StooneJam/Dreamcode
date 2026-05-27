@@ -22,11 +22,11 @@ _FAKE_OUTPUT = {
 }
 
 
-def _make_proc(stdout: str, returncode: int = 0):
+def _make_proc(stdout: str, returncode: int = 0, stderr: str = ""):
     proc = MagicMock()
     proc.returncode = returncode
     proc.stdout = stdout
-    proc.stderr = ""
+    proc.stderr = stderr
     return proc
 
 
@@ -52,12 +52,15 @@ class TestRunScraper:
         assert "us" in call_args
         assert "30" in call_args
 
-    def test_raises_on_empty_stdout_with_nonzero_exit(self):
+    def test_returns_error_dict_on_empty_stdout_with_nonzero_exit(self):
+        """子进程异常 → 返回 {'error': ...} 而非 raise（避免中断 ReAct）。"""
         from cca.tools.appstore import _run_scraper
 
-        with patch("subprocess.run", return_value=_make_proc("", returncode=1)):
-            with pytest.raises(RuntimeError, match="app-store-scraper"):
-                _run_scraper("不存在", "cn", 10)
+        with patch("subprocess.run", return_value=_make_proc("", returncode=1, stderr="boom")):
+            result = _run_scraper("不存在", "cn", 10)
+        assert "error" in result
+        assert "app-store-scraper" in result["error"]
+        assert result["product_name"] == "不存在"
 
     def test_app_not_found_returns_error_field(self):
         from cca.tools.appstore import _run_scraper

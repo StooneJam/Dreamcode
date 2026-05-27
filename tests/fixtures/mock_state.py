@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from cca.schema import (
-    AnalystTask,
     CollectTask,
     Dimension,
     Evidence,
@@ -14,8 +13,6 @@ from cca.schema import (
     ReportTask,
     ReviewSample,
     ReviewUnit,
-    SWOT,
-    SWOTPoint,
     TaskPlan,
     UserSentiment,
 )
@@ -27,6 +24,7 @@ def _evidence(url: str, snippet: str) -> Evidence:
 
 
 def _make_profile(name: str, rating: float, price: float) -> dict:
+    """构造 Collector + Insight owner 字段齐全的 profile（不含 SWOT，Reporter 工具产）。"""
     ev = _evidence(f"https://{name}.com/pricing", f"{name} Pro {price}元/用户/月")
     fact = Fact(statement=f"{name} Pro 版按用户每月 {price} 元", evidence=[ev])
     dimension = Dimension(
@@ -49,24 +47,6 @@ def _make_profile(name: str, rating: float, price: float) -> dict:
             ReviewSample(text="整体好用，偶尔视频掉线", rating=4, platform="appstore_cn")
         ],
     )
-    swot = SWOT(
-        strengths=[SWOTPoint(
-            point="定价低于竞品均值",
-            supporting_fact_statements=[f"{name} Pro 版按用户每月 {price} 元"],
-        )],
-        weaknesses=[SWOTPoint(
-            point="移动端稳定性有待提升",
-            supporting_fact_statements=["偶发卡顿"],
-        )],
-        opportunities=[SWOTPoint(
-            point="AI 集成场景增长",
-            supporting_fact_statements=[f"{name} Pro 版按用户每月 {price} 元"],
-        )],
-        threats=[SWOTPoint(
-            point="头部厂商竞争加剧",
-            supporting_fact_statements=["偶发卡顿"],
-        )],
-    )
     return ProductProfile(
         product_name=name,
         company=f"{name} Inc.",
@@ -76,7 +56,6 @@ def _make_profile(name: str, rating: float, price: float) -> dict:
         dimensions=[dimension],
         pricing=pricing,
         sentiment=sentiment,
-        swot=swot,
         sources=[ev],
     ).model_dump()
 
@@ -93,6 +72,10 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
     report_task = ReportTask(
         target_product="飞书",
         competitors=["钉钉", "企业微信"],
+        product_names=["飞书", "钉钉", "企业微信"],
+        focus_dimensions=["视频会议人数上限", "定价"],
+        require_swot=True,
+        cross_product_comparison_required=True,
         output_formats=["markdown", "pdf"],
         target_audience="产品负责人",
         sections=["执行摘要", "核心功能对比", "定价结构", "用户口碑", "SWOT 分析", "结论与建议"],
@@ -106,8 +89,6 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         ).model_dump(),
         ReviewUnit(agent="insight", product_name="钉钉", status="passed", retry_count=0).model_dump(),
         ReviewUnit(agent="insight", product_name="企业微信", status="passed", retry_count=1).model_dump(),
-        ReviewUnit(agent="analyst", product_name="钉钉", status="passed", retry_count=0).model_dump(),
-        ReviewUnit(agent="analyst", product_name="企业微信", status="passed", retry_count=0).model_dump(),
     ]
     return CCAState(
         user_query="帮我分析飞书的主要竞品钉钉和企业微信",
@@ -118,18 +99,13 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         # PM 阶段一/一点五（mock 中已略过，设为 None）
         initial_brief=None,
         exploration_result=None,
-        # PM 阶段二~四任务
+        # PM 阶段二~三任务
         task_plan=TaskPlan(
             target_product="飞书",
             product_type="协作办公SaaS",
             competitor_names=["钉钉", "企业微信"],
             collect_tasks=[CollectTask(product_name="钉钉"), CollectTask(product_name="企业微信")],
             insight_tasks=[InsightTask(product_name="钉钉"), InsightTask(product_name="企业微信")],
-        ).model_dump(),
-        analyst_task=AnalystTask(
-            product_names=["飞书", "钉钉", "企业微信"],
-            focus_dimensions=["视频会议人数上限", "定价"],
-            require_swot=True,
         ).model_dump(),
         report_task=report_task.model_dump(),
         profiles=profiles,

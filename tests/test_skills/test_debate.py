@@ -34,7 +34,10 @@ class _FakeStructuredLLM:
 class _FakeLLMClient:
     """模拟 ChatOpenAI client。
 
-    支持 with_structured_output() → FakeStructuredLLM，以及 plain invoke()。
+    支持 with_structured_output() → FakeStructuredLLM；plain invoke()；以及
+    bind(response_format=...) —— `_phase_finalize_converged` 走的裸 JSON 路径：
+    bind 返回一个 invoke 出 AIMessage(content=JSON) 的对象，JSON 内容由
+    responses_by_target_type[Pydantic schema][0].model_dump() 序列化得到。
     """
 
     def __init__(self, responses_by_target_type: dict[type, list], plain_response: str = ""):
@@ -46,6 +49,34 @@ class _FakeLLMClient:
 
     def invoke(self, _messages):
         return _FakeMessage(self._plain)
+
+    def bind(self, **_kwargs):  # noqa: ANN003
+        """匹配 _phase_finalize_converged 的 llm.bind(response_format=...) 调用。
+
+        返回一个对象，invoke 时按已注册的 Pydantic schema 取第一条预制响应、
+        model_dump → json 包成 AIMessage。
+        """
+        import json as _json
+
+        responses = self._responses
+
+        # 排除 _Critique / _Refinement / DebateResult 这类辅助 schema；
+        # 选注册过的最后一项 schema（通常是 TaskPlan / ReportTask 这种 revised target）
+        from cca.schema import DebateResult as _DR
+        from cca.skills.debate import _Critique as _C, _Refinement as _R
+
+        _AUX = {_C, _R, _DR}
+
+        class _BoundFake:
+            def invoke(self_inner, _messages):  # noqa: ANN001
+                for schema, items in reversed(list(responses.items())):
+                    if schema in _AUX:
+                        continue
+                    if items and hasattr(items[0], "model_dump"):
+                        return _FakeMessage(_json.dumps(items[0].model_dump(), ensure_ascii=False))
+                return _FakeMessage("{}")
+
+        return _BoundFake()
 
 
 def test_run_debate_rejects_judge_in_families() -> None:
@@ -174,29 +205,40 @@ def test_run_debate_converged_short_circuit(monkeypatch: pytest.MonkeyPatch) -> 
 def test_phase_finalize_converged_dispatches_to_target_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_phase_finalize_converged 必须按 target 选对应 schema 调 with_structured_output。"""
-    from cca.skills.debate import _phase_finalize_converged
-    from cca.schema import AnalystTask
+    """_phase_finalize_converged 必须按 target 选对应 schema 校验。
 
-    captured: dict = {}
+    实际实现走 llm.bind(response_format={'type':'json_object'}) + 手动解 JSON +
+    _repair_for_schema + Pydantic validate，**不**走 with_structured_output。
+    target='report' 对应 ReportTask（已吸收原 AnalystTask 字段）。
+    """
+    import json as _json
+
+    from cca.skills.debate import _phase_finalize_converged
+    from cca.schema import ReportTask
+
+    revised = ReportTask(
+        target_product="飞书",
+        competitors=["钉钉"],
+        focus_dimensions=["视频会议"],
+    )
+
+    class _BoundFakeLLM:
+        def invoke(self, _messages):  # noqa: ANN001
+            return _FakeMessage(_json.dumps(revised.model_dump(), ensure_ascii=False))
 
     class _CapturingClient:
-        def with_structured_output(self, target_type, method=None):  # noqa: ARG002
-            captured["schema"] = target_type
-            return _FakeStructuredLLM(
-                [AnalystTask(product_names=["飞书"], focus_dimensions=["视频会议"])]
-            )
+        def bind(self, **_kwargs):  # noqa: ANN003
+            return _BoundFakeLLM()
 
     monkeypatch.setattr(debate, "get_llm", lambda family: _CapturingClient())  # noqa: ARG005
 
     out = _phase_finalize_converged(
         winner_family="deepseek",
-        target="analyst_task",
-        target_content={"product_names": ["飞书"]},
+        target="report",
+        target_content={"target_product": "飞书", "competitors": ["钉钉"]},
         winning_refinement="改成 focus_dimensions = ['视频会议']",
     )
-    assert captured["schema"] is AnalystTask
-    assert out["product_names"] == ["飞书"]
+    assert out["target_product"] == "飞书"
     assert out["focus_dimensions"] == ["视频会议"]
 
 

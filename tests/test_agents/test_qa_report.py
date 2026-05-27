@@ -195,20 +195,58 @@ class TestSerializeProfiles:
 
 
 class TestBuildInitialMessage:
-    def test_contains_task_fields(self, mock_state):
+    def _call(self, mock_state, *, with_context: bool = False) -> str:
         report_task = ReportTask(**mock_state["report_task"])
         profiles_json = _serialize_profiles(mock_state["profiles"], set())
-        msg = _build_initial_message(report_task, profiles_json)
+        return _build_initial_message(
+            report_task,
+            profiles_json,
+            exploration_result=mock_state.get("exploration_result") if with_context else None,
+            task_plan=mock_state.get("task_plan") if with_context else None,
+            review_state=mock_state.get("review_state", []) if with_context else [],
+        )
+
+    def test_contains_task_fields(self, mock_state):
+        msg = self._call(mock_state)
         assert "飞书" in msg
         assert "产品负责人" in msg
         assert "执行摘要" in msg
 
     def test_contains_profiles_json(self, mock_state):
-        report_task = ReportTask(**mock_state["report_task"])
-        profiles_json = _serialize_profiles(mock_state["profiles"], set())
-        msg = _build_initial_message(report_task, profiles_json)
+        msg = self._call(mock_state)
         assert "钉钉" in msg
         assert "企业微信" in msg
+
+    def test_task_plan_priority_dimensions_in_context(self, mock_state):
+        """mock_state.task_plan 中的 priority_dimensions / product_type 应进 prompt 上下文。"""
+        # 给 mock_state 的 task_plan 灌一个 priority_dimensions 验证
+        mock_state["task_plan"]["collect_tasks"][0]["priority_dimensions"] = ["定价", "视频会议"]
+        msg = self._call(mock_state, with_context=True)
+        assert "PM 阶段二决策回顾" in msg
+        assert "协作办公SaaS" in msg  # task_plan.product_type
+        assert "定价" in msg
+
+    def test_review_state_forced_in_context(self, mock_state):
+        """review_state 全量进 prompt；forced 项的 qa_flags 应可见。"""
+        msg = self._call(mock_state, with_context=True)
+        assert "PM 评审台账" in msg
+        assert "forced" in msg
+        assert "定价来源 404" in msg  # 企业微信 collector forced 项的 qa_flags
+
+    def test_no_context_block_when_empty(self, mock_state):
+        """exploration_result=None / task_plan=None / review_state=[] 时不渲染对应段落。"""
+        report_task = ReportTask(**mock_state["report_task"])
+        profiles_json = _serialize_profiles(mock_state["profiles"], set())
+        msg = _build_initial_message(
+            report_task, profiles_json,
+            exploration_result=None, task_plan=None, review_state=[],
+        )
+        assert "一轮探索回顾" not in msg
+        assert "PM 阶段二决策回顾" not in msg
+        assert "PM 评审台账" not in msg
+        # 但 ReportTask 块与 profiles 块仍在
+        assert "报告任务" in msg
+        assert "产品档案数据" in msg
 
 
 class TestExtractHelpers:

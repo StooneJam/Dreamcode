@@ -1,12 +1,12 @@
 {
-  "pm_decompose": "1. collector: 抓 飞书/钉钉/腾讯会议 官网\n2. insight: 找 AppStore 评论 + 知乎讨论\n3. analyst: 填 Schema + SWOT\n4. qa_report: 校验 + 输出报告",
+  "pm_decompose": "1. collector: 抓 飞书/钉钉/腾讯会议 官网\n2. insight: 找 AppStore 评论 + 知乎讨论\n3. qa_report: 维度排序 + SWOT + 报告输出",
   "insight_sentiment": {
     "positive": 65,
     "negative": 25,
     "neutral": 10,
     "key_pain_points": ["移动端卡顿", "视频会议偶发掉线", "AI 助手响应慢"]
   },
-  "analyst_swot": {
+  "report_swot": {
     "strengths": ["生态完整", "文档协同体验业内领先"],
     "weaknesses": ["学习曲线陡峭", "海外市场弱"],
     "opportunities": ["AI 集成新场景", "海外扩张"],

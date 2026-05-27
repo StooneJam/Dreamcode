@@ -1,15 +1,14 @@
-"""
-跨家族 debate skill。
+"""跨家族 debate skill。
 
-应用 checkpoint：
-    1. pm_taskplan：下游对 PM 阶段二 TaskPlan 的主观挑战
-    2. analyst_task：下游对 PM 阶段三 AnalystTask 的主观挑战
-    3. report：Report 终审（call_report_reviewer skill 内部调用）
+应用点：
+    pm_taskplan —— 下游对 TaskPlan 主观挑战
+    report     —— Reporter 对 ReportTask 挑战 / call_report_reviewer 终审
 
-流程：caller 注入 seed_positions → Critique → Refine → 任一方让步即收敛，否则Judge 仲裁。
-仲裁方必须异于两个辩方，三家族零重叠。
+流程：caller 注入 seed_positions → Critique → Refine → 任一方让步即收敛，否则 Judge 仲裁。
+仲裁方必须异于两个辩方。
 """
 from __future__ import annotations
+
 import json
 from typing import Literal, cast
 
@@ -19,7 +18,6 @@ from pydantic import BaseModel, Field
 from cca.llm.factory import get_llm
 from cca.schema import (
     AgentFamily,
-    AnalystTask,
     DebatePosition,
     DebateResult,
     DebateRound,
@@ -27,40 +25,32 @@ from cca.schema import (
     TaskPlan,
 )
 
-DebateTarget = Literal["pm_taskplan", "analyst_task", "report"]
+DebateTarget = Literal["pm_taskplan", "report"]
 
-# 收敛阶段产出 revised_output 用的 schema 校验表。
-# LLM 输出必须严格匹配对应 Pydantic 类型，否则在 with_structured_output 内部抛错，
-# 避免下游（如 _apply_debate_result）拿到漏字段的 dict 静默清空数据。
+# 收敛阶段产 revised_output 用的 schema 校验表
 _REVISED_OUTPUT_SCHEMA: dict[DebateTarget, type[BaseModel]] = {
     "pm_taskplan": TaskPlan,
-    "analyst_task": AnalystTask,
     "report": ReportTask,
 }
 
-# target_platforms 允许的字面量枚举值
-_VALID_PLATFORMS: frozenset[str] = frozenset(
-    {"appstore_cn", "appstore_us", "zhihu", "weibo", "other"}
-)
+_VALID_PLATFORMS: frozenset[str] = frozenset({"appstore_cn", "appstore_us", "zhihu", "weibo", "other"})
 
 
 def _repair_for_schema(data: dict, target: DebateTarget) -> dict:
-    """修复 LLM 在 revised_output 中常见的 schema 偏差，避免 Pydantic 校验抛错。
+    """修复 LLM 在 revised_output 中常见的 schema 偏差。
 
-    已知偏差：
-    - pm_taskplan: LLM 用 competitor_groups 代替 competitor_names
-    - pm_taskplan: insight_tasks[].target_platforms 写成中文自由文本而非枚举值
+    已知偏差仅在 pm_taskplan：
+    - competitor_groups 替代 competitor_names
+    - target_platforms 写中文自由文本而非枚举
     """
     if target != "pm_taskplan":
         return data
     data = dict(data)
-    # competitor_names 缺失时，从 LLM 自造的 competitor_groups 中提取
     if "competitor_names" not in data and "competitor_groups" in data:
         data["competitor_names"] = [
             g["product_name"] for g in data["competitor_groups"]
             if isinstance(g, dict) and "product_name" in g
         ]
-    # target_platforms 非法枚举值统一 fallback 到 "other"
     for task in data.get("insight_tasks") or []:
         if isinstance(task, dict) and "target_platforms" in task:
             task["target_platforms"] = [
@@ -70,143 +60,98 @@ def _repair_for_schema(data: dict, target: DebateTarget) -> dict:
     return data
 
 
-# 单方/单轮的轻量结构化输出类型
+# critique / refinement 用 json_mode 自然命名，避免 parse 失败
 class _Critique(BaseModel):
-    """字段名取 critique 而非 text：LLM 在 json_mode 下倾向自然命名，避免被改名导致 parse 失败。"""
-
     critique: str = Field(description="对对方观点的具体批驳，至少指出 1 处问题")
 
 
 class _Refinement(BaseModel):
-    """字段名同理取 refinement。"""
-
     refinement: str = Field(description="基于对方批驳后修订的观点正文")
-    still_disagrees: bool = Field(
-        description="经过本轮修订后，你是否仍与对方在核心 claim 上有分歧"
-    )
+    still_disagrees: bool = Field(description="本轮修订后是否仍与对方有分歧")
 
 
-# 3阶段实现
+# ── 三阶段实现 ──────────────────────────────────────────────────────────
 
-def _phase_critique(
-    family: AgentFamily,
-    my_position: DebatePosition,
-    other_position: DebatePosition,
-) -> str:
-    """阶段 1：看到对方观点后写 critique。"""
+
+def _phase_critique(family: AgentFamily, mine: DebatePosition, other: DebatePosition) -> str:
     llm = get_llm(family).with_structured_output(_Critique, method="json_mode")
     sys = (
-        f"你是 {family} 家族。请针对 {other_position.agent_family} 的观点写出批驳。"
-        "聚焦事实层面：哪些 claim 不成立？哪些 evidence 太弱或缺失？"
-        "不要泛泛而谈，每条批驳指向对方原文具体段落。"
-        '以 JSON 输出，**严格格式**：{"critique": "..."}。critique 字段必须是单一字符串，'
-        "可在一段话内列出多点批驳；不要返回数组、对象或嵌套结构。"
+        f"你是 {family} 家族。请针对 {other.agent_family} 的观点写出批驳。"
+        "聚焦事实：哪些 claim 不成立、哪些 evidence 太弱。每条批驳指向对方原文具体段落。"
+        '以 JSON 输出：{"critique": "..."}。critique 必须是单一字符串。'
     )
     user = json.dumps(
-        {
-            "my_position": my_position.model_dump(),
-            "other_position": other_position.model_dump(),
-        },
+        {"my_position": mine.model_dump(), "other_position": other.model_dump()},
         ensure_ascii=False,
     )
-    result = cast(_Critique, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
-    return result.critique
+    return cast(_Critique, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)])).critique
 
 
-def _phase_refine(
-    family: AgentFamily,
-    my_position: DebatePosition,
-    other_critique: str,
-) -> _Refinement:
-    """阶段 2：基于对方 critique 修订自己观点。"""
+def _phase_refine(family: AgentFamily, mine: DebatePosition, critique: str) -> _Refinement:
     llm = get_llm(family).with_structured_output(_Refinement, method="json_mode")
     sys = (
-        f"你是 {family} 家族。基于对方对你的批驳，修订你原来的观点。"
-        "可选："
-        "(a) 维持原 claim 并加强 evidence"
-        "(b) 部分修订 claim"
-        "(c) 撤回 claim 接受批驳"
-        "明确说明你的选择以及理由。"
-        '以 JSON 输出，**严格格式**：{"refinement": "...", "still_disagrees": true/false}。'
-        "refinement 必须是单一字符串，不要数组/对象。"
-        "still_disagrees=false 表示你接受了对方批驳。"
+        f"你是 {family} 家族。基于对方批驳修订观点，三选一：(a) 维持原 claim + 加强 evidence "
+        "(b) 部分修订 (c) 撤回接受批驳。说明选择和理由。"
+        'JSON 输出：{"refinement": "...", "still_disagrees": true/false}。'
+        "still_disagrees=false 表示接受批驳。"
     )
     user = json.dumps(
-        {"my_position": my_position.model_dump(), "critique_from_other": other_critique},
+        {"my_position": mine.model_dump(), "critique_from_other": critique},
         ensure_ascii=False,
     )
     return cast(_Refinement, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
 
 
 def _phase_judge(
-    judge: AgentFamily,
-    target: DebateTarget,
-    target_content: dict,
-    rounds: list[DebateRound],
+    judge: AgentFamily, target: DebateTarget, target_content: dict, rounds: list[DebateRound],
 ) -> DebateResult:
-    """阶段 3：辩论未自然收敛，引入第三家族仲裁，必须异于两个辩方。"""
+    """辩论未自然收敛 → 第三家族仲裁。judge / target / rounds 由代码强制覆盖。"""
     llm = get_llm(judge).with_structured_output(DebateResult, method="json_mode")
     sys = (
-        f"你是 {judge} 家族的独立仲裁者。两个辩方已对 {target} 完成 {len(rounds)} 轮辩论。"
-        "综合最后一轮的 refinements，请pick你认为的 final_verdict："
-        "accepted（采纳原内容）/ rejected（拒绝原内容）/ "
-        "accepted_with_revision（部分采纳，给出修订版 revised_output）。"
-        "判断只看事实是否站得住，不偏袒任一辩方。以 JSON 输出，符合 DebateResult schema。"
+        f"你是 {judge} 家族的独立仲裁者。两辩方对 {target} 完成 {len(rounds)} 轮辩论。"
+        "综合最后一轮 refinements 给出 final_verdict："
+        "accepted / rejected / accepted_with_revision（给出 revised_output）。"
+        "只看事实是否站得住，不偏袒任一方。JSON 输出符合 DebateResult schema。"
     )
     user = json.dumps(
-        {
-            "target": target,
-            "target_content": target_content,
-            "rounds": [r.model_dump() for r in rounds],
-        },
+        {"target": target, "target_content": target_content,
+         "rounds": [r.model_dump() for r in rounds]},
         ensure_ascii=False,
     )
     result = cast(DebateResult, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
-    # judge_family 由代码强制覆盖，防止 LLM 自报错家族
     result.judge_family = judge
     result.target = target
     result.rounds = rounds
     return result
 
 
-# debate结果整理，发送给PM
 def _phase_finalize_converged(
-    winner_family: AgentFamily,
-    target: DebateTarget,
-    target_content: dict,
-    winning_refinement: str,
+    winner_family: AgentFamily, target: DebateTarget,
+    target_content: dict, winning_refinement: str,
 ) -> dict:
     """获胜方把共识结构化为修订版 target_content。
 
-    不用 with_structured_output：它在 parse 前无法插入 repair 步骤。
-    改为：json_mode 裸调用 → 手动解 JSON → _repair_for_schema 修复已知偏差 → Pydantic validate。
+    走裸 JSON + _repair_for_schema + Pydantic validate；with_structured_output 无法插 repair 步骤。
     """
     schema = _REVISED_OUTPUT_SCHEMA[target]
     schema_json = json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=2)
     sys = (
-        f"你的观点在辩论中被对方采纳。请基于你的最终 refinement，"
-        f"产出修订版 {target} 的 JSON 对象。\n\n"
-        f"严格遵守以下 JSON Schema（required 字段不可缺失，enum 值必须逐字匹配）：\n"
-        f"{schema_json}\n\n"
-        f"输出纯 JSON，不加 markdown 包裹，不加任何解释。"
+        f"你的观点在辩论中被对方采纳。基于你的最终 refinement，产出修订版 {target} 的 JSON 对象。\n\n"
+        f"严格遵守以下 JSON Schema（required 字段不可缺失，enum 必须逐字匹配）：\n"
+        f"{schema_json}\n\n输出纯 JSON，不加 markdown 包裹。"
     )
-    user = json.dumps(
-        {"original": target_content, "winning_refinement": winning_refinement},
-        ensure_ascii=False,
-    )
+    user = json.dumps({"original": target_content, "winning_refinement": winning_refinement}, ensure_ascii=False)
     llm = get_llm(winner_family).bind(response_format={"type": "json_object"})
-    raw: AIMessage = cast(AIMessage, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
+    raw = cast(AIMessage, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
     raw_str = raw.content.strip()
-    # 剥掉 LLM 偶尔多加的 markdown 代码块包裹
     if raw_str.startswith("```"):
         parts = raw_str.split("```", 2)
         raw_str = parts[1].lstrip("json").strip() if len(parts) >= 3 else raw_str
-    raw_dict = json.loads(raw_str)
-    raw_dict = _repair_for_schema(raw_dict, target)
+    raw_dict = _repair_for_schema(json.loads(raw_str), target)
     return schema.model_validate(raw_dict).model_dump()
 
 
-# debate 主流程
+# ── 主流程 ─────────────────────────────────────────────────────────────
 
 
 def run_debate(
@@ -217,22 +162,18 @@ def run_debate(
     judge: AgentFamily = "doubao",
     max_rounds: int = 2,
 ) -> DebateResult:
-    """
-    跑完整 3 阶段 debate，返回 DebateResult。
-    families 是 2 个辩方，judge 必须与两者均不同。
-    max_rounds 控制循环次数，考虑token消耗部分，默认为 2。
-    seed_positions 由 caller 注入 Agent 的真实经验作为初始 position；
-    例如 Collector 把采集数据封装为 DebatePosition.evidence，避免辩方凭空生成。
+    """跑完整 debate 返回 DebateResult。
+
+    families = 2 个辩方，judge 异于两者。seed_positions 由 caller 注入真实经验，
+    避免辩方凭空生成。max_rounds=2 控制 token 开销。
     """
     if judge in families:
         raise ValueError(f"judge={judge!r} 不能与辩方 {families!r} 重叠")
 
     fam_a, fam_b = families
-    rounds: list[DebateRound] = []
-
-    # 第一轮初始 position — caller 注入
     pos_a = seed_positions[fam_a]
     pos_b = seed_positions[fam_b]
+    rounds: list[DebateRound] = []
 
     for round_idx in range(1, max_rounds + 1):
         crit_a_on_b = _phase_critique(fam_a, pos_a, pos_b)
@@ -240,38 +181,28 @@ def run_debate(
         refined_a = _phase_refine(fam_a, pos_a, crit_b_on_a)
         refined_b = _phase_refine(fam_b, pos_b, crit_a_on_b)
 
-        rounds.append(
-            DebateRound(
-                round=round_idx,
-                positions=[pos_a, pos_b],
-                critiques={fam_b: crit_a_on_b, fam_a: crit_b_on_a},
-                refinements={fam_a: refined_a.refinement, fam_b: refined_b.refinement},
-            )
-        )
+        rounds.append(DebateRound(
+            round=round_idx,
+            positions=[pos_a, pos_b],
+            critiques={fam_b: crit_a_on_b, fam_a: crit_b_on_a},
+            refinements={fam_a: refined_a.refinement, fam_b: refined_b.refinement},
+        ))
 
-        # 短路，跳过 judge 阶段，debate提前收敛，返回debate结果给PM
+        # 任一方让步即收敛，跳过 judge
         if not refined_a.still_disagrees or not refined_b.still_disagrees:
+            winner = fam_a if refined_a.still_disagrees else fam_b
+            winning = refined_a.refinement if refined_a.still_disagrees else refined_b.refinement
             return DebateResult(
-                target=target,
-                rounds=rounds,
+                target=target, rounds=rounds,
                 final_verdict="accepted_with_revision",
-                judge_family=None,               
-                judge_rationale=f"self-converged at round {round_idx}: both parties accepted other's position",
-                revised_output=_phase_finalize_converged(
-                    winner_family=fam_a if refined_a.still_disagrees else fam_b,
-                    target=target,
-                    target_content=target_content,
-                    winning_refinement=refined_a.refinement if refined_a.still_disagrees else refined_b.refinement
-                ),              
+                judge_family=None,
+                judge_rationale=f"self-converged at round {round_idx}",
+                revised_output=_phase_finalize_converged(winner, target, target_content, winning),
             )
-    
-        # 下一轮的 position = 本轮 refinement
+
+        # 下一轮 position = 本轮 refinement
         if round_idx < max_rounds:
-            pos_a = DebatePosition(
-                agent_family=fam_a, claim=refined_a.refinement, evidence=pos_a.evidence
-            )
-            pos_b = DebatePosition(
-                agent_family=fam_b, claim=refined_b.refinement, evidence=pos_b.evidence
-            )
+            pos_a = DebatePosition(agent_family=fam_a, claim=refined_a.refinement, evidence=pos_a.evidence)
+            pos_b = DebatePosition(agent_family=fam_b, claim=refined_b.refinement, evidence=pos_b.evidence)
 
     return _phase_judge(judge, target, target_content, rounds)

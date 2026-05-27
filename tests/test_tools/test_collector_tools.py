@@ -28,13 +28,13 @@ def test_finalize_exploration_accepts_valid_schema() -> None:
     assert parsed["rationale"].startswith("钉钉")
 
 
-def test_finalize_exploration_rejects_missing_required_field() -> None:
-    """缺 competitor_names 等 required 字段 → Pydantic ValidationError。"""
+def test_finalize_exploration_returns_error_on_missing_required_field() -> None:
+    """缺 competitor_names 等 required 字段 → 返回 LLM-friendly 错误字符串（不 raise）。"""
     from cca.tools.collector_tools import finalize_exploration
 
     invalid = json.dumps({"target_product": "飞书"})  # 缺 product_type / competitor_names / ...
-    with pytest.raises(ValidationError):
-        finalize_exploration.invoke({"result_json": invalid})
+    result = finalize_exploration.invoke({"result_json": invalid})
+    assert "CollectorExplorationResult 校验失败" in result
 
 
 def test_challenge_pm_constructs_collector_signal() -> None:
@@ -120,12 +120,41 @@ def test_finalize_profile_overrides_mismatched_product_name() -> None:
     assert parsed["profile"]["product_name"] == "钉钉"
 
 
-def test_finalize_profile_rejects_invalid_schema() -> None:
+def test_finalize_profile_returns_error_string_on_invalid_schema() -> None:
+    """schema 校验失败时返回错误字符串（不 raise），让 LLM 看到 ToolMessage 自修。
+
+    create_react_agent 里抛异常会中断 ReAct loop，所以走返回值路径。
+    """
     from cca.tools.collector_tools import finalize_profile
 
     invalid = json.dumps({"product_name": "X", "product_type": 12345})  # type 错
-    with pytest.raises(ValidationError):
-        finalize_profile.invoke({"product_name": "X", "profile_json": invalid})
+    result = finalize_profile.invoke({"product_name": "X", "profile_json": invalid})
+    assert "ProductProfile 校验失败" in result
+    assert "字段规则提示" in result
+
+
+def test_finalize_profile_cleans_evidence_missing_source_url() -> None:
+    """Evidence 缺 source_url 是 LLM 常见偏差；本工具应剔除而非阻断整个产品。"""
+    from cca.tools.collector_tools import finalize_profile
+
+    raw = {
+        "product_name": "Y",
+        "product_type": "SaaS",
+        "dimensions": [{
+            "name": "d1", "category": "功能",
+            "facts": [
+                {"statement": "完整", "evidence": [{"source_url": "https://ok.com", "snippet": "a"}]},
+                {"statement": "evidence 缺 url", "evidence": [{"snippet": "b"}]},
+            ],
+        }],
+        "sources": [
+            {"source_url": "https://ok.com"},
+            {"snippet": "no url"},  # 应被剔除
+        ],
+    }
+    result = json.loads(finalize_profile.invoke({"product_name": "Y", "profile_json": json.dumps(raw)}))
+    assert len(result["profile"]["dimensions"][0]["facts"]) == 1  # 缺 url fact 被剔
+    assert len(result["profile"]["sources"]) == 1                # 缺 url sources 项被剔
 
 
 def test_request_product_replacement_constructs_data_gap_signal() -> None:

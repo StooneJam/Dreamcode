@@ -1,6 +1,6 @@
 """PM Agent 测试（不调真 API）。
 
-覆盖 4 个阶段节点的输出结构 + 信号处理，不测试 LLM 内容质量。
+覆盖 3 个阶段节点的输出结构 + 信号处理，不测试 LLM 内容质量。
 """
 
 from __future__ import annotations
@@ -9,8 +9,6 @@ import pytest
 
 from cca.schema import (
     AgentSignal,
-    AnalystTask,
-    AnalystTaskOutput,
     DebateResult,
     DecisionRecord,
     DomainSeed,
@@ -72,7 +70,6 @@ def _make_minimal_state(**overrides) -> CCAState:
         "exploration_result": None,
         "competitor_names": [],
         "task_plan": None,
-        "analyst_task": None,
         "report_task": None,
         "profiles": {},
         "review_state": [],
@@ -270,37 +267,7 @@ def test_task_plan_node_returns_task_plan_and_competitors(
     assert all(d["phase"] == "task_plan" for d in result["decision_log"])
 
 
-# ── Phase 3: AnalystTask ───────────────────────────────────────────────
-
-
-def test_analyst_task_node_returns_analyst_task(monkeypatch: pytest.MonkeyPatch) -> None:
-    output = AnalystTaskOutput(
-        analyst_task=AnalystTask(
-            product_names=["飞书", "钉钉", "企业微信"],
-            focus_dimensions=["视频会议", "定价"],
-            require_swot=True,
-        ),
-        decision_records=[_mk_decision("analyst_focus")],
-    )
-    _patch_pm_gpt(monkeypatch, output)
-
-    from cca.agents.pm import analyst_task_node
-
-    state = _make_minimal_state(
-        competitor_names=["钉钉", "企业微信"],
-        profiles={
-            "钉钉": {"product_name": "钉钉", "dimensions": []},
-            "企业微信": {"product_name": "企业微信", "dimensions": []},
-        },
-    )
-    result = analyst_task_node(state)
-    assert "analyst_task" in result
-    assert result["analyst_task"]["require_swot"] is True
-    assert "飞书" in result["analyst_task"]["product_names"]
-    assert result["decision_log"][0]["phase"] == "analyst_task"
-
-
-# ── Phase 4: ReportTask ────────────────────────────────────────────────
+# ── Phase 3: ReportTask（合并了原 AnalystTask 字段） ────────────────────
 
 
 def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -308,12 +275,17 @@ def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -
         report_task=ReportTask(
             target_product="飞书",
             competitors=["钉钉", "企业微信"],
+            product_names=["飞书", "钉钉", "企业微信"],
+            focus_dimensions=["视频会议", "定价"],
+            require_swot=True,
+            cross_product_comparison_required=True,
             output_formats=["markdown", "pdf"],
             target_audience="产品负责人",
             sections=["执行摘要", "SWOT 分析"],
             invoke_call_report_reviewer=True,
         ),
         decision_records=[
+            _mk_decision("analysis_focus"),
             _mk_decision("report_structure"),
             _mk_decision("audience_choice"),
         ],
@@ -325,15 +297,18 @@ def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -
     state = _make_minimal_state(
         competitor_names=["钉钉", "企业微信"],
         profiles={
-            "钉钉": {"product_name": "钉钉", "swot": {}},
-            "企业微信": {"product_name": "企业微信", "swot": {}},
+            "钉钉": {"product_name": "钉钉", "dimensions": []},
+            "企业微信": {"product_name": "企业微信", "dimensions": []},
         },
     )
     result = report_task_node(state)
     assert "report_task" in result
     assert result["report_task"]["target_product"] == "飞书"
+    assert result["report_task"]["require_swot"] is True
+    assert "飞书" in result["report_task"]["product_names"]
+    assert result["report_task"]["focus_dimensions"] == ["视频会议", "定价"]
     assert result["report_task"]["invoke_call_report_reviewer"] is True
-    assert len(result["decision_log"]) == 2
+    assert len(result["decision_log"]) == 3
     assert all(d["phase"] == "report_task" for d in result["decision_log"])
 
 
@@ -433,24 +408,6 @@ def test_read_defense_task_plan_reads_decision_log() -> None:
     assert any("exploration_result.competitor_names" in e for e in pos.evidence)
 
 
-def test_read_defense_analyst_task_reads_decision_log() -> None:
-    from cca.agents.pm import _read_defense
-
-    state = _make_minimal_state(
-        decision_log=[
-            _mk_decision_dict(
-                phase="analyst_task",
-                decision_type="analyst_focus",
-                rationale="视频会议是用户 query 显式提到的核心维度",
-                chosen={"focus_dimensions": ["视频会议", "定价"]},
-            ),
-        ],
-    )
-    pos = _read_defense("analyst_task", state)
-    assert "视频会议是用户 query 显式提到的核心维度" in pos.claim
-    assert any("视频会议" in e for e in pos.evidence)
-
-
 def test_read_defense_report_task_reads_decision_log() -> None:
     from cca.agents.pm import _read_defense
 
@@ -490,7 +447,7 @@ def test_read_defense_falls_back_when_no_decision() -> None:
 
 
 def test_read_defense_ignores_decisions_from_other_phases() -> None:
-    """task_plan 阶段的 defense 不应混入 initial_brief / analyst_task 的决策。"""
+    """task_plan 阶段的 defense 不应混入 initial_brief / report_task 的决策。"""
     from cca.agents.pm import _read_defense
 
     state = _make_minimal_state(
@@ -557,32 +514,12 @@ def test_apply_debate_result_rejected_clears_target_task() -> None:
     assert updates["audit_log"][0]["verdict"] == "rejected"
 
 
-def test_apply_debate_result_rejected_analyst_clears_analyst_task() -> None:
-    from cca.agents.pm import _apply_debate_result
-
-    result = _make_debate_result(target="analyst_task", final_verdict="rejected")
-    updates = _apply_debate_result(result)
-    assert updates["analyst_task"] is None
-
-
 def test_apply_debate_result_rejected_report_clears_report_task() -> None:
     from cca.agents.pm import _apply_debate_result
 
     result = _make_debate_result(target="report", final_verdict="rejected")
     updates = _apply_debate_result(result)
     assert updates["report_task"] is None
-
-
-def test_apply_debate_result_analyst_target() -> None:
-    from cca.agents.pm import _apply_debate_result
-
-    result = _make_debate_result(
-        target="analyst_task",
-        final_verdict="accepted_with_revision",
-        revised_output={"focus_dimensions": ["定价"]},
-    )
-    updates = _apply_debate_result(result)
-    assert updates["analyst_task"] == result.revised_output
 
 
 def test_apply_debate_result_report_target() -> None:
@@ -618,7 +555,7 @@ def test_handle_signal_node_debate_dispatch(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
     signal = AgentSignal(
-        from_agent="analyst",
+        from_agent="report",
         kind="pm_challenge",
         target="task_plan",
         payload=_mk_payload("竞品列表不完整"),
@@ -644,14 +581,14 @@ def test_handle_signal_node_debate_from_payload(monkeypatch: pytest.MonkeyPatch)
     signal = AgentSignal(
         from_agent="insight",
         kind="other",
-        target="analyst_task",
+        target="report_task",
         payload=_mk_payload("维度不足"),
         requires_debate=True,
         ts="2026-05-23T00:00:00Z",
     )
     state = _make_minimal_state(
         agent_signals=[signal.model_dump()],
-        analyst_task={"focus_dimensions": ["功能"], "product_names": ["飞书"]},
+        report_task={"target_product": "飞书", "competitors": ["钉钉"], "focus_dimensions": ["功能"]},
     )
     result = handle_signal_node(state)
     assert "debate_results" in result
@@ -711,7 +648,7 @@ def test_handle_signal_node_multiple_signals(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     debate_signal = AgentSignal(
-        from_agent="analyst",
+        from_agent="report",
         kind="pm_challenge",
         target="task_plan",
         payload=_mk_payload("挑战 task_plan"),
@@ -747,7 +684,7 @@ def test_handle_signal_node_multiple_debates_all_preserved(
         [
             _make_debate_result(final_verdict="accepted", judge_rationale="r1"),
             _make_debate_result(
-                target="analyst_task",
+                target="report",
                 final_verdict="accepted",
                 judge_rationale="r2",
             ),
@@ -758,7 +695,7 @@ def test_handle_signal_node_multiple_debates_all_preserved(
     )
 
     sig1 = AgentSignal(
-        from_agent="analyst",
+        from_agent="report",
         kind="pm_challenge",
         target="task_plan",
         payload=_mk_payload("竞品列表不完整"),
@@ -768,7 +705,7 @@ def test_handle_signal_node_multiple_debates_all_preserved(
     sig2 = AgentSignal(
         from_agent="insight",
         kind="other",
-        target="analyst_task",
+        target="report_task",
         payload=_mk_payload("维度不足"),
         requires_debate=True,
         ts="2026-05-23T00:00:01Z",
@@ -776,7 +713,7 @@ def test_handle_signal_node_multiple_debates_all_preserved(
     state = _make_minimal_state(
         agent_signals=[sig1.model_dump(), sig2.model_dump()],
         task_plan={"product_type": "SaaS", "competitor_names": ["X"]},
-        analyst_task={"focus_dimensions": ["d"], "product_names": ["P"]},
+        report_task={"target_product": "飞书", "competitors": ["P"], "focus_dimensions": ["d"]},
     )
     result = handle_signal_node(state)
     assert len(result["debate_results"]) == 2
@@ -799,7 +736,7 @@ def test_handle_signal_node_skips_already_consumed(
     monkeypatch.setattr("cca.agents.pm.run_debate", _fake_run_debate, raising=False)
 
     signal = AgentSignal(
-        from_agent="analyst",
+        from_agent="report",
         kind="pm_challenge",
         target="task_plan",
         payload=_mk_payload("x"),
@@ -829,7 +766,7 @@ def test_handle_signal_node_returns_consumed_ids(
     )
 
     signal = AgentSignal(
-        from_agent="analyst",
+        from_agent="report",
         kind="pm_challenge",
         target="task_plan",
         payload=_mk_payload("x"),
@@ -857,7 +794,7 @@ def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("cca.agents.pm.run_debate", _fake_run_debate, raising=False)
 
     old = AgentSignal(
-        from_agent="analyst",
+        from_agent="report",
         kind="pm_challenge",
         target="task_plan",
         payload=_mk_payload("old"),
@@ -867,7 +804,7 @@ def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -
     new = AgentSignal(
         from_agent="insight",
         kind="other",
-        target="analyst_task",
+        target="report_task",
         payload=_mk_payload("new"),
         requires_debate=True,
         ts="2026-05-23T00:00:01Z",
@@ -876,10 +813,11 @@ def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -
         agent_signals=[old.model_dump(), new.model_dump()],
         consumed_signal_ids=[old.signal_id],
         task_plan={"product_type": "S"},
-        analyst_task={"focus_dimensions": ["d"], "product_names": ["P"]},
+        report_task={"target_product": "飞书", "competitors": ["P"], "focus_dimensions": ["d"]},
     )
     result = handle_signal_node(state)
-    assert called_targets == ["analyst_task"]
+    # _TARGET_TO_DEBATE 把 signal.target='report_task' 映射成 debate target='report'
+    assert called_targets == ["report"]
     assert result["consumed_signal_ids"] == [new.signal_id]
 
 

@@ -132,8 +132,10 @@ class ProductProfile(BaseModel):
         2. Collector 联网验证 + 填实：product_type / target_users / dimensions / pricing / sources / website
            Collector 可挑战 PM 的 hint，通过 debate 修正
         3. Insight 填：sentiment
-        4. Analyst 填：swot
-        5. PM debate-review 填：qa_flags / data_confidence
+        4. PM debate-review 填：qa_flags / data_confidence
+
+    SWOT 不再是 profile owner 字段 —— Reporter 在生成报告时通过工具产出，直接写入 MD，
+    不回写到 state.profiles。
     """
 
     # PM Agent 起草（凭训练知识；company 是 hint，Collector 可挑战）
@@ -150,9 +152,6 @@ class ProductProfile(BaseModel):
 
     # Insight Agent 填写
     sentiment: UserSentiment | None = None
-
-    # Analyst Agent 填写
-    swot: SWOT | None = None
 
     # PM debate-review 填写
     qa_flags: list[str] = Field(
@@ -262,30 +261,36 @@ class TaskPlan(BaseModel):
     insight_tasks: list[InsightTask]
 
 
-# PM 三轮下发 Analyst 的分析任务细化，指导下一轮产出；Analyst 可接受也可挑战
-class AnalystTask(BaseModel):
-    """PM 阶段三：Collector+Insight QA 通过后下发的分析任务。"""
-
-    product_names: list[str] = Field(
-        description="参与对比的产品名，通常 = competitor_names + target_product"
-    )
-    focus_dimensions: list[str] = Field(
-        default_factory=list,
-        description="重点对比维度，PM 根据 Collector+Insight 产出指定高亮维度",
-    )
-    require_swot: bool = True
-    cross_product_comparison_required: bool = Field(
-        True,
-        description="是否要求生成跨竞品横向对比",
-    )
-
-
-# PM 四轮下发 Report 的分析任务细化，指导下一轮产出。
+# PM 三轮下发 Report 的分析 + 撰写任务。原 AnalystTask 字段（focus_dimensions /
+# require_swot / cross_product_comparison_required）已合并进此处——Reporter ReAct
+# 同时承担横向排序、SWOT 分析与正文撰写。
 class ReportTask(BaseModel):
-    """PM 阶段四：Analyst QA 通过后下发的报告撰写任务。"""
+    """PM 阶段三：Collector+Insight QA 通过后下发的分析 + 报告任务。"""
 
     target_product: str = Field(description="目标分析产品")
     competitors: list[str] = Field(description="竞品名称列表")
+    product_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "参与对比的产品名，通常 = [target_product] + competitors。"
+            "用于 dimension_ranking / SWOT 工具确定覆盖范围；为空时由 Reporter 自行推断"
+        ),
+    )
+    focus_dimensions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "PM 指定的高亮对比维度。Reporter 据此决定 submit_dimension_ranking 覆盖哪些维度；"
+            "为空时由 Reporter 自主判断"
+        ),
+    )
+    require_swot: bool = Field(
+        True,
+        description="是否要求 Reporter 调 finalize_swot 工具产 SWOT 段落",
+    )
+    cross_product_comparison_required: bool = Field(
+        True,
+        description="是否要求生成跨竞品横向对比章节",
+    )
     output_formats: list[Literal["markdown", "pdf"]] = Field(
         default_factory=lambda: ["markdown", "pdf"],
     )
@@ -303,7 +308,7 @@ class ReportTask(BaseModel):
     )
 
 
-# review 结果：PM 对 Collector/Insight/Analyst 产出的评审结论，包含返工建议和 QA 结果；用于 PM 自身记录和后续分析，也可供用户查询了解 PM 的评审逻辑
+# review 结果：PM 对 Collector/Insight 产出的评审结论，包含返工建议和 QA 结果；用于 PM 自身记录和后续分析，也可供用户查询了解 PM 的评审逻辑
 ReviewStatus = Literal["passed", "needs_retry", "forced"]
 
 
@@ -314,7 +319,7 @@ class ReviewUnit(BaseModel):
     返工完毕 PM 再次评审 append 新 ReviewUnit；retry_count > 2 时标 forced。
     """
 
-    agent: Literal["collector", "insight", "analyst"]
+    agent: Literal["collector", "insight"]
     product_name: str
     status: ReviewStatus
     retry_count: int = Field(description="本次评审前该 (agent, product) 已发生的返工次数")
@@ -347,7 +352,7 @@ class DecisionRecord(BaseModel):
         default_factory=lambda: f"D-{uuid4().hex[:8]}",
         description="决策唯一标识，可被报告段落引用（如脚注 [D-a1b2c3d4]）",
     )
-    phase: Literal["initial_brief", "task_plan", "analyst_task", "report_task"] | None = Field(
+    phase: Literal["initial_brief", "task_plan", "report_task"] | None = Field(
         None,
         description="由代码端 _stamp_decisions 强制覆盖，LLM 无需填写",
     )
@@ -358,7 +363,7 @@ class DecisionRecord(BaseModel):
             "product_type_inference（产品赛道判定）/ "
             "dimension_priority（维度优先级）/ "
             "task_allocation（任务分派）/ "
-            "analyst_focus（Analyst 重点对比项）/ "
+            "analysis_focus（报告分析重点维度 / 是否需 SWOT）/ "
             "report_structure（报告章节组织）/ "
             "audience_choice（读者类型）/ "
             "other（未归类）"
@@ -385,7 +390,7 @@ class DecisionRecord(BaseModel):
 
 
 # 用户文档蒸馏产物 (D-032 修订版)
-# 由 PM phase 1 多模态消化用户上传文档时产出；下游 Collector / Insight / Analyst 共享。
+# 由 PM phase 1 多模态消化用户上传文档时产出；下游 Collector / Insight / Reporter 共享。
 
 
 class DomainSeed(BaseModel):
@@ -393,7 +398,7 @@ class DomainSeed(BaseModel):
 
     生产者：PM `initial_brief_node`（D-032 修订后由 PM 直接消化文档，不再走独立节点）。
     消费者：Collector exploration_node（优先采用 dimension_candidates 而非凭空联网发现）、
-            未来 PM TaskPlan / AnalystTask（结合 exploration_result 决策）。
+            PM TaskPlan / ReportTask（结合 exploration_result 决策）。
 
     state 控制在 ~2KB，不存原文 —— `source_files` 留 lazy 重读通道。
     """
@@ -449,24 +454,16 @@ class TaskPlanOutput(BaseModel):
     decision_records: list[DecisionRecord] = Field(min_length=1)
 
 
-class AnalystTaskOutput(BaseModel):
-    """阶段三联合输出：AnalystTask + 决策档案。"""
-
-    analyst_task: AnalystTask
-    decision_records: list[DecisionRecord] = Field(min_length=1)
-
-
 class ReportTaskOutput(BaseModel):
-    """阶段四联合输出：ReportTask + 决策档案。"""
+    """阶段三联合输出：ReportTask + 决策档案。"""
 
     report_task: ReportTask
     decision_records: list[DecisionRecord] = Field(min_length=1)
 
 
-# debate 应用于 3 个 checkpoint：
+# debate 应用于 2 个 checkpoint：
 #    1. pm_taskplan：下游对 PM 阶段二 TaskPlan 的主观挑战（竞品列表 / 产品赛道 / 维度优先级）
-#    2. analyst_task：下游对 PM 阶段三 AnalystTask 的主观挑战（focus_dimensions / product_names）
-#    3. report：Report 终审（call_report_reviewer skill）
+#    2. report：Reporter 对 PM 阶段三 ReportTask 的挑战，或 call_report_reviewer skill 终审
 
 
 class DebatePosition(BaseModel):
@@ -493,7 +490,7 @@ class DebateRound(BaseModel):
 class DebateResult(BaseModel):
     """完整 debate 结果：N 轮 + 第三家族仲裁。"""
 
-    target: Literal["pm_taskplan", "analyst_task", "report"] = Field(description="被审对象类型")
+    target: Literal["pm_taskplan", "report"] = Field(description="被审对象类型")
     rounds: list[DebateRound]
     final_verdict: Literal["accepted", "rejected", "accepted_with_revision"]
     judge_family: AgentFamily | None = Field(
@@ -506,7 +503,7 @@ class DebateResult(BaseModel):
     )
 
 
-# Collector/Insight/Analyst 主动向 PM 表达需求或挑战
+# Collector/Insight/Reporter 主动向 PM 表达需求或挑战
 
 
 class ChallengePayload(BaseModel):
@@ -548,7 +545,7 @@ class AgentSignal(BaseModel):
         default_factory=lambda: str(uuid4()),
         description="信号唯一标识，PM 消费去重用；默认自动生成 UUID",
     )
-    from_agent: Literal["collector", "insight", "analyst", "report"]
+    from_agent: Literal["collector", "insight", "report"]
     kind: Literal["data_gap", "pm_challenge", "insight_lead", "other"]
     target: str = Field(description="信号所指的 task_id 或 agent 名")
     payload: ChallengePayload = Field(description="结构化挑战/问题载荷")

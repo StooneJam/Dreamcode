@@ -1,8 +1,7 @@
-"""HTTP 抓取 + 正文提取工具。
+"""HTTP 抓取 + 正文提取。抓取前查 robots.txt（合规要求）。
 
-合规：抓取前必查 robots.txt（题目要求 D-006/D-006 数据策略）。
-错误策略：robots 禁止 / 超时 / HTTP 错误 / 抽取失败一律返回 {"url", "error", "fetched_at"}，
-ReAct agent 看到 error 自行换 URL 或换策略，不在工具内重试。
+错误（robots 禁止 / 超时 / HTTP 错误 / 抽取失败）一律返回 {"url", "error", "fetched_at"}；
+ReAct agent 看到 error 自行换 URL，不在工具内重试。
 """
 from __future__ import annotations
 

@@ -24,7 +24,6 @@ def _empty_state(**overrides) -> CCAState:
         "exploration_result": None,
         "competitor_names": [],
         "task_plan": None,
-        "analyst_task": None,
         "report_task": None,
         "profiles": {},
         "review_state": [],
@@ -262,7 +261,7 @@ def test_exploration_node_injects_domain_seed_hint_into_prompt() -> None:
     # 校验 ReAct agent 收到的 prompt 含 domain_seed 内容
     call_args = mock_agent.invoke.call_args[0][0]
     human_msg = call_args["messages"][1]
-    assert "PM 从用户上传文档蒸馏" in human_msg.content
+    assert "PM 从用户文档蒸馏" in human_msg.content
     assert "视频会议" in human_msg.content
     assert "企业微信" in human_msg.content
 
@@ -289,7 +288,7 @@ def test_exploration_node_omits_seed_hint_when_no_domain_seed() -> None:
 
     call_args = mock_agent.invoke.call_args[0][0]
     human_msg = call_args["messages"][1]
-    assert "PM 从用户上传文档蒸馏" not in human_msg.content
+    assert "PM 从用户文档蒸馏" not in human_msg.content
 
 
 def test_exploration_node_uses_target_product_from_brief() -> None:

@@ -14,8 +14,7 @@ REQUIRED_FIELDS = {
     "exploration_result",    # Collector 一轮探索产物
     "competitor_names",
     "task_plan",             # PM 阶段二
-    "analyst_task",          # PM 阶段三
-    "report_task",           # PM 阶段四
+    "report_task",           # PM 阶段三（含原 AnalystTask 字段，Reporter 内部分析）
     "profiles",
     "review_state",
     "qa_results",
@@ -35,10 +34,11 @@ def test_ccastate_has_all_expected_fields() -> None:
     assert set(CCAState.__annotations__.keys()) == REQUIRED_FIELDS
 
 
-def test_ccastate_has_analyst_task_and_report_task() -> None:
-    """D-018 阶段二/三 task 字段必须在 state 里。"""
-    assert "analyst_task" in CCAState.__annotations__
+def test_ccastate_has_task_plan_and_report_task() -> None:
+    """阶段二/三 task 字段必须在 state 里；analyst_task 已并入 report_task。"""
+    assert "task_plan" in CCAState.__annotations__
     assert "report_task" in CCAState.__annotations__
+    assert "analyst_task" not in CCAState.__annotations__
 
 
 def test_review_state_reducer_appends_not_replaces() -> None:

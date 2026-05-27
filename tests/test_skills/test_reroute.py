@@ -67,7 +67,7 @@ def test_reroute_stale_competitor_returns_phase_1(
     from cca.skills.reroute import RerouteDecision, reroute
 
     signal = _make_signal(
-        from_agent="analyst",
+        from_agent="report",
         payload=_mk_payload("竞品 X 已停服 6 个月"),
     )
     decision = RerouteDecision(
@@ -86,22 +86,23 @@ def test_reroute_stale_competitor_returns_phase_1(
 def test_reroute_unavailable_dimension_returns_phase_3(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """ReportTask 指定的 focus_dimensions 数据不足 → phase_3 让 PM 重制 ReportTask。"""
     from cca.skills.reroute import RerouteDecision, reroute
 
     signal = _make_signal(
-        from_agent="analyst",
+        from_agent="report",
         kind="pm_challenge",
         payload=_mk_payload("指定的 focus_dimensions 中 'AI 助手' 数据不足"),
     )
     decision = RerouteDecision(
         target_phase="phase_3",
-        root_cause="AnalystTask 指定维度数据不完整",
+        root_cause="ReportTask 指定的 focus_dimensions 数据不完整",
         fix_summary={"remove_dimensions": ["AI 助手"], "add_dimensions": ["视频会议"]},
         rationale="只需调整 focus_dimensions，不需要改竞品列表",
     )
     _patch_reroute_gpt(monkeypatch, decision)
 
-    result = reroute(signal, '{"analyst_task": {"focus_dimensions": ["AI 助手"]}}')
+    result = reroute(signal, '{"report_task": {"focus_dimensions": ["AI 助手"]}}')
     assert result.target_phase == "phase_3"
 
 
@@ -155,17 +156,18 @@ def test_apply_reroute_phase_2_clears_task_plan() -> None:
     assert result["task_plan"] is None
 
 
-def test_apply_reroute_phase_3_clears_analyst_task() -> None:
+def test_apply_reroute_phase_3_clears_report_task() -> None:
+    """phase_3 现在对应 ReportTask 重派（Analyst 已并入 Reporter）。"""
     from cca.skills.reroute import RerouteDecision, apply_reroute
 
     decision = RerouteDecision(
         target_phase="phase_3",
         root_cause="维度需调整",
         fix_summary={},
-        rationale="修正 AnalystTask",
+        rationale="修正 ReportTask",
     )
     result = apply_reroute(decision)
-    assert result["analyst_task"] is None
+    assert result["report_task"] is None
 
 
 def test_apply_reroute_logs_audit() -> None:

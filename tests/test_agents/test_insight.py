@@ -395,14 +395,14 @@ class TestFinalizeSentimentTool:
         assert result["sentiment"]["appstore_cn_rating"] == 4.1
         assert "好用" in result["sentiment"]["positive_themes"]
 
-    def test_invalid_rating_raises(self):
-        import pytest
-        from pydantic import ValidationError
+    def test_invalid_rating_returns_error_string(self):
+        """rating 越界 → 返回 LLM-friendly 错误字符串（不 raise）。"""
         from cca.tools.insight_tools import finalize_sentiment
 
         bad_json = '{"appstore_cn_rating": 99, "positive_themes": [], "negative_themes": []}'
-        with pytest.raises((ValidationError, Exception)):
-            finalize_sentiment.invoke({"product_name": "X", "sentiment_json": bad_json})
+        result = finalize_sentiment.invoke({"product_name": "X", "sentiment_json": bad_json})
+        assert "UserSentiment 校验失败" in result
+        assert "appstore_cn_rating" in result
 
     def test_schema_fields_preserved(self):
         from cca.tools.insight_tools import finalize_sentiment

@@ -6,7 +6,6 @@ from pydantic import ValidationError
 
 from cca.schema import (
     SWOT,
-    AnalystTask,
     CollectTask,
     DecisionAlternative,
     DecisionRecord,
@@ -104,7 +103,7 @@ def swot(fact: Fact) -> SWOT:
 
 
 @pytest.fixture
-def profile(evidence, dimension, pricing, sentiment, swot) -> ProductProfile:
+def profile(evidence, dimension, pricing, sentiment) -> ProductProfile:
     return ProductProfile(
         product_name="飞书",
         company="字节跳动",
@@ -115,7 +114,6 @@ def profile(evidence, dimension, pricing, sentiment, swot) -> ProductProfile:
         pricing=pricing,
         sources=[evidence],
         sentiment=sentiment,
-        swot=swot,
     )
 
 
@@ -151,7 +149,13 @@ def test_swot_valid(swot: SWOT) -> None:
 
 def test_product_profile_full(profile: ProductProfile) -> None:
     assert profile.product_name == "飞书"
-    assert profile.swot is not None
+    assert profile.sentiment is not None
+    assert profile.pricing is not None
+
+
+def test_product_profile_has_no_swot_field() -> None:
+    """SWOT 已不再是 profile owner 字段——Reporter 工具产出后直接进 MD。"""
+    assert "swot" not in ProductProfile.model_fields
 
 
 def test_qa_result_valid() -> None:
@@ -219,30 +223,29 @@ def test_insight_task_rejects_invalid_platform() -> None:
         InsightTask(product_name="飞书", target_platforms=["twitter"])
 
 
-def test_analyst_task_valid() -> None:
-    task = AnalystTask(
-        product_names=["飞书", "钉钉"],
-        focus_dimensions=["AI 助手", "视频会议"],
-    )
-    assert task.require_swot is True
-    assert task.cross_product_comparison_required is True
-
-
-def test_analyst_task_minimal() -> None:
-    """product_names 必填，其余字段有默认值。"""
-    task = AnalystTask(product_names=["飞书"])
-    assert task.focus_dimensions == []
-
-
 def test_report_task_valid() -> None:
     task = ReportTask(
         target_product="飞书",
         competitors=["钉钉", "企业微信"],
+        product_names=["飞书", "钉钉", "企业微信"],
+        focus_dimensions=["AI 助手", "视频会议"],
         target_audience="产品负责人",
         sections=["市场定位", "功能对比", "SWOT"],
     )
     assert task.output_formats == ["markdown", "pdf"]
     assert task.invoke_call_report_reviewer is True
+    # 原 AnalystTask 字段已合并进 ReportTask
+    assert task.require_swot is True
+    assert task.cross_product_comparison_required is True
+
+
+def test_report_task_minimal_has_analyst_defaults() -> None:
+    """最简 ReportTask 只填 target_product + competitors，其余字段有默认值。"""
+    task = ReportTask(target_product="飞书", competitors=["钉钉"])
+    assert task.require_swot is True
+    assert task.cross_product_comparison_required is True
+    assert task.focus_dimensions == []
+    assert task.product_names == []
 
 
 def test_report_task_rejects_invalid_format() -> None:
@@ -264,9 +267,10 @@ def test_review_unit_valid() -> None:
     assert unit.status == "passed"
 
 
-def test_review_unit_analyst_agent_valid() -> None:
-    unit = ReviewUnit(agent="analyst", product_name="飞书", status="needs_retry", retry_count=1)
-    assert unit.agent == "analyst"
+def test_review_unit_rejects_analyst_agent() -> None:
+    """Analyst 已并入 Reporter，agent 字段不再接受 'analyst'。"""
+    with pytest.raises(ValidationError):
+        ReviewUnit(agent="analyst", product_name="飞书", status="needs_retry", retry_count=1)
 
 
 # ---------------------------------------------------------------------------

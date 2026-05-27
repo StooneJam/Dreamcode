@@ -11,8 +11,10 @@ from typing import Annotated, Literal, TypedDict
 def _merge_profiles(left: dict[str, dict], right: dict[str, dict]) -> dict[str, dict]:
     """profiles 的 merge reducer：同 key 时右侧字段覆盖左侧，保留双方独有字段。
 
-    Collector 写 dimensions/pricing/sources，Insight 写 sentiment，Analyst 写 swot。
+    Collector 写 dimensions/pricing/sources，Insight 写 sentiment。
     并发写入时各自只更新自己的字段，不丢弃对方已写的字段。
+
+    SWOT 不再走 profile —— Reporter 自己产并直接写入正文 MD，不回写 state.profiles。
     """
     merged = dict(left)
     for name, profile in right.items():
@@ -43,13 +45,12 @@ class CCAState(TypedDict):
     domain_seed: dict | None             # DomainSeed.model_dump()
     exploration_result: dict | None      # CollectorExplorationResult.model_dump()
 
-    # PM 阶段二~四下发的任务
+    # PM 阶段二~三下发的任务
     competitor_names: list[str]
     task_plan: dict | None               # TaskPlan.model_dump() - PM 阶段二填
-    analyst_task: dict | None            # AnalystTask.model_dump() - PM 阶段三填
-    report_task: dict | None             # ReportTask.model_dump() - PM 阶段四填
+    report_task: dict | None             # ReportTask.model_dump() - PM 阶段三填
 
-    # 各产品档案（Collector / Insight / Analyst / PM 逐层填充）
+    # 各产品档案（Collector / Insight / PM 逐层填充）
     # _merge_profiles reducer：并发写入时各 Agent 只覆盖自己的字段，不清除其他 Agent 已写字段
     profiles: Annotated[dict[str, dict], _merge_profiles]
 
