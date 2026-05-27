@@ -112,6 +112,8 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
     return CCAState(
         user_query="帮我分析飞书的主要竞品钉钉和企业微信",
         target_product="飞书",
+        user_files=None,
+        domain_seed=None,
         competitor_names=["钉钉", "企业微信"],
         # PM 阶段一/一点五（mock 中已略过，设为 None）
         initial_brief=None,
