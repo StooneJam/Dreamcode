@@ -529,9 +529,9 @@ def test_collect_node_empty_tasks_skipped() -> None:
     assert "profiles" not in result
 
 
-def test_build_per_product_context_finds_product_brief() -> None:
-    """_build_per_product_context 从 exploration_result.initial_profiles 找该产品的 brief。"""
-    from cca.agents.collector import _build_per_product_context
+def testbuild_collect_context_finds_product_brief() -> None:
+    """build_collect_context 从 exploration_result.initial_profiles 找该产品的 brief。"""
+    from cca.agents.collector import build_collect_context
 
     state = _empty_state(
         exploration_result={
@@ -544,14 +544,14 @@ def test_build_per_product_context_finds_product_brief() -> None:
             ],
         },
     )
-    ctx = _build_per_product_context(state, "钉钉")
+    ctx = build_collect_context(state, "钉钉")
     assert ctx["target_product"] == "飞书"
     assert ctx["product_brief"]["company"] == "阿里"
 
 
-def test_build_per_product_context_no_match_returns_none_brief() -> None:
-    from cca.agents.collector import _build_per_product_context
+def testbuild_collect_context_no_match_returns_none_brief() -> None:
+    from cca.agents.collector import build_collect_context
 
     state = _empty_state(exploration_result={"initial_profiles": []})
-    ctx = _build_per_product_context(state, "未知产品")
+    ctx = build_collect_context(state, "未知产品")
     assert ctx["product_brief"] is None

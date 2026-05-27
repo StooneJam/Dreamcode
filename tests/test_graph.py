@@ -4,11 +4,11 @@ from __future__ import annotations
 import pytest
 
 from cca.graph import (
-    NODE_COLLECT,
+    NODE_COLLECT_PRODUCT,
     NODE_EXPLORATION,
     NODE_HANDLE_SIGNAL,
     NODE_INITIAL_BRIEF,
-    NODE_INSIGHT,
+    NODE_INSIGHT_PRODUCT,
     NODE_REPORT,
     NODE_REPORT_TASK,
     NODE_TASK_PLAN,
@@ -21,12 +21,11 @@ def test_graph_compiles_with_report() -> None:
     """include_report=True 默认路径，所有 8 个节点都在。"""
     graph = build_graph()
     nodes = set(graph.get_graph().nodes)
-    # 8 节点 + START + END 标记
     assert NODE_INITIAL_BRIEF in nodes
     assert NODE_EXPLORATION in nodes
     assert NODE_TASK_PLAN in nodes
-    assert NODE_COLLECT in nodes
-    assert NODE_INSIGHT in nodes
+    assert NODE_COLLECT_PRODUCT in nodes
+    assert NODE_INSIGHT_PRODUCT in nodes
     assert NODE_REPORT_TASK in nodes
     assert NODE_REPORT in nodes
     assert NODE_HANDLE_SIGNAL in nodes
@@ -59,10 +58,11 @@ def test_empty_state_user_files_optional() -> None:
     assert s2["user_files"] == ["a.md"]
 
 
-def test_graph_edges_sequential_path() -> None:
-    """主路径：START → initial_brief → exploration → task_plan → collect → insight → report_task → report → END。
+def test_graph_edges_fanout_path() -> None:
+    """主路径：START → initial_brief → exploration → task_plan → [fanout] → report_task → report → END。
 
-    handle_signal 不在主线边里（保留供外部 caller 调用）。
+    task_plan 后由 conditional_edges dispatcher 派发 Send 至 collect_product / insight_product；
+    worker 完成后汇入 report_task。handle_signal 不在主线边里。
     """
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
@@ -71,9 +71,8 @@ def test_graph_edges_sequential_path() -> None:
         ("__start__", NODE_INITIAL_BRIEF),
         (NODE_INITIAL_BRIEF, NODE_EXPLORATION),
         (NODE_EXPLORATION, NODE_TASK_PLAN),
-        (NODE_TASK_PLAN, NODE_COLLECT),
-        (NODE_COLLECT, NODE_INSIGHT),
-        (NODE_INSIGHT, NODE_REPORT_TASK),
+        (NODE_COLLECT_PRODUCT, NODE_REPORT_TASK),
+        (NODE_INSIGHT_PRODUCT, NODE_REPORT_TASK),
         (NODE_REPORT_TASK, NODE_REPORT),
         (NODE_REPORT, "__end__"),
     ]
@@ -90,4 +89,4 @@ def test_graph_no_report_edge_to_end() -> None:
 
 @pytest.mark.skip(reason="需要真 LLM；用 demo 脚本配 dry-run 覆盖端到端")
 def test_graph_invoke_dry_run() -> None:
-    """端到端 invoke 覆盖见 scripts/run_pm_demo.py --dry-run。"""
+    """端到端 invoke 覆盖见 scripts/demo/runner.py（图模式）或 scripts/demo/dry_run.py（mock）。"""

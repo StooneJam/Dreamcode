@@ -233,7 +233,7 @@ def collect_one_product(task: CollectTask, context: dict) -> dict:
     }
 
 
-def _build_per_product_context(state: CCAState, product_name: str) -> dict:
+def build_collect_context(state: CCAState, product_name: str) -> dict:
     """抽出跑单产品所需的最小 state 切片。"""
     exploration = state.get("exploration_result") or {}
     brief = next(
@@ -250,8 +250,7 @@ def _build_per_product_context(state: CCAState, product_name: str) -> dict:
 def collect_node(state: CCAState) -> dict:
     """Phase 2 顺序版：遍历 task_plan.collect_tasks 逐个调 collect_one_product。
 
-    LangGraph 接入后可替换为 Send fanout 并行版本——collect_one_product 签名
-    已设计为 task + context 切片，无需依赖完整 CCAState。
+    保留供外部 caller 单步调用；主图已迁至 Send fanout（见 graph.py dispatch_collect_insight）。
     """
     raw_tasks = (state.get("task_plan") or {}).get("collect_tasks", [])
     if not raw_tasks:
@@ -265,7 +264,7 @@ def collect_node(state: CCAState) -> dict:
     audit_acc: list[dict] = []
     for raw in raw_tasks:
         task = CollectTask(**raw) if isinstance(raw, dict) else raw
-        ctx = _build_per_product_context(state, task.product_name)
+        ctx = build_collect_context(state, task.product_name)
         partial = collect_one_product(task, ctx)
         for name, profile in (partial.get("profiles") or {}).items():
             profiles_acc[name] = profile
