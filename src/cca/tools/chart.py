@@ -2,9 +2,15 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from langchain_core.tools import tool
+
+# Windows：numpy/torch 带入 Intel OpenMP (libiomp5md.dll)，matplotlib 带入 LLVM OpenMP
+# (libomp.dll)，两者在同一进程内均初始化会导致 OMP Error #15 / exit code 3。
+# setdefault 仅在未设置时写入，不覆盖用户的显式配置。
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 _CHART_DIR = Path("output/charts")
 _PALETTE = ["#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#44BBA4", "#E94F37", "#5C4B8A"]
