@@ -7,7 +7,9 @@ mock 喂入；通过下面参数逐步换成真节点：
     --seed-file PATH    让 PM phase 1 消化用户上传文档（D-032 修订版路径）
     --live-explore      真调 Collector exploration_node（phase 1 联网粗探索）
     --live-collect      真调 Collector collect_node（phase 2 单产品深采集，per-product ReAct）
-                        Insight/Analyst 字段仍走 overlay mock 兜底（未实现）
+                        Analyst 字段仍走 overlay mock 兜底（未实现）
+    --live-insight      真调 Insight insight_node（情感分析，写入 profiles.sentiment）
+                        SWOT(Analyst) 仍走 overlay mock 兜底（未实现）
 
 Usage:
     env:PYTHONPATH="src"; $env:PYTHONIOENCODING="utf-8"    防止中文乱码
@@ -18,6 +20,8 @@ Usage:
     python scripts/run_pm_demo.py --seed-file docs/market.md   # PM phase 1 消化用户文档
     python scripts/run_pm_demo.py --live-explore               # 真跑 Collector phase 1
     python scripts/run_pm_demo.py --live-explore --live-collect --skip-report   # 完整 Collector 端到端
+    python scripts/run_pm_demo.py --live-collect --live-insight --skip-report  # Collector + Insight 联调
+    python scripts/run_pm_demo.py --dry-run --live-insight     # dry-run 含 Insight mock 验证 plumbing
 """
 from __future__ import annotations
 
@@ -625,6 +629,28 @@ def _build_dry_run_debate_clients(scenario: DebateScenario) -> dict[str, _FakeFa
     }
 
 
+def _build_dry_run_insight_messages(competitor_names: list[str]) -> list[Any]:
+    """模拟 Insight ReAct 的 messages：每个竞品一条 finalize_sentiment ToolMessage。"""
+    from langchain_core.messages import AIMessage, ToolMessage
+    from cca.schema import UserSentiment
+
+    msgs: list[Any] = []
+    for name in competitor_names:
+        sentiment = UserSentiment(
+            appstore_cn_rating=4.0,
+            appstore_cn_review_count=10000,
+            positive_themes=["界面简洁", "功能完善"],
+            negative_themes=["偶发卡顿"],
+        )
+        content = json.dumps(
+            {"product_name": name, "sentiment": sentiment.model_dump()},
+            ensure_ascii=False,
+        )
+        msgs.append(AIMessage(content=f"（dry-run mock）{name} 情感分析完成"))
+        msgs.append(ToolMessage(content=content, tool_call_id="dry-run", name="finalize_sentiment"))
+    return msgs
+
+
 def _build_dry_run_collector_messages() -> list[Any]:
     """模拟 Collector ReAct 跑完后的 messages 链：仅一条 finalize_exploration ToolMessage 足够。
 
@@ -656,11 +682,13 @@ def _patch_for_dry_run(
     with_seed: bool,
     live_explore: bool,
     live_collect: bool,
+    live_insight: bool,
 ) -> None:
-    """把 PM / debate skill / (可选) Collector 的 LLM 入口替换为 fake。
+    """把 PM / debate skill / (可选) Collector / Insight 的 LLM 入口替换为 fake。
 
-    live_explore: 替换 phase 1 exploration_node 内部的 ReAct
-    live_collect: 替换 phase 2 collect_node 调用的 collect_one_product
+    live_explore:  替换 phase 1 exploration_node 内部的 ReAct
+    live_collect:  替换 phase 2 collect_node 调用的 collect_one_product
+    live_insight:  替换 insight_node 内部的 create_react_agent
     """
     import cca.agents.pm as pm_mod
     import cca.skills.debate as debate_mod
@@ -688,6 +716,21 @@ def _patch_for_dry_run(
 
         collector_mod.collect_one_product = _fake_collect_one_product  # type: ignore[assignment]
 
+    if live_insight:
+        # insight_node: mock create_react_agent，返回覆盖 task_plan 竞品的 finalize_sentiment
+        # 竞品名取 dry-run task_plan 的全量（含 debate 前的腾讯会议），
+        # insight_node 内部会按 profiles 过滤，多余的自动忽略。
+        from unittest.mock import MagicMock
+
+        import cca.agents.insight as insight_mod
+
+        _dry_insight_names = ["钉钉", "企业微信", "腾讯会议"]
+        mock_insight_agent = MagicMock()
+        mock_insight_agent.invoke.return_value = {
+            "messages": _build_dry_run_insight_messages(_dry_insight_names)
+        }
+        insight_mod.create_react_agent = lambda **_kw: mock_insight_agent  # type: ignore[assignment]
+
 
 # ── 主流程 ──────────────────────────────────────────────────────────────
 
@@ -699,6 +742,7 @@ def run_demo(
     seed_file: str | None,
     live_explore: bool,
     live_collect: bool,
+    live_insight: bool,
 ) -> None:
     if dry_run:
         _patch_for_dry_run(
@@ -706,12 +750,15 @@ def run_demo(
             with_seed=seed_file is not None,
             live_explore=live_explore,
             live_collect=live_collect,
+            live_insight=live_insight,
         )
         live_tags = []
         if live_explore:
             live_tags.append("phase1 exploration")
         if live_collect:
             live_tags.append("phase2 collect")
+        if live_insight:
+            live_tags.append("insight")
         suffix = f" (含 {' + '.join(live_tags)})" if live_tags else ""
         print(f"[dry-run] LLM 调用已 mock{suffix}\n")
 
@@ -837,17 +884,45 @@ def run_demo(
                 _sub(f"申请换产品的信号 × {len(replacement_sigs)}")
                 for s in replacement_sigs:
                     print(f"    · {s['payload']['claim']}")
-        # Insight / Analyst 还没实现，用 mock 补齐 sentiment + swot 让 phase 3/4 跑下去
-        state["profiles"] = {
-            name: _overlay_insight_swot(p, name) for name, p in state["profiles"].items()
-        }
         state["review_state"] = _mock_review_state()
-        print(f"  (post-collect overlay) profiles 现已含 Insight/Analyst mock 字段")
     else:
-        # 没跑 live phase 2 → 走旧路径，注入完整 mock profiles
+        # 没跑 live phase 2 → 注入完整 mock profiles（含 sentiment + swot）
         state["profiles"] = _mock_profiles_for_phase_3_4()
         state["review_state"] = _mock_review_state()
         state["competitor_names"] = ["钉钉", "企业微信"]  # 与 mock profiles 对齐
+
+    # ── INSIGHT (可选) ──
+    if live_insight:
+        _hr("INSIGHT · insight_node (live)")
+        from cca.agents.insight import insight_node
+        from cca.state import _merge_profiles as _mp
+
+        out = insight_node(state)
+        # profiles 必须用 _merge_profiles reducer 合并，不能走 _merge 覆盖
+        # （insight 只返回 {name: {"sentiment": ...}} 增量，不含 Collector 字段）
+        profiles_patch = out.get("profiles", {})
+        non_profile = {k: v for k, v in out.items() if k != "profiles"}
+        state["profiles"] = _mp(state.get("profiles", {}), profiles_patch)
+        state = _merge(state, non_profile)
+
+        _sub(f"情感分析完成 × {len(profiles_patch)}")
+        for name, patch in profiles_patch.items():
+            rating = (patch.get("sentiment") or {}).get("appstore_cn_rating")
+            print(f"    · {name}: appstore_cn_rating={rating}")
+        new_sigs = non_profile.get("agent_signals", [])
+        if new_sigs:
+            print(f"    signals: {len(new_sigs)} 条")
+
+    # ── overlay mock 填补缺失字段（SWOT 仍走 mock；Analyst 未实现）──
+    # _overlay_insight_swot 内部检查字段是否已存在，live 节点产出的字段不会被覆盖
+    if live_collect or live_insight:
+        state["profiles"] = {
+            name: _overlay_insight_swot(p, name) for name, p in state["profiles"].items()
+        }
+        if live_insight:
+            print("  (overlay) Analyst(SWOT) mock 字段已补入")
+        else:
+            print("  (post-collect overlay) profiles 现已含 Insight/Analyst mock 字段")
 
     # ── PHASE 3 ──
     _hr("PHASE 3 · AnalystTask")
@@ -921,7 +996,13 @@ def main() -> None:
         "--live-collect",
         action="store_true",
         help="PM phase 2 之后真调 Collector collect_node (phase 2 per-product 深采集)，"
-             "不走 _mock_profiles_for_phase_3_4。Insight/Analyst 字段仍 mock 补齐",
+             "不走 _mock_profiles_for_phase_3_4。Analyst 字段仍 mock 补齐",
+    )
+    p.add_argument(
+        "--live-insight",
+        action="store_true",
+        help="Collector phase 2 之后真调 Insight insight_node（情感分析），"
+             "向 profiles 写入真实 sentiment；SWOT(Analyst) 仍 mock 补齐",
     )
     args = p.parse_args()
 
@@ -933,6 +1014,7 @@ def main() -> None:
             seed_file=args.seed_file,
             live_explore=args.live_explore,
             live_collect=args.live_collect,
+            live_insight=args.live_insight,
         )
     except KeyboardInterrupt:
         print("\n[中断]")
