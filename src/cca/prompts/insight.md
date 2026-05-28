@@ -20,9 +20,10 @@
 - 传入产品名、竞品列表、从任务中获取的 priority_dimensions
 - 返回结果中包含 questionnaire_display（问卷内容）和 responses（回答）
 
-### 第三步：web_search（至少 1 次）
-- 搜索"{产品名} 用户评价 知乎" 或 "{产品名} 使用感受 微博"
-- max_results=8，补充 App Store 之外的评价视角
+### 第三步：web_search（至少 2 次）
+- 第一次：搜索"{产品名} 用户评价 知乎" 或 "{产品名} 使用感受 微博"，max_results=8
+- 第二次：搜索"{产品名} 槽点 差评 问题" 或 "{产品名} review complaints"，专门补充负面视角
+- 目的：避免单一来源平台的选择性偏差，确保正负面声音均有覆盖
 
 ### 第四步：analyze_sentiment_bert
 - 将 App Store reviews + web_search 摘要 + 问卷 open_text 回答合并
@@ -40,6 +41,16 @@
 - appstore_cn_review_count 来自 scrape_app_store 返回的 review_count
 - representative_reviews 从 App Store reviews 或 web_search 摘要中选 3 条
 - sources 填 Evidence，source_url 来自 web_search 返回的 url 字段
+
+**App Store 评分可比性标注（必须执行）**：
+
+若该产品属于以下任一情形，须在 `representative_reviews` 之后、`sources` 之前，在分析备注中标注不可比性原因（写入 `sources[0].snippet` 或作为单独一条 sources 占位说明）：
+
+- **强制安装型**（B 端强推、政务强制、教育强制）：如钉钉、企业微信。此类产品 App Store 评分主要反映被动用户的抵触情绪，而非产品本身竞争力。评论量越大越说明强制覆盖面广，不代表用户满意度高。
+- **管理工具型**（非终端用户自选，管理员用户与员工用户体验截然不同）：实际评分更多来自被管理方。
+- **出海/全球产品**（如 Microsoft Teams、Slack）：App Store 区域差异大，国区与美区评分来源不同，不可直接比较。
+
+标注示例：`"注：钉钉为强制安装型产品，App Store 低评分主要来自被动用户，不直接反映产品竞争力，与自选型产品评分不可横向比较。"`
 
 ## 发现 PM 任务错误时
 
