@@ -158,6 +158,22 @@ class TestRenderChart:
             })
         assert (tmp_path / "test_pie.png").exists()
 
+    def test_dual_axis_bar_creates_png(self, tmp_path):
+        with patch("cca.tools.chart._CHART_DIR", tmp_path):
+            from cca.tools.chart import render_chart
+            result = render_chart.invoke({
+                "chart_type": "dual_axis_bar",
+                "title": "评论量与评分对比",
+                "data_json": json.dumps({
+                    "labels": ["飞书", "钉钉", "企业微信"],
+                    "left": {"name": "评论量（条）", "values": [85000, 210000, 95000]},
+                    "right": {"name": "App Store 评分", "values": [4.6, 4.4, 4.2]},
+                }),
+                "filename": "test_dual_axis",
+            })
+        assert (tmp_path / "test_dual_axis.png").exists()
+        assert "![评论量与评分对比]" in result
+
 
 class TestRenderPdf:
     def test_creates_output_file(self, tmp_path):

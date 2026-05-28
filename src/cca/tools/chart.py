@@ -56,6 +56,7 @@ def _render_chart_impl(chart_type: str, title: str, data_json: str, filename: st
         "bar": _bar,
         "horizontal_bar": _horizontal_bar,
         "grouped_bar": _grouped_bar,
+        "dual_axis_bar": _dual_axis_bar,
         "line": _line,
         "area": _area,
         "pie": _pie,
@@ -73,6 +74,7 @@ def render_chart(chart_type: str, title: str, data_json: str, filename: str) -> 
     - "bar"            单系列垂直柱状图
     - "horizontal_bar" 水平柱状图，适合标签较长的对比
     - "grouped_bar"    多系列分组柱状图，适合多产品多维度横向对比
+    - "dual_axis_bar"  双轴柱状图，左轴大量级（如评论量），右轴小量级（如评分）
     - "line"           折线图，适合趋势展示
     - "area"           面积图，适合趋势+量级对比
     - "pie"            饼图，适合市场占比展示
@@ -84,6 +86,10 @@ def render_chart(chart_type: str, title: str, data_json: str, filename: str) -> 
     - grouped_bar:
       {"labels": ["功能","定价","易用性"],
        "series": {"钉钉": [4,3,4], "企业微信": [3,5,4]}}
+    - dual_axis_bar:
+      {"labels": ["飞书","钉钉","企业微信"],
+       "left":  {"name": "评论量（条）", "values": [85000, 210000, 95000]},
+       "right": {"name": "App Store 评分", "values": [4.6, 4.4, 4.2]}}
     - radar:
       {"labels": ["功能","生态","定价","易用","稳定"],
        "series": {"钉钉": [4,5,3,4,4], "企业微信": [3,4,5,4,3]},
@@ -233,6 +239,53 @@ def _pie(title: str, data: dict) -> "plt.Figure":
         t.set_fontsize(10)
         t.set_fontweight("bold")
     ax.set_title(title, pad=20)
+    plt.tight_layout()
+    return fig
+
+
+def _dual_axis_bar(title: str, data: dict) -> "plt.Figure":
+    """左轴柱状（大量级），右轴折线+点（小量级）。"""
+    import numpy as np
+    import matplotlib.pyplot as plt
+    labels: list[str] = data["labels"]
+    left: dict = data["left"]
+    right: dict = data["right"]
+    x = np.arange(len(labels))
+    width = 0.5
+
+    fig, ax1 = plt.subplots(figsize=(max(7, len(labels) * 1.8), 5))
+    ax2 = ax1.twinx()
+
+    bars = ax1.bar(x, left["values"], width, color=_PALETTE[0],
+                   edgecolor="white", linewidth=1.5, label=left["name"], alpha=0.85)
+    ax1.bar_label(bars, fmt="%.3g", padding=5, fontsize=9, fontweight="bold")
+    ax1.set_ylabel(left["name"], color=_PALETTE[0], fontsize=11)
+    ax1.tick_params(axis="y", labelcolor=_PALETTE[0])
+    ax1.set_ylim(0, max(left["values"]) * 1.3)
+    ax1.spines["top"].set_visible(False)
+
+    line = ax2.plot(x, right["values"], color=_PALETTE[1], marker="o",
+                    linewidth=2.5, markersize=8, label=right["name"], zorder=5)
+    for xi, yi in zip(x, right["values"]):
+        ax2.annotate(f"{yi:.2g}", (xi, yi), textcoords="offset points",
+                     xytext=(0, 10), ha="center", fontsize=9, fontweight="bold",
+                     color=_PALETTE[1])
+    ax2.set_ylabel(right["name"], color=_PALETTE[1], fontsize=11)
+    ax2.tick_params(axis="y", labelcolor=_PALETTE[1])
+    rmin = min(right["values"])
+    rmax = max(right["values"])
+    margin = (rmax - rmin) * 0.5 or 0.5
+    ax2.set_ylim(max(0, rmin - margin), rmax + margin)
+    ax2.spines["top"].set_visible(False)
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels, fontsize=11)
+    ax1.set_title(title)
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", framealpha=0.9)
+
     plt.tight_layout()
     return fig
 
