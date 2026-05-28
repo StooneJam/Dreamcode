@@ -50,13 +50,21 @@ def _make_doubao(temperature: float) -> ChatOpenAI:
     )
 
 
+# Report Agent 专用 GPT-5 客户端，不受 dev override 影响。
+# Reporter 是最终输出环节，工具调用遵从性要求高，始终走 GPT-5。
+report_llm = ChatOpenAI(
+    model=os.getenv("OPENAI_MODEL", "gpt-5"),
+    api_key=os.getenv("OPENAI_API_KEY"),
+    timeout=_GPT_TIMEOUT,
+    temperature=0.2,
+    max_retries=_MAX_RETRIES,
+)
+
 if _DEV_OVERRIDE == "doubao":
-    # 开发期统一走豆包：业务代码看到的还是 gpt / deepseek / doubao 三个变量，
-    # 但底层都是 Doubao 客户端。temperature 保留各家族原本的设定意图：
-    #   gpt 位 0.2（规划偏稳）/ deepseek 位 0.3（ReAct 标准低端）/ doubao 位 0.2（仲裁）
+    # 开发期 PM / Collector / Insight 走豆包，Reporter 单独走 GPT-5（见 report_llm）。
     print(
-        "[factory] DEV OVERRIDE active: 所有 agent 走 Doubao；"
-        "流程稳定后 unset CCA_DEV_MODEL_OVERRIDE 切回三家族原配置。",
+        "[factory] DEV OVERRIDE active: PM/Collector/Insight 走 Doubao，"
+        "Reporter 保持 GPT-5；流程稳定后 unset CCA_DEV_MODEL_OVERRIDE 切回原配置。",
         flush=True,
     )
     gpt = _make_doubao(temperature=0.2)

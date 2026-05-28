@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from cca.agents._streaming import stream_react
-from cca.llm.factory import gpt
+from cca.llm.factory import report_llm
 from cca.schema import AgentSignal, ChallengePayload, QAResult, ReportTask, ReviewUnit
 from cca.skills.call_report_reviewer import call_report_reviewer
 from cca.state import CCAState
@@ -163,12 +163,18 @@ def _build_initial_message(
 
 
 def _extract_final_md(messages: list) -> str:
-    """从最后一次 render_pdf tool_call 的参数取 markdown_content。"""
+    """从最后一次 render_pdf tool_call 的参数取 markdown_content。
+    LLM 未调 render_pdf 时，fallback 取最后一条以 # 开头的 AIMessage 文本。"""
     for msg in reversed(messages):
         if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
             for tc in msg.tool_calls:
                 if tc["name"] == "render_pdf":
                     return tc["args"].get("markdown_content", "")
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            text = (msg.content or "").strip()
+            if text.startswith("#"):
+                return text
     return ""
 
 
@@ -252,7 +258,7 @@ def report_node(state: CCAState) -> dict:
         return signal.model_dump_json()
 
     agent = create_react_agent(
-        model=gpt,
+        model=report_llm,
         tools=[
             submit_dimension_ranking, finalize_swot,
             render_chart, render_bar_chart, render_pdf,
@@ -274,7 +280,18 @@ def report_node(state: CCAState) -> dict:
     )
     reviewer_result = _extract_reviewer_result(messages)
     pdf_path = _extract_pdf_path(messages)
+    report_md = _extract_final_md(messages)
     signals = _extract_agent_signals(messages)
+
+    # LLM 未调 render_pdf（Doubao dev override 常见）时，Python 侧兜底渲染
+    if report_md and not pdf_path:
+        from cca.tools.pdf_renderer import _reportlab_pdf, _try_weasyprint
+        _out = Path("output")
+        _out.mkdir(parents=True, exist_ok=True)
+        _pdf = _out / f"report_{report_task.target_product}.pdf"
+        if not _try_weasyprint(report_md, _pdf):
+            _reportlab_pdf(report_md, _pdf)
+        pdf_path = str(_pdf)
 
     if not report_task.invoke_call_report_reviewer:
         report_status = "unreviewed"
@@ -282,7 +299,7 @@ def report_node(state: CCAState) -> dict:
         report_status = "passed" if reviewer_result.passed else "failed"
 
     return {
-        "report_md": _extract_final_md(messages),
+        "report_md": report_md,
         "report_pdf_path": pdf_path,
         "report_status": report_status,
         "qa_results": [reviewer_result.model_dump()],
