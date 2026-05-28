@@ -259,7 +259,7 @@ def _dual_axis_bar(title: str, data: dict) -> "plt.Figure":
     ax2.set_facecolor("none")
     ax2.grid(False)
 
-    left_vals = left["values"]
+    left_vals = [v if v is not None else 0 for v in left["values"]]
     bars = ax1.bar(x, left_vals, width, color=_PALETTE[0],
                    edgecolor="white", linewidth=1.5, label=left["name"], alpha=0.85)
     # Show full integer without scientific notation
@@ -267,19 +267,20 @@ def _dual_axis_bar(title: str, data: dict) -> "plt.Figure":
     ax1.bar_label(bars, labels=bar_labels, padding=5, fontsize=9, fontweight="bold")
     ax1.set_ylabel(left["name"], color=_PALETTE[0], fontsize=11)
     ax1.tick_params(axis="y", labelcolor=_PALETTE[0])
-    ax1.set_ylim(0, max(left_vals) * 1.3)
+    ax1.set_ylim(0, (max(left_vals) or 1) * 1.3)
     ax1.spines["top"].set_visible(False)
 
-    ax2.plot(x, right["values"], color=_PALETTE[1], marker="o",
+    right_vals = [v if v is not None else 0 for v in right["values"]]
+    ax2.plot(x, right_vals, color=_PALETTE[1], marker="o",
              linewidth=2.5, markersize=8, label=right["name"], zorder=5)
-    for xi, yi in zip(x, right["values"]):
+    for xi, yi in zip(x, right_vals):
         ax2.annotate(f"{yi:.2g}", (xi, yi), textcoords="offset points",
                      xytext=(0, 10), ha="center", fontsize=9, fontweight="bold",
                      color=_PALETTE[1])
     ax2.set_ylabel(right["name"], color=_PALETTE[1], fontsize=11)
     ax2.tick_params(axis="y", labelcolor=_PALETTE[1])
-    rmin = min(right["values"])
-    rmax = max(right["values"])
+    rmin = min(right_vals)
+    rmax = max(right_vals)
     margin = (rmax - rmin) * 0.5 or 0.5
     ax2.set_ylim(max(0, rmin - margin), rmax + margin)
     ax2.spines["top"].set_visible(False)
