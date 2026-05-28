@@ -255,17 +255,23 @@ def _dual_axis_bar(title: str, data: dict) -> "plt.Figure":
 
     fig, ax1 = plt.subplots(figsize=(max(7, len(labels) * 1.8), 5))
     ax2 = ax1.twinx()
+    # ax2 is transparent so ax1's background shows through without double-grid strips
+    ax2.set_facecolor("none")
+    ax2.grid(False)
 
-    bars = ax1.bar(x, left["values"], width, color=_PALETTE[0],
+    left_vals = left["values"]
+    bars = ax1.bar(x, left_vals, width, color=_PALETTE[0],
                    edgecolor="white", linewidth=1.5, label=left["name"], alpha=0.85)
-    ax1.bar_label(bars, fmt="%.3g", padding=5, fontsize=9, fontweight="bold")
+    # Show full integer without scientific notation
+    bar_labels = [f"{int(round(v))}" for v in left_vals]
+    ax1.bar_label(bars, labels=bar_labels, padding=5, fontsize=9, fontweight="bold")
     ax1.set_ylabel(left["name"], color=_PALETTE[0], fontsize=11)
     ax1.tick_params(axis="y", labelcolor=_PALETTE[0])
-    ax1.set_ylim(0, max(left["values"]) * 1.3)
+    ax1.set_ylim(0, max(left_vals) * 1.3)
     ax1.spines["top"].set_visible(False)
 
-    line = ax2.plot(x, right["values"], color=_PALETTE[1], marker="o",
-                    linewidth=2.5, markersize=8, label=right["name"], zorder=5)
+    ax2.plot(x, right["values"], color=_PALETTE[1], marker="o",
+             linewidth=2.5, markersize=8, label=right["name"], zorder=5)
     for xi, yi in zip(x, right["values"]):
         ax2.annotate(f"{yi:.2g}", (xi, yi), textcoords="offset points",
                      xytext=(0, 10), ha="center", fontsize=9, fontweight="bold",
@@ -297,10 +303,11 @@ def _radar(title: str, data: dict) -> "plt.Figure":
     series: dict[str, list[float]] = data["series"]
     max_val: float = float(data.get("max_value", 5))
     n = len(labels)
+    n_series = len(series)
     angles = np.linspace(0, 2 * np.pi, n, endpoint=False).tolist()
     angles += angles[:1]
 
-    fig, ax = plt.subplots(figsize=(7, 7), subplot_kw={"polar": True})
+    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={"polar": True})
     ax.set_facecolor("#f8f9fa")
     for i, (name, vals) in enumerate(series.items()):
         closed = list(vals) + [vals[0]]
@@ -310,12 +317,17 @@ def _radar(title: str, data: dict) -> "plt.Figure":
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(labels, fontsize=11)
+    # Push dimension labels outside the radar ring so they don't overlap the plot area
+    ax.tick_params(axis="x", pad=20)
     ax.set_ylim(0, max_val)
     ticks = np.linspace(0, max_val, 6)[1:]
     ax.set_yticks(ticks)
     ax.set_yticklabels([f"{v:.2g}" for v in ticks], fontsize=8)
     ax.grid(color="white", linewidth=1.5)
-    ax.set_title(title, pad=20)
-    ax.legend(loc="upper right", bbox_to_anchor=(1.35, 1.15), framealpha=0.9)
-    plt.tight_layout()
+    ax.set_title(title, pad=30)
+    # Place legend below the chart (fig-level) to avoid overlapping the polar area
+    handles, leg_labels = ax.get_legend_handles_labels()
+    fig.legend(handles, leg_labels, loc="lower center", ncol=n_series,
+               framealpha=0.9, fontsize=10, bbox_to_anchor=(0.5, 0.01))
+    plt.tight_layout(rect=[0, 0.1, 1, 1])
     return fig
