@@ -4,7 +4,7 @@ Agent 直接 import 模块常量；Debate skill 用 get_llm(family) 按家族动
 所有 agent / skill 必须通过这里取 LLM，不允许节点内 ChatOpenAI(...)。
 
 dev override（`CCA_DEV_MODEL_OVERRIDE=doubao`）：
-    开发期豆包 API 可报销时，把 gpt / deepseek / doubao 三个客户端全部指向豆包。
+    开发期豆包 API 可报销时，把全部客户端（含 report_llm）指向豆包。
     业务代码零改动；副作用：跨家族 debate 退化为同家族自审（bias 隔离失效，开发期可忍）。
     流程稳定后 unset 即可切回 GPT-5 + DeepSeek + Doubao 三家族原配置。
 """
@@ -50,27 +50,26 @@ def _make_doubao(temperature: float) -> ChatOpenAI:
     )
 
 
-# Report Agent 专用 GPT-5 客户端，不受 dev override 影响。
-# Reporter 是最终输出环节，工具调用遵从性要求高，始终走 GPT-5。
-report_llm = ChatOpenAI(
-    model=os.getenv("OPENAI_MODEL", "gpt-5"),
-    api_key=os.getenv("OPENAI_API_KEY"),
-    timeout=_GPT_TIMEOUT,
-    temperature=0.2,
-    max_retries=_MAX_RETRIES,
-)
-
 if _DEV_OVERRIDE == "doubao":
-    # 开发期 PM / Collector / Insight 走豆包，Reporter 单独走 GPT-5（见 report_llm）。
+    # 开发期全部走豆包，含 Reporter。
     print(
-        "[factory] DEV OVERRIDE active: PM/Collector/Insight 走 Doubao，"
-        "Reporter 保持 GPT-5；流程稳定后 unset CCA_DEV_MODEL_OVERRIDE 切回原配置。",
+        "[factory] DEV OVERRIDE active: 全部 LLM 走 Doubao；"
+        "流程稳定后 unset CCA_DEV_MODEL_OVERRIDE 切回原配置。",
         flush=True,
     )
     gpt = _make_doubao(temperature=0.2)
     deepseek = _make_doubao(temperature=0.3)
     doubao = _make_doubao(temperature=0.2)
+    report_llm = _make_doubao(temperature=0.2)
 else:
+    # Report Agent 专用 GPT-5 客户端。
+    report_llm = ChatOpenAI(
+        model=os.getenv("OPENAI_MODEL", "gpt-5"),
+        api_key=os.getenv("OPENAI_API_KEY"),
+        timeout=_GPT_TIMEOUT,
+        temperature=0.2,
+        max_retries=_MAX_RETRIES,
+    )
     # GPT-5 —— PM Agent / Report Agent / debate 辩方
     # temperature=0.2：稍偏低保证规划稳定性，同时保留 PM 在竞品选择 / 维度优先级 /
     # 章节组织等判断点上的灵活度。D-039 撤回原 temperature=0（扼杀分析创造性）。
