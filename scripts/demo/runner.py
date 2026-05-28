@@ -17,6 +17,9 @@ Usage:
     python scripts/demo/runner.py --live-explore --live-collect --live-insight
     python scripts/demo/runner.py --debate accept
     python scripts/demo/runner.py --debate reject --seed-file docs/课题介绍.pdf
+
+    # 真 LLM debate（DeepSeek vs GPT-5 + Doubao 仲裁）
+    python scripts/demo/runner.py --debate reject --live-debate --cache write
 """
 from __future__ import annotations
 
@@ -308,14 +311,18 @@ def _dry_debate_clients(scenario: DebateScenario) -> dict[str, _FakeLLM]:
 
 def _patch_llms_for_dry(
     scenario: DebateScenario, with_seed: bool, *,
-    live_explore: bool, live_insight: bool,
+    live_explore: bool, live_insight: bool, live_debate: bool = False,
 ) -> None:
-    """把 PM / debate / Collector / Insight 的 LLM 入口替换为 fake。"""
+    """把 PM / debate / Collector / Insight 的 LLM 入口替换为 fake。
+
+    live_debate=True 时 PM 和 debate 不 patch，走真 LLM。
+    """
     import cca.agents.pm as pm_mod
     import cca.skills.debate as debate_mod
 
-    pm_mod.gpt = _FakeLLM(_dry_pm_responses(with_seed))  # type: ignore[assignment]
-    debate_mod.get_llm = lambda family: _dry_debate_clients(scenario)[family]  # type: ignore[assignment]
+    if not live_debate:
+        pm_mod.gpt = _FakeLLM(_dry_pm_responses(with_seed))  # type: ignore[assignment]
+        debate_mod.get_llm = lambda family: _dry_debate_clients(scenario)[family]  # type: ignore[assignment]
 
     if live_explore:
         _patch_collector_react()
@@ -366,8 +373,18 @@ def _run_graph(args: argparse.Namespace) -> None:
     hr(f"RUNNER · graph mode (cache={args.cache})")
     result = graph.invoke(state, config={"recursion_limit": 30})
 
+    if result.get("exploration_result"):
+        dump_json("exploration_result", result["exploration_result"])
+    if result.get("task_plan"):
+        dump_json("task_plan", result["task_plan"])
+    if result.get("profiles"):
+        # Collector 写 dimensions/pricing/sources/website；Insight 写 sentiment —— 一并 dump
+        dump_json("profiles", result["profiles"])
     if result.get("report_task"):
         dump_json("report_task", result["report_task"])
+    if result.get("audit_log"):
+        # 节点级事件审计，诊断 insight/finalize_sentiment 等中间步骤
+        dump_json("audit_log", result["audit_log"])
     show_decisions(result.get("decision_log") or [])
     summary(result)
 
@@ -388,7 +405,8 @@ def _run_manual(args: argparse.Namespace) -> None:
     if dry and not has_debate:
         # 纯 dry-run：全 mock，走图 plumbing 验证
         _patch_llms_for_dry(args.debate, with_seed=args.seed_file is not None,
-                            live_explore=args.live_explore, live_insight=args.live_insight)
+                            live_explore=args.live_explore, live_insight=args.live_insight,
+                            live_debate=args.live_debate)
         graph = build_graph(include_report=not args.skip_report)
         state = empty_state(args.user_query, args.target_product, user_files=args.user_files)
         hr("RUNNER · dry-run (graph)")
@@ -397,10 +415,10 @@ def _run_manual(args: argparse.Namespace) -> None:
         summary(result)
         return
 
-    # 混合模式：dry-run 框架 mock 非 live 部分，live 阶段真跑
-    if not all([args.live_explore, args.live_collect, args.live_insight]):
-        _patch_llms_for_dry(args.debate, with_seed=args.seed_file is not None,
-                            live_explore=args.live_explore, live_insight=args.live_insight)
+    # 混合模式：mock 非 live 阶段，live 阶段真跑
+    _patch_llms_for_dry(args.debate, with_seed=args.seed_file is not None,
+                        live_explore=args.live_explore, live_insight=args.live_insight,
+                        live_debate=args.live_debate)
     if args.live_collect and not args.live_explore:
         _patch_collector_react()
 
@@ -571,6 +589,7 @@ def main() -> None:
     p.add_argument("--live-explore", action="store_true", help="真跑 Collector exploration")
     p.add_argument("--live-collect", action="store_true", help="真跑 Collector phase 2 深采集")
     p.add_argument("--live-insight", action="store_true", help="真跑 Insight 情感分析")
+    p.add_argument("--live-debate", action="store_true", help="真跑跨家族 debate（DeepSeek vs GPT-5 + Doubao 仲裁）")
     args = p.parse_args()
 
     args.user_files = [args.seed_file] if args.seed_file else None

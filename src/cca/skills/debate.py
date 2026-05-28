@@ -15,7 +15,16 @@ from typing import Literal, cast
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from cca.llm.factory import get_llm
+from cca.llm.factory import DEV_DOUBAO_OVERRIDE, get_llm
+
+
+def _struct_method() -> str:
+    """LLM 结构化输出方式按 dev override flag dispatch：
+    - Doubao override：function_calling（Doubao 不支持 response_format=json_object）
+    - 三家族原路径：json_mode（D-029 #3 自然命名 + parse 容错好）
+    切回三家族只需 unset CCA_DEV_MODEL_OVERRIDE，业务代码零改动。
+    """
+    return "function_calling" if DEV_DOUBAO_OVERRIDE else "json_mode"
 from cca.schema import (
     AgentFamily,
     DebatePosition,
@@ -74,7 +83,7 @@ class _Refinement(BaseModel):
 
 
 def _phase_critique(family: AgentFamily, mine: DebatePosition, other: DebatePosition) -> str:
-    llm = get_llm(family).with_structured_output(_Critique, method="json_mode")
+    llm = get_llm(family).with_structured_output(_Critique, method=_struct_method())
     sys = (
         f"你是 {family} 家族。请针对 {other.agent_family} 的观点写出批驳。"
         "聚焦事实：哪些 claim 不成立、哪些 evidence 太弱。每条批驳指向对方原文具体段落。"
@@ -88,7 +97,7 @@ def _phase_critique(family: AgentFamily, mine: DebatePosition, other: DebatePosi
 
 
 def _phase_refine(family: AgentFamily, mine: DebatePosition, critique: str) -> _Refinement:
-    llm = get_llm(family).with_structured_output(_Refinement, method="json_mode")
+    llm = get_llm(family).with_structured_output(_Refinement, method=_struct_method())
     sys = (
         f"你是 {family} 家族。基于对方批驳修订观点，三选一：(a) 维持原 claim + 加强 evidence "
         "(b) 部分修订 (c) 撤回接受批驳。说明选择和理由。"
@@ -106,7 +115,7 @@ def _phase_judge(
     judge: AgentFamily, target: DebateTarget, target_content: dict, rounds: list[DebateRound],
 ) -> DebateResult:
     """辩论未自然收敛 → 第三家族仲裁。judge / target / rounds 由代码强制覆盖。"""
-    llm = get_llm(judge).with_structured_output(DebateResult, method="json_mode")
+    llm = get_llm(judge).with_structured_output(DebateResult, method=_struct_method())
     sys = (
         f"你是 {judge} 家族的独立仲裁者。两辩方对 {target} 完成 {len(rounds)} 轮辩论。"
         "综合最后一轮 refinements 给出 final_verdict："
@@ -131,8 +140,40 @@ def _phase_finalize_converged(
 ) -> dict:
     """获胜方把共识结构化为修订版 target_content。
 
-    走裸 JSON + _repair_for_schema + Pydantic validate；with_structured_output 无法插 repair 步骤。
+    两条路径按 dev override 选择（不删旧路径，切回三家族时直接复用）：
+    - Doubao override：with_structured_output(function_calling) —— Doubao 不支持 json_object
+    - 三家族原路径：bind(response_format=json_object) + 手工 parse + _repair_for_schema
     """
+    if DEV_DOUBAO_OVERRIDE:
+        return _finalize_via_function_calling(winner_family, target, target_content, winning_refinement)
+    return _finalize_via_json_object(winner_family, target, target_content, winning_refinement)
+
+
+def _finalize_via_function_calling(
+    winner_family: AgentFamily, target: DebateTarget,
+    target_content: dict, winning_refinement: str,
+) -> dict:
+    """dev override 路径：function_calling 由 API 端强制 schema，无需手工 parse / repair。"""
+    schema = _REVISED_OUTPUT_SCHEMA[target]
+    sys = (
+        f"你的观点在辩论中被对方采纳。基于你的最终 refinement，"
+        f"产出修订版 {target} 的结构化对象（严格遵守 required 字段与 enum 取值）。"
+    )
+    user = json.dumps(
+        {"original": target_content, "winning_refinement": winning_refinement},
+        ensure_ascii=False,
+    )
+    llm = get_llm(winner_family).with_structured_output(schema, method="function_calling")
+    result = cast(BaseModel, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
+    return result.model_dump()
+
+
+def _finalize_via_json_object(
+    winner_family: AgentFamily, target: DebateTarget,
+    target_content: dict, winning_refinement: str,
+) -> dict:
+    """三家族原路径：裸 JSON + _repair_for_schema + Pydantic validate。
+    with_structured_output 无法插 repair 步骤，故走 bind(response_format)。"""
     schema = _REVISED_OUTPUT_SCHEMA[target]
     schema_json = json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=2)
     sys = (
@@ -140,7 +181,10 @@ def _phase_finalize_converged(
         f"严格遵守以下 JSON Schema（required 字段不可缺失，enum 必须逐字匹配）：\n"
         f"{schema_json}\n\n输出纯 JSON，不加 markdown 包裹。"
     )
-    user = json.dumps({"original": target_content, "winning_refinement": winning_refinement}, ensure_ascii=False)
+    user = json.dumps(
+        {"original": target_content, "winning_refinement": winning_refinement},
+        ensure_ascii=False,
+    )
     llm = get_llm(winner_family).bind(response_format={"type": "json_object"})
     raw = cast(AIMessage, llm.invoke([SystemMessage(content=sys), HumanMessage(content=user)]))
     raw_str = raw.content.strip()

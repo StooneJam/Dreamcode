@@ -202,15 +202,11 @@ def test_run_debate_converged_short_circuit(monkeypatch: pytest.MonkeyPatch) -> 
     assert "collect_tasks" in result.revised_output
 
 
-def test_phase_finalize_converged_dispatches_to_target_schema(
+def test_phase_finalize_converged_default_path_uses_json_object(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_phase_finalize_converged 必须按 target 选对应 schema 校验。
-
-    实际实现走 llm.bind(response_format={'type':'json_object'}) + 手动解 JSON +
-    _repair_for_schema + Pydantic validate，**不**走 with_structured_output。
-    target='report' 对应 ReportTask（已吸收原 AnalystTask 字段）。
-    """
+    """三家族默认路径：bind(response_format=json_object) + 手工 parse + _repair_for_schema。
+    target='report' 对应 ReportTask（已吸收原 AnalystTask 字段）。"""
     import json as _json
 
     from cca.skills.debate import _phase_finalize_converged
@@ -230,7 +226,34 @@ def test_phase_finalize_converged_dispatches_to_target_schema(
         def bind(self, **_kwargs):  # noqa: ANN003
             return _BoundFakeLLM()
 
+    monkeypatch.setattr(debate, "DEV_DOUBAO_OVERRIDE", False)
     monkeypatch.setattr(debate, "get_llm", lambda family: _CapturingClient())  # noqa: ARG005
+
+    out = _phase_finalize_converged(
+        winner_family="deepseek",
+        target="report",
+        target_content={"target_product": "飞书", "competitors": ["钉钉"]},
+        winning_refinement="改成 focus_dimensions = ['视频会议']",
+    )
+    assert out["target_product"] == "飞书"
+    assert out["focus_dimensions"] == ["视频会议"]
+
+
+def test_phase_finalize_converged_dev_override_uses_function_calling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """dev override 路径：with_structured_output(function_calling) —— 无 bind / 无手工 parse。"""
+    from cca.skills.debate import _phase_finalize_converged
+    from cca.schema import ReportTask
+
+    revised = ReportTask(
+        target_product="飞书",
+        competitors=["钉钉"],
+        focus_dimensions=["视频会议"],
+    )
+    client = _FakeLLMClient({ReportTask: [revised]})
+    monkeypatch.setattr(debate, "DEV_DOUBAO_OVERRIDE", True)
+    monkeypatch.setattr(debate, "get_llm", lambda family: client)  # noqa: ARG005
 
     out = _phase_finalize_converged(
         winner_family="deepseek",

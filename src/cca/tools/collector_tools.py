@@ -37,6 +37,8 @@ def _clean_profile(raw: dict) -> dict:
     3. pricing.tiers[].source 若 dict 且缺 source_url → 置 None
     4. sources[] 删除缺 source_url 的项
     5. sentiment.sources[] 同样清洗；sentiment.representative_reviews[].source 同 tier.source 处理
+    6. **自动从 dimensions/pricing 的 evidence 聚合 URL 补到 ProductProfile.sources** ——
+       LLM 经常漏填顶层 sources，工具兜底确保不为空（不依赖 LLM 自觉）。
     """
     for dim in raw.get("dimensions") or []:
         cleaned_facts = []
@@ -61,7 +63,37 @@ def _clean_profile(raw: dict) -> dict:
             if isinstance(rev.get("source"), dict) and not _valid_evidence(rev["source"]):
                 rev["source"] = None
 
+    _autofill_sources(raw)
     return raw
+
+
+def _autofill_sources(raw: dict) -> None:
+    """从 dimensions.facts.evidence 和 pricing.tiers.source 聚合 URL 到 raw['sources']。
+    去重 + 保留 LLM 已填的项。原地修改 raw。"""
+    existing_urls = {s["source_url"] for s in raw.get("sources") or [] if _valid_evidence(s)}
+    new_sources: list[dict] = list(raw.get("sources") or [])
+
+    def _try_add(ev: dict | None) -> None:
+        if not _valid_evidence(ev):
+            return
+        url = ev["source_url"]
+        if url in existing_urls:
+            return
+        existing_urls.add(url)
+        # 顶层 sources 不重复存 snippet（dimension 内已经带了），保留 url + fetched_at
+        entry: dict = {"source_url": url, "snippet": None}
+        if fetched_at := ev.get("fetched_at"):
+            entry["fetched_at"] = fetched_at  # 否则 Pydantic default_factory=_now_iso 兜底
+        new_sources.append(entry)
+
+    for dim in raw.get("dimensions") or []:
+        for fact in dim.get("facts") or []:
+            for ev in fact.get("evidence") or []:
+                _try_add(ev)
+    for tier in (raw.get("pricing") or {}).get("tiers") or []:
+        _try_add(tier.get("source"))
+
+    raw["sources"] = new_sources
 
 
 @tool

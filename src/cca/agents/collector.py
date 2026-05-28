@@ -57,6 +57,28 @@ def _last_tool_json(messages: list, tool_name: str) -> dict | None:
     return None
 
 
+# ── cache key 稳定切片 ────────────────────────────────────────────────
+# 把"上游浮动 / 与 prompt 无关的字段"从 cache key 里挡掉，避免 replay miss 与
+# 上游 schema 扩展时的无意污染。原则：cache_key 字段集 = prompt 实际输入集。
+
+_BRIEF_CACHE_FIELDS = ("product_name", "company", "website", "product_type")
+
+
+def _stable_domain_seed(seed: dict | None) -> dict | None:
+    """剔除 domain_seed 中的运行时浮动字段（extracted_at 等），保留 LLM 可见内容。"""
+    if not seed:
+        return seed
+    return {k: v for k, v in seed.items() if k != "extracted_at"}
+
+
+def _stable_product_brief(brief: dict | None) -> dict | None:
+    """只取 _build_collect_message 实际灌进 prompt 的稳定字段；
+    未来扩 ProductBrief schema 时新字段不会无意污染 cache。"""
+    if not brief:
+        return brief
+    return {k: brief.get(k) for k in _BRIEF_CACHE_FIELDS}
+
+
 # ── Phase 1：exploration ──────────────────────────────────────────────
 
 
@@ -98,7 +120,7 @@ def exploration_node(state: CCAState) -> dict:
         cache_key={
             "target_product": state["target_product"],
             "initial_brief": state.get("initial_brief"),
-            "domain_seed": state.get("domain_seed"),
+            "domain_seed": _stable_domain_seed(state.get("domain_seed")),
             "user_query": state["user_query"],
         },
     )
@@ -197,8 +219,8 @@ def collect_one_product(task: CollectTask, context: dict) -> dict:
         cache_key={
             "task": task.model_dump(),
             "target_product": context.get("target_product"),
-            "domain_seed": context.get("domain_seed"),
-            "product_brief": context.get("product_brief"),
+            "domain_seed": _stable_domain_seed(context.get("domain_seed")),
+            "product_brief": _stable_product_brief(context.get("product_brief")),
         },
     )
     profile = _extract_finalized_profile(messages)

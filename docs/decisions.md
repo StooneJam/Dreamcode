@@ -929,6 +929,178 @@ prompt 显式规定 "snippet 必须是 fetch_url 返回 text 的原样片段"。
 
 ---
 
+## D-037 · Insight ReAct 不接 cache，单产品真跑
+**Status**: Accepted · **Date**: 2026-05-28
+**Refines**: D-036 cache 策略边界
+
+**Context**：D-036 把 ReAct cache 做成"下游全 replay"答辩工作流；落地复盘 Insight cache_key 时发现两个问题：
+- **漏字段 → 静默错误**：prompt 灌了 `profiles_hint`（其他产品的 product_type/website）但 cache_key 没含。Collector 改了 product_type，Insight 仍命中旧 cache，错命中比 miss 更危险
+- **list 顺序敏感 + 集合浮动**：`competitor_names: list[str]` 直接进 key，hash_key 的 sort_keys 只排 dict key 不排 list 元素；Phase 1 真跑顺序变 / 多少一个产品 → 所有 worker 同步失效
+
+要修正得选 Plan A（对齐 prompt 输入集，5 行）或 Plan B（缩到 worker 自治粒度，30 行 + 语义假设）。
+
+**Decision**：**直接摘除 Insight ReAct cache，每次真跑 LLM**。
+- `insight_one_product` / `insight_node` 调 `stream_react` 不再传 `cache_node` / `cache_key`
+- `stream_react` 在 `cache_key=None` 时走纯真跑路径，流式打印能力保留
+- 已写入的旧 insight cache 留 SQLite 不命中，不影响功能；要清空：`react_cache.clear("insight")`
+
+**Why**：
+- cache 的目的是 **demo 时间压缩**。Insight 单产品 ReAct ≤ 15 turns（D-033 经验值），三产品并发真跑时间在答辩可容忍区间——cache 在这里没有非接不可的价值
+- 修对 cache_key 要么 Plan A 保留宇宙级失效，要么 Plan B 依赖 "Insight 不做跨产品差异化决策" 这个尚未验证的语义假设；投资 vs 收益不划算
+- 收回 cache 边界让设计更诚实——cache 只覆盖 **耗时大 + 输入边界清晰** 的节点（Collector exploration / collect_one_product / PM 三阶段），不勉强覆盖所有 ReAct
+
+**Alternatives**：
+- **Plan A 对齐 prompt 输入集**：补 `profiles_hint` 子集 + `sorted(competitor_names)` 入 key。改 5 行无静默错误，但 Phase 1 多 / 少一个竞品仍让所有 Insight worker 同步失效（宇宙级失效未消）
+- **Plan B worker 自治粒度切片**：context 只切自己产品，cache_key 摆脱 competitor_names。worker 缓存彻底独立，但需重构 `build_insight_context` + `_build_insight_product_message` + cache_key，~30 行；依赖语义假设
+
+**Trade-offs**：
+- 答辩叙事从 D-036 "下游 ReAct 全 replay" 改为 "Collector 全 replay + Insight 真跑"
+- replay 模式下 Insight 段必须真打 DeepSeek API；现场网络抖动时 Insight 是单点风险（Collector / PM 仍由 cache 兜底）
+- 旧 insight cache entries 留库不命中，磁盘占用直到 `react_cache.clear("insight")`
+
+**升级触发**：
+- demo 实测 Insight 三产品并发真跑总耗时 > 60 秒 → 按 Plan B 切片重构后再接 cache
+- 出现答辩现场 Insight 段网络失败 → 加单产品级 retry / 降级到合成 sentiment（mock）
+
+---
+
+## D-038 · Collector cache key 稳定切片：剔除浮动字段
+**Status**: Accepted · **Date**: 2026-05-28
+**Implements**: D-036 cache 命中率优化（DP-006 同源问题）
+**Refines**: D-033 三层架构的 cache_key 边界
+
+**Context**：复盘 D-036 cache 设计时发现两处 cache_key 隐患：
+- **P0 时间戳浮动**：`exploration_node` 和 `collect_one_product` 的 `cache_key` 把整个 `domain_seed` dict 灌进去。`DomainSeed.extracted_at` 是 `default_factory=_now_iso`，PM phase 1 每次真跑都生成新时间戳 → hash 不同 → 答辩 `--cache replay` 几乎注定 miss → `RuntimeError`
+- **P1 未来字段污染**：`collect_one_product.cache_key` 把整个 `product_brief` dict 灌进去。当前 ProductBrief 4 字段全跟 prompt 一致，但未来扩 schema 加任意新字段（如 `discovered_at` / `description`）就会无意触发 cache 漂移
+
+根因相同：cache_key 偷懒"把整个上游 state slice 当 key"，没遵守 **cache_key 字段集 = prompt 实际输入集** 的契约。
+
+**Decision**：在 `cca/agents/collector.py` 加两个模块级私有 helper，cache_key 显式取稳定子集。
+```python
+_BRIEF_CACHE_FIELDS = ("product_name", "company", "website", "product_type")
+
+def _stable_domain_seed(seed):
+    """剔除 extracted_at 等运行时浮动字段。"""
+
+def _stable_product_brief(brief):
+    """只取 _build_collect_message 实际灌进 prompt 的字段。"""
+```
+
+`exploration_node` / `collect_one_product` 的 `cache_key` 改用 helper 包 `domain_seed` / `product_brief`。
+
+**Why**：
+- cache_key 边界跟 prompt 输入边界对齐是工程契约——多一个浮动字段就漏一份 cache，少一个语义字段就错命中陈旧结果
+- 显式 `_BRIEF_CACHE_FIELDS` 常量化让未来扩 ProductBrief 时新字段不会无意污染（要进 cache 必须显式加进常量）
+- 改动面 < 10 行 helper + 2 行 cache_key 调用，零行为变化
+
+**Implementation**：
+- `src/cca/agents/collector.py`：新增 `_stable_domain_seed` / `_stable_product_brief`，`exploration_node` / `collect_one_product` 的 `cache_key` 改用 helper
+- `tests/test_agents/test_collector.py`：新增 3 个回归测试
+  - `test_stable_domain_seed_strips_extracted_at`
+  - `test_stable_product_brief_keeps_only_prompt_fields`
+  - `test_cache_key_hash_stable_under_floating_fields`（**端到端不变量**：`hash_key(base) == hash_key(drifted)` —— 此条挂掉即 cache 边界被污染，CI 拦下）
+
+**Trade-offs**：
+- helper 是 collector 模块私有 —— 未来 Reporter / 其他 agent 也想接 cache 且消费同源字段时，要么复制粘贴要么提到公共模块。**接受**：YAGNI，遇到第三处再抽
+- 扩 ProductBrief schema 时如果新字段对 prompt 有影响，要同步加进 `_BRIEF_CACHE_FIELDS` —— 漏改风险，但通过 `_build_collect_message` 的代码 review 可以捕获
+
+**升级触发**：
+- 第三个 agent 也接 cache 时把切片 helper 提到 `react_cache.py` 或新建 `cca/memory/_cache_keys.py` 公共模块
+- 出现"扩 schema 后忘加进 `_BRIEF_CACHE_FIELDS`" 类型 bug → 加 prompt builder 与 cache_key 字段集的自动一致性测试
+
+---
+
+## D-039 · 撤回 PM cache hook + gpt temperature 调到 0.2
+**Status**: Accepted · **Date**: 2026-05-28
+**Revises**: D-036（PM 三阶段 cache hook 部分）+ `factory.py` gpt `temperature=0`
+**Closes**: DP-006（撤回方向，不再追求 PM 全链路 cache 命中）
+
+**Context**：D-036 / DP-006 把 PM 三阶段也接了 cache hook，并把 `gpt.temperature` 设成 0，本意是让 PM 输出确定性以提高下游 cache 命中率。复盘时发现这条优化的代价被低估：
+- PM 干的不是机械结构化转换，而是**有判断力的规划**：竞品选择 / 维度优先级 / 章节组织 / focus 范围。`temperature=0` 把每次输出钉成同一个，等于扼杀了竞品分析报告本应有的多样性
+- cache hook 的本意是答辩 demo 节省 30 秒，但 cache 一旦落库，调试 / 答辩演练时改了上游也不重跑（除非显式清缓存），违背"演练即真跑"的调试体感
+- D-037 / D-038 已经把 cache 边界向下收紧（Insight 摘除、Collector 切片）。PM 段保留 cache 的收益（~30s）远小于"扼杀分析创造性"的代价
+
+**Decision**：
+- **删除 PM cache hook**：`_invoke_pm` 不再有 cache 分支，三个阶段节点不再传 `cache_node`
+- **`gpt.temperature` 0 → 0.2**：稍偏低保证规划稳定性，同时保留 schema 约束内的判断灵活度
+- 清空所有 `pm.*` cache 历史 entries（操作记录见 commit）
+- `react_cache` 模块保留（Collector 仍在用）；但 `_invoke_pm` 不再 import `react_cache`
+
+**Why**：
+- 把 PM 当作 "schema 约束内的创作型 LLM" 而非 "确定性函数"。竞品分析本质是一种判断 + 综合，应当容许 LLM 在合理范围内给出不同侧重
+- temperature=0.2 是工业界"规划任务偏稳定"的标准低端水平；比 deepseek (0.3) 更稳，比 doubao (0.2) 等同——跟 PM 的规划职责吻合
+- 删除 cache 也清除了一个常被忽视的调试陷阱：本机改了 prompt / schema 但 cache 命中导致看不到效果
+
+**Trade-offs**：
+- 答辩 demo `--cache replay` 模式下 PM 段必须真跑（GPT-5 三阶段 ~30 秒）。叙事更新："Collector ReAct cache replay + PM/Insight 真跑"
+- PM 输出小幅浮动会让**下游 Collector cache key 偶尔 miss**（task / competitor_names 不同 → hash 不同）—— 接受，本就是 D-038 cache_key 稳定切片要解决的问题；如果命中率实测过低，回头加 Collector 任务级 partial cache（按 product_name 单切）
+- DP-006 关闭：不再追求 PM 输出确定性，cache 边界 final = 只覆盖 Collector ReAct
+
+**升级触发**：
+- 若发现 PM 在 temperature=0.2 下偶尔做出"无 rationale 的激进选择"（如把头部竞品换成非主流产品）→ 调到 0.1
+- 若 demo 时间预算紧 PM 段必须省 → 单独把 `initial_brief_node` cache 回挂（这阶段输入相对稳定且不影响判断创造性），其他两阶段保持真跑
+
+**Final cache 边界**：
+
+| 节点 | 接 cache | 理由 |
+|---|---|---|
+| Collector exploration | ✅ | ReAct ~40 turns，耗时分钟级，输入边界清晰（D-038 切片） |
+| Collector collect_one_product | ✅ | ReAct ~60 turns，每产品独立，命中率高 |
+| Insight ReAct | ❌ | 单产品 ≤ 15 turns，cache_key 设计成本高（D-037） |
+| PM 三阶段 | ❌ | 扼杀规划创造性，且本身 ~10 秒级（D-039） |
+| Reporter ReAct | （未接） | 待 D-034 实施后再评估 |
+
+---
+
+## D-040 · Doubao dev override + debate 双路径并存
+**Status**: Accepted · **Date**: 2026-05-28
+**Scope**: 开发期临时切换；流程稳定后撤回回到三家族原配置
+
+**Context**：开发期豆包 API 可报销，GPT-5/DeepSeek 真跑要烧自费 token，希望所有 agent 临时统一走豆包以加速调试。但 Doubao 在嵌套结构化输出上跟 OpenAI 兼容度不一致：
+- `function_calling` 简单/复杂 schema 都 PASS（PM `_invoke_pm` / debate `_phase_judge` 可用）
+- tool calling PASS（Collector / Insight `create_react_agent` 可用）
+- **`response_format={"type": "json_object"}` 不支持** → BadRequestError `InvalidParameter`
+- LangChain `with_structured_output(..., method="json_mode")` 底层走的就是 json_object → 同样失败
+
+而 debate skill 4 个阶段（`_phase_critique` / `_phase_refine` / `_phase_judge` / `_phase_finalize_converged`）原本都依赖 json_mode 或 bind(response_format)。切到 Doubao 后 debate 全链路炸。
+
+**Decision**：
+1. **factory 层一个 env flag 切换三家族客户端**：`CCA_DEV_MODEL_OVERRIDE=doubao` 启用时，`gpt` / `deepseek` / `doubao` 三个变量全部指向 Doubao 客户端（保留各自 temperature 配置）。业务代码零改动
+2. **factory 导出公开常量 `DEV_DOUBAO_OVERRIDE: bool`**，让业务代码可读取当前模式做路径分发
+3. **debate skill 双路径并存**（不删旧路径，保留回切能力）：
+   - 三家族默认路径：`with_structured_output(schema, method="json_mode")` / `bind(response_format=json_object)` + 手工 parse + `_repair_for_schema`
+   - dev override 路径：`with_structured_output(schema, method="function_calling")` + 直出
+   - 顶层用 `_struct_method()` helper + `_phase_finalize_converged` 拆 dispatch + 两个私有实现 `_finalize_via_function_calling` / `_finalize_via_json_object`
+4. **smoke 验证**：`scripts/smoke_doubao.py` 三项检查（PM-like function_calling / ReAct tool calling / debate 嵌套 schema function_calling），开启 override 前必跑
+
+**Why**：
+- env flag 切换成本：改 `.env` 一行；流程稳定后 unset 即可。业务代码 / 测试零改动
+- 双路径保留：避免"删了 json_object 路径回切时还要重写"——切回三家族只需 unset env
+- `_repair_for_schema` 保留 dead-code 等待回切：DeepSeek 在 json_mode 下偶尔传错字段（D-028 #4），切回时仍需要它
+
+**Trade-offs**：
+- **跨家族 debate 退化为同家族自审**：D-022 / D-024 / D-017 修订设计的 bias 隔离机制在 dev override 下失效，4 阶段流程仍能跑完，仲裁失去意义。**答辩演示前必须切回**
+- debate.py 代码量 +50 行（双路径 + 测试覆盖两条路径）
+- 答辩叙事临时少一块——"三家族零重叠 bias 隔离"卖点要等切回后才成立
+- Reporter 也跟着换（统一 vs 单独保留）：选择统一，跟"零业务代码改动"原则一致
+
+**Implementation**：
+- `src/cca/llm/factory.py`：`_DEV_OVERRIDE` + 公开 `DEV_DOUBAO_OVERRIDE` + `_make_doubao(temperature)` helper + if/else 分支客户端构造
+- `src/cca/skills/debate.py`：import `DEV_DOUBAO_OVERRIDE` + `_struct_method()` helper + `_phase_finalize_converged` 拆 dispatch
+- `tests/test_skills/test_debate.py`：1 条原 finalize_converged 测试拆 2 条覆盖两条路径
+- `scripts/smoke_doubao.py`：新增三项 smoke 验证
+- `.env.example`：加 `CCA_DEV_MODEL_OVERRIDE=` 配置项 + 中文说明
+
+**配套修复（同次会话发现）**：
+- LangChain `ChatOpenAI(max_retries=5)` 三家族客户端统一接入——应对 Doubao Ark 在 Send fanout 并发下偶发的 TCP reset（WinError 10054）。可由 `LLM_MAX_RETRIES` env 调
+- PM `_invoke_pm` 加 None retry：function_calling 模式下 LLM 偶尔不调 function 返 None，需 retry + 显式 hint
+
+**撤回触发**：
+- 答辩演示前 1 天 → unset `CCA_DEV_MODEL_OVERRIDE` 跑一次真三家族端到端验证
+- 单元测试默认 env 未设 → 仍走三家族路径，CI 不受影响
+
+---
+
 ## 待决（Pending）
 
 - **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略
@@ -936,6 +1108,6 @@ prompt 显式规定 "snippet 必须是 fetch_url 返回 text 的原样片段"。
 - **DP-003**：答辩 demo 时长（影响 streaming 节奏）
 - **DP-004**：Doubao 具体 model id / endpoint
 - **DP-005**：debate 不收敛率 > 阈值时是否打断流程（v1 走 forced，v2 可加 alert）
-- **DP-006**：PM 三阶段接 cache hook + `temperature=0`，消除全链路 cache miss（D-036 跟进项）
-- **DP-007**：LangGraph 主图接通（`graph.py` 当前空文件，demo 用 `_merge()` 串）
+- ~~**DP-006**~~：由 D-039 关闭（撤回方向）
+- ~~**DP-007**~~：已完成，主图 `graph.py` 已接通（Send fanout + report 串行）
 - **DP-008**：fetch_url 优化（robots.txt timeout、httpx 连接复用）

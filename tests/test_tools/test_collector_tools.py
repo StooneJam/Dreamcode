@@ -189,3 +189,54 @@ def test_request_product_replacement_rejects_empty_evidence() -> None:
             "reason": "无理由",
             "evidence": [],
         })
+
+
+def test_finalize_profile_autofills_sources_from_evidence() -> None:
+    """LLM 漏填顶层 sources 时，工具应从 dimensions/pricing 的 evidence 自动聚合 URL。
+    R4 兜底：不依赖 LLM 自觉。"""
+    from cca.tools.collector_tools import finalize_profile
+
+    raw = {
+        "product_name": "Z",
+        "product_type": "SaaS",
+        "dimensions": [{
+            "name": "AI能力", "category": "功能",
+            "facts": [
+                {"statement": "F1", "evidence": [{"source_url": "https://a.com", "snippet": "x"}]},
+                {"statement": "F2", "evidence": [{"source_url": "https://b.com", "snippet": "y"}]},
+            ],
+        }],
+        "pricing": {
+            "has_free_tier": True, "pricing_model": "per_user",
+            "tiers": [{
+                "name": "Pro", "price_per_user_monthly": 10.0,
+                "source": {"source_url": "https://c.com/pricing", "snippet": "$10"},
+            }],
+        },
+        "sources": [],  # ← LLM 漏填，工具应兜底
+    }
+    result = json.loads(finalize_profile.invoke({"product_name": "Z", "profile_json": json.dumps(raw)}))
+    urls = {s["source_url"] for s in result["profile"]["sources"]}
+    assert urls == {"https://a.com", "https://b.com", "https://c.com/pricing"}
+
+
+def test_finalize_profile_autofill_dedupes_against_existing_sources() -> None:
+    """LLM 已经填了部分 sources 时，autofill 不重复添加。"""
+    from cca.tools.collector_tools import finalize_profile
+
+    raw = {
+        "product_name": "Z",
+        "product_type": "SaaS",
+        "dimensions": [{
+            "name": "AI", "category": "功能",
+            "facts": [{"statement": "F", "evidence": [
+                {"source_url": "https://a.com", "snippet": "x"},
+                {"source_url": "https://b.com", "snippet": "y"},
+            ]}],
+        }],
+        "sources": [{"source_url": "https://a.com", "snippet": "已存在"}],
+    }
+    result = json.loads(finalize_profile.invoke({"product_name": "Z", "profile_json": json.dumps(raw)}))
+    urls = [s["source_url"] for s in result["profile"]["sources"]]
+    assert urls.count("https://a.com") == 1  # 不重复
+    assert "https://b.com" in urls           # 新 URL 加上

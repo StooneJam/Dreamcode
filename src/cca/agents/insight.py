@@ -140,26 +140,27 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
         ],
         label=f"Insight·{task.product_name}",
         recursion_limit=30,
-        cache_node="insight",
-        cache_key={
-            "product_name": task.product_name,
-            "insight_task": task.model_dump(),
-            "competitor_names": competitor_names,
-            "sentiment_model": sentiment_model,
-        },
+        # 不接 cache —— Insight 单产品 ReAct 耗时本就在可接受范围；
+        # 且 cache_key 设计需要 worker 自治粒度切片（见讨论），暂不投资。
+        # 流式打印仍然保留（stream_react 在 cache_key=None 时走纯真跑路径）。
     )
     sentiments = _extract_sentiments(messages)
     signals = _extract_signals(messages)
 
     name = task.product_name
     result: dict = {}
-    if name in sentiments and name in profiles:
+    # Send fanout dispatch 时 context["profiles"] 是 task_plan 后的 snapshot（Collector 尚未跑完），
+    # 所以**不能用 `name in profiles` 守卫** —— _merge_profiles reducer (D-031) 会自动按 key 合并字段，
+    # Insight 写 {sentiment: ...} 不论 Collector 是否已写过该产品都安全。
+    if name in sentiments:
         result["profiles"] = {name: {"sentiment": sentiments[name]}}
     if signals:
         result["agent_signals"] = signals
     result["audit_log"] = [{
         "agent": "insight", "event": "sentiment_analyzed",
-        "product": name, "signals_raised": len(signals),
+        "product": name,
+        "sentiment_written": name in sentiments,
+        "signals_raised": len(signals),
     }]
     return result
 
@@ -186,13 +187,7 @@ def insight_node(state: CCAState) -> dict:
         ],
         label="Insight",
         recursion_limit=50,
-        cache_node="insight",
-        cache_key={
-            "competitor_names": task_plan.competitor_names,
-            "insight_tasks": [t.model_dump() for t in task_plan.insight_tasks],
-            "profile_names": sorted(profiles.keys()),
-            "sentiment_model": sentiment_model,
-        },
+        # 不接 cache —— 同 insight_one_product，整体顺序版也走真跑。
     )
     sentiments = _extract_sentiments(messages)
     signals = _extract_signals(messages)

@@ -555,3 +555,67 @@ def testbuild_collect_context_no_match_returns_none_brief() -> None:
     state = _empty_state(exploration_result={"initial_profiles": []})
     ctx = build_collect_context(state, "未知产品")
     assert ctx["product_brief"] is None
+
+
+# ── cache key 稳定切片（回归防线）─────────────────────────────────────
+
+
+def test_stable_domain_seed_strips_extracted_at() -> None:
+    """extracted_at 浮动不该影响 cache key —— 这是 P0 修复的核心不变量。"""
+    from cca.agents.collector import _stable_domain_seed
+
+    seed_a = {
+        "product_type_hint": "协作", "terminology": {"DAU": "日活"},
+        "extracted_at": "2026-05-25T10:00:00Z",
+    }
+    seed_b = {**seed_a, "extracted_at": "2026-05-26T11:23:45Z"}
+    assert _stable_domain_seed(seed_a) == _stable_domain_seed(seed_b)
+    assert "extracted_at" not in _stable_domain_seed(seed_a)
+    assert _stable_domain_seed(None) is None
+    assert _stable_domain_seed({}) == {}
+
+
+def test_stable_product_brief_keeps_only_prompt_fields() -> None:
+    """未来扩 ProductBrief 加新字段时不应污染 cache —— P1 修复的契约。"""
+    from cca.agents.collector import _stable_product_brief
+
+    brief = {
+        "product_name": "钉钉", "company": "阿里", "website": "https://d.com",
+        "product_type": "协作", "future_field": "should_be_dropped",
+    }
+    out = _stable_product_brief(brief)
+    assert set(out.keys()) == {"product_name", "company", "website", "product_type"}
+    assert "future_field" not in out
+    assert _stable_product_brief(None) is None
+
+
+def test_cache_key_hash_stable_under_floating_fields() -> None:
+    """端到端不变量：domain_seed.extracted_at + ProductBrief 未知扩展字段
+    不影响最终 react_cache hash。这条断言挂掉 = 答辩现场 replay miss 风险回归。"""
+    from cca.agents.collector import _stable_domain_seed, _stable_product_brief
+    from cca.memory.react_cache import hash_key
+
+    base_key = {
+        "task": {"product_name": "钉钉", "priority_dimensions": [], "allow_self_extension": True},
+        "target_product": "飞书",
+        "domain_seed": _stable_domain_seed({
+            "product_type_hint": "协作", "terminology": {},
+            "extracted_at": "2026-05-25T10:00:00Z",
+        }),
+        "product_brief": _stable_product_brief({
+            "product_name": "钉钉", "company": "阿里", "website": "https://d.com",
+            "product_type": "协作",
+        }),
+    }
+    drifted_key = {
+        **base_key,
+        "domain_seed": _stable_domain_seed({
+            "product_type_hint": "协作", "terminology": {},
+            "extracted_at": "2026-99-99T99:99:99Z",   # 时间戳浮动
+        }),
+        "product_brief": _stable_product_brief({
+            "product_name": "钉钉", "company": "阿里", "website": "https://d.com",
+            "product_type": "协作", "discovered_at": "later",  # 未来字段
+        }),
+    }
+    assert hash_key(base_key) == hash_key(drifted_key)

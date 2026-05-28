@@ -12,7 +12,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
 
 from cca.llm.factory import gpt
-from cca.memory import react_cache
 from cca.schema import (
     AgentFamily,
     AgentSignal,
@@ -91,32 +90,22 @@ def _load_user_file(state: CCAState) -> tuple[str | None, str | None, list[dict]
     return path, text, audit
 
 
-def _invoke_pm(output_type, phase_label: str, payload: dict, cache_node: str | None = None):
-    """PM 统一调用模板：cache hook + with_structured_output + 一次 schema 自修重试。
+def _invoke_pm(output_type, phase_label: str, payload: dict):
+    """PM 统一调用模板：with_structured_output + 失败自修。
 
-    function_calling 不保证 100% schema 合规（GPT-5 偶尔漏 required 字段），
-    捕到 ValidationError 把错误反馈给 LLM 再调一次。
+    两种失败模式各 retry 一次（PM 阶段节点非 ReAct，允许 try/except self-heal，见 D-035）：
+    1. ValidationError —— LLM 漏 required 字段：反馈错误详情让 LLM 修
+    2. invoke 返 None —— LLM 用自由文本回答而非调 function（Doubao 在复杂嵌套
+       schema 上偶发）：显式指令"必须通过 function_call 返回"
 
-    cache_node 非 None 且 CCA_CACHE_MODE 允许时：replay 直接反序列化 cached JSON；
-    write/auto 真跑后落 SQLite。详见 D-036 / DP-006。
+    二次仍失败 → raise RuntimeError，避免 NoneType.attribute 这种静默崩。
+
+    不接 cache —— D-039 撤回 PM cache hook，保留 LLM 在 schema 约束内的判断灵活度。
     """
-    mode = react_cache.get_mode()
-    use_cache = cache_node is not None
-    cache_key = {"phase": phase_label, "payload": payload} if use_cache else None
-
-    if use_cache and mode in ("replay", "auto"):
-        cached = react_cache.get(cache_node, cache_key)
-        if cached is not None:
-            print(f"  [pm:{cache_node}] (cache replay)", flush=True)
-            return output_type.model_validate_json(cached["json"])
-        if mode == "replay":
-            raise RuntimeError(
-                f"[react_cache] mode=replay 但 PM 缓存未命中：node={cache_node}。请先 mode=write 跑一次。"
-            )
-
     llm = gpt.with_structured_output(output_type, method="function_calling")
     user = _phase_prefix(phase_label) + json.dumps(payload, ensure_ascii=False)
     messages = [SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]
+
     try:
         result = llm.invoke(messages)
     except ValidationError as e:
@@ -128,9 +117,19 @@ def _invoke_pm(output_type, phase_label: str, payload: dict, cache_node: str | N
         ))
         result = llm.invoke(messages + [repair])
 
-    if use_cache and mode in ("write", "auto"):
-        react_cache.put(cache_node, cache_key, {"json": result.model_dump_json()})
-        print(f"  [pm:{cache_node}] (cache write)", flush=True)
+    if result is None:
+        print(f"  [pm:{phase_label}] WARN: LLM 未调用 function（返 None），retry with 显式 hint", flush=True)
+        force = HumanMessage(content=(
+            f"上一次回复没有调用 function。必须通过 function_call 返回严格符合 "
+            f"{output_type.__name__} schema 的结构化对象，不要用自由文本回答。"
+        ))
+        result = llm.invoke(messages + [force])
+
+    if result is None:
+        raise RuntimeError(
+            f"PM {phase_label} 节点二次重试后 LLM 仍未调用 function，无法获得结构化输出。"
+            f"检查 model id 的 function_calling 支持，或 prompt 是否清晰。"
+        )
     return result
 
 
@@ -143,7 +142,6 @@ def initial_brief_node(state: CCAState) -> dict:
 
     result = cast(InitialBriefOutput, _invoke_pm(
         InitialBriefOutput, "阶段一 InitialBrief", payload,
-        cache_node="pm.initial_brief",
     ))
 
     updates: dict = {
@@ -168,7 +166,6 @@ def task_plan_node(state: CCAState) -> dict:
             "exploration_result": state.get("exploration_result", {}),
             "competitor_names": state.get("competitor_names", []),
         },
-        cache_node="pm.task_plan",
     ))
     return {
         "task_plan": result.task_plan.model_dump(),
@@ -192,7 +189,6 @@ def report_task_node(state: CCAState) -> dict:
             "profiles": state.get("profiles", {}),
             "review_state": state.get("review_state", []),
         },
-        cache_node="pm.report_task",
     ))
     return {
         "report_task": result.report_task.model_dump(),

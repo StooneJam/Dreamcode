@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def _now_iso() -> str:
@@ -54,7 +54,11 @@ class Dimension(BaseModel):
 
 
 class PricingTier(BaseModel):
-    """单个定价档位，数据来自官网或公开定价页。"""
+    """单个定价档位，数据来自官网或公开定价页。
+
+    若官方未公开数字价格（仅"联系销售/咨询报价"），**不要为该档建 tier** ——
+    把信息写进对应 Dimension.facts。tier 一旦建立必须至少含一个具体价格数字。
+    """
 
     name: str
     price_per_user_monthly: float | None = None
@@ -63,6 +67,18 @@ class PricingTier(BaseModel):
     user_limit: int | None = Field(None, description="None 表示不限人数")
     included_features: list[str] = Field(default_factory=list)
     source: Evidence | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_price(self) -> "PricingTier":
+        """禁止"光有 tier 名字没有价格"——这种 tier 对下游 Reporter 做成本对比毫无价值。"""
+        if self.price_per_user_monthly is None and self.price_per_user_yearly is None:
+            raise ValueError(
+                f"PricingTier '{self.name}' 必须填 price_per_user_monthly 或 "
+                f"price_per_user_yearly 至少一个数字。"
+                f"若该档官方仅显示'联系销售/咨询报价'未公开数字，请删除该 tier，"
+                f"把信息写进 Dimension.facts 而不是 PricingInfo.tiers。"
+            )
+        return self
 
 
 class PricingInfo(BaseModel):

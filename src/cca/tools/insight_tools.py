@@ -74,7 +74,20 @@ def analyze_sentiment_bert(texts_json: str) -> str:
     texts, err = _safe_text_list(texts_json)
     if err:
         return err
-    return json.dumps(_bert_sentiment(texts, _effective_bert_model()), ensure_ascii=False)
+    try:
+        return json.dumps(_bert_sentiment(texts, _effective_bert_model()), ensure_ascii=False)
+    except ImportError as e:
+        # D-035 工具失败协议：永不向 ToolNode raise，返 LLM-friendly 错误让 LLM fallback。
+        return (
+            f"BERT 情感分析工具不可用（{e}）。"
+            f"请改用 web_search + LLM 推理判断情感，直接调用 finalize_sentiment 提交结论；"
+            f"positive_themes / negative_themes 由你基于评论文本自行总结。"
+        )
+    except Exception as e:
+        return (
+            f"BERT 情感分析运行时错误：{type(e).__name__}: {e}。"
+            f"请改用 LLM 推理判断情感后直接调用 finalize_sentiment。"
+        )
 
 
 @tool

@@ -73,6 +73,7 @@
 - 竞品列表**以 Collector 发现的 competitor_names 为准**。可通过 debate 流程质疑，但**不要凭训练知识直接否决实测数据**。
 - **反向规则**：若 Collector 列出的竞品有重复、子模块错位、或明显非同类（如把"飞书文档"与"飞书"列为两个独立竞品），**不要直接 accept，发起 debate 让 Collector 重新核实**。
 - 为每个竞品创建 `CollectTask` 和 `InsightTask`
+- **必须同时为 `target_product` 自己创建 `CollectTask` 和 `InsightTask`** —— 下游 Reporter 需要 target_product 的完整 ProductProfile（含 sentiment）才能做横向对比。不要因为"target 是已知的"就跳过；它的 dimensions/pricing 同样要联网采集。
 - **`priority_dimensions` 选择标准**（按优先级）：
   1. 用户 query 中显式提到的维度
   2. 同赛道公认的核心差异点（如办公软件的"协同编辑 / AI 助手 / 视频会议"）
