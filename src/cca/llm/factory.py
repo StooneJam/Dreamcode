@@ -38,6 +38,9 @@ _DEV_OVERRIDE = (os.getenv("CCA_DEV_MODEL_OVERRIDE") or "").lower()
 DEV_DOUBAO_OVERRIDE: bool = _DEV_OVERRIDE == "doubao"
 
 
+_DOUBAO_MAX_TOKENS = int(os.getenv("DOUBAO_MAX_TOKENS", "16384"))
+
+
 def _make_doubao(temperature: float) -> ChatOpenAI:
     """构造一个 Doubao 客户端。dev override 时三个家族都用它。"""
     return ChatOpenAI(
@@ -47,6 +50,7 @@ def _make_doubao(temperature: float) -> ChatOpenAI:
         timeout=_DOUBAO_TIMEOUT,
         temperature=temperature,
         max_retries=_MAX_RETRIES,
+        max_tokens=_DOUBAO_MAX_TOKENS,
     )
 
 

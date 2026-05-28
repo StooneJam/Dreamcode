@@ -553,6 +553,11 @@ def _run_manual(args: argparse.Namespace) -> None:
         _merge(state, report_node(state))
         print(f"  status: {state['report_status']} | pdf: {state['report_pdf_path']}")
         if state["report_md"]:
+            from pathlib import Path
+            _md_path = Path(f"output/report_{state['report_task']['target_product']}.md")
+            _md_path.parent.mkdir(parents=True, exist_ok=True)
+            _md_path.write_text(state["report_md"], encoding="utf-8")
+            print(f"  md: {_md_path}")
             print(f"  md 前 300 字: {state['report_md'][:300].replace(chr(10), ' | ')}...")
 
     summary(state)
