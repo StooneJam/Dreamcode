@@ -11,221 +11,302 @@
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════
-     NAVBAR  (always visible)
-════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════
+     NAVBAR
+════════════════════════════════════════════ -->
 <nav class="navbar">
   <a class="logo" href="#">
-    <div class="logo-icon">D</div>
-    <span class="logo-text">Dreamcode</span>
+    <!-- Message circle icon (chat bubble) -->
+    <div class="logo-icon">
+      <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="36" height="36" rx="8" fill="#40c4d0"/>
+        <path d="M18 9C13.029 9 9 12.806 9 17.5C9 19.744 9.911 21.789 11.4 23.3L10.5 27L14.5 25.7C15.602 26.215 16.766 26.5 18 26.5C22.971 26.5 27 22.694 27 18C27 13.306 22.971 9.5 18 9.5C18 9.5 18 9 18 9Z" fill="white" fill-opacity="0.95"/>
+      </svg>
+    </div>
+    <span class="logo-name">Dreamcode</span>
   </a>
 
-  <div class="nav-links" id="nav-links"></div>
+  <div class="nav-links" id="nav-links">
+    <a onclick="scrollTo('product')">产品介绍</a>
+    <a onclick="scrollTo('agents')">智能体</a>
+    <a onclick="scrollTo('analyze')">开始分析</a>
+    <a class="login" onclick="handleLogin()">登录</a>
+  </div>
 
   <div class="lang-switcher">
-    <button class="lang-btn active" data-lang="zh">中</button>
-    <button class="lang-btn"        data-lang="en">EN</button>
+    <button class="lang-btn active" data-lang="zh" onclick="setLang('zh')">中</button>
+    <button class="lang-btn"        data-lang="en" onclick="setLang('en')">EN</button>
   </div>
 </nav>
 
 
-<!-- ═══════════════════════════════════════
-     PAGE: HOME
-════════════════════════════════════════ -->
-<div id="page-home" class="page active">
-
-  <!-- Hero -->
-  <section id="hero">
-    <div class="hero-left">
-      <div class="eyebrow">
-        <span class="eyebrow-dot"></span>
-        <span id="eyebrow-text"></span>
-      </div>
-      <h1 class="hero-title" id="hero-title"></h1>
-      <p class="hero-sub"    id="hero-sub"></p>
-      <p class="hero-sub-en" id="hero-sub-en"></p>
-      <div class="hero-btns">
-        <button class="btn btn-primary" id="hero-cta"></button>
-        <button class="btn btn-outline" id="hero-more"></button>
-      </div>
+<!-- ═══════════════════════════════════════════
+     HERO
+════════════════════════════════════════════ -->
+<section id="hero">
+  <div class="hero-left">
+    <div class="eyebrow">
+      <span class="eyebrow-dot"></span>
+      <span id="t-eyebrow">AI 驱动的竞品分析平台</span>
     </div>
-
-    <div class="hero-right">
-      <div class="report-card">
-        <div class="report-card-header">
-          <span class="report-card-title">竞品分析报告</span>
-          <span class="pdf-badge">PDF</span>
-        </div>
-
-        <div class="report-preview">
-          <div class="report-preview-bar"></div>
-          <div class="chip-row">
-            <span class="chip chip-blue">飞书</span>
-            <span class="chip chip-green">DingTalk</span>
-            <span class="chip chip-orange">Slack</span>
-          </div>
-          <!-- Mini bar chart -->
-          <div class="chart">
-            <div class="bar-group">
-              <div class="bar" style="width:22px;height:90px;background:#3B82F6;border-radius:3px"></div>
-              <div class="bar" style="width:22px;height:65px;background:#1EBF89;border-radius:3px"></div>
-              <div class="bar" style="width:22px;height:78px;background:#DF7F37;border-radius:3px"></div>
-            </div>
-            <div class="bar-group">
-              <div class="bar" style="width:22px;height:70px;background:#3B82F6;border-radius:3px"></div>
-              <div class="bar" style="width:22px;height:85px;background:#1EBF89;border-radius:3px"></div>
-              <div class="bar" style="width:22px;height:60px;background:#DF7F37;border-radius:3px"></div>
-            </div>
-            <div class="bar-group">
-              <div class="bar" style="width:22px;height:80px;background:#3B82F6;border-radius:3px"></div>
-              <div class="bar" style="width:22px;height:72px;background:#1EBF89;border-radius:3px"></div>
-              <div class="bar" style="width:22px;height:90px;background:#DF7F37;border-radius:3px"></div>
-            </div>
-            <div class="bar-group">
-              <div class="bar" style="width:22px;height:60px;background:#3B82F6;border-radius:3px"></div>
-              <div class="bar" style="width:22px;height:88px;background:#1EBF89;border-radius:3px"></div>
-              <div class="bar" style="width:22px;height:50px;background:#DF7F37;border-radius:3px"></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="report-footer">
-          <span class="report-filename">竞品分析报告_2024.pdf</span>
-          <button class="btn btn-primary btn-sm" onclick="document.getElementById('hero-cta').click()">下载 PDF</button>
-        </div>
-      </div>
+    <h1 class="hero-title" id="t-hero-title">开始你的<br>专属竞品分析</h1>
+    <p class="hero-sub"    id="t-hero-sub">多智能体协同分析 · 自动生成专业竞品报告 · 支持中英双语</p>
+    <p class="hero-sub-en" id="t-hero-sub-en">Start your exclusive competitive analysis</p>
+    <div class="hero-btns">
+      <button class="btn-primary" onclick="scrollTo('analyze')" id="t-hero-cta">立即开始分析</button>
+      <button class="btn-outline"  onclick="scrollTo('product')" id="t-hero-more">了解更多 →</button>
     </div>
-  </section>
-
-  <!-- Product intro -->
-  <section id="section-product" style="background:#fff">
-    <p class="section-label" id="sec1-label"></p>
-    <h2 class="section-title" id="sec1-title"></h2>
-    <p class="section-sub"   id="sec1-sub"></p>
-    <div class="step-cards"  id="step-cards"></div>
-  </section>
-
-  <!-- Agent features -->
-  <section id="section-agents" style="background:var(--blue-pale)">
-    <p class="section-label" id="sec2-label"></p>
-    <h2 class="section-title" id="sec2-title"></h2>
-    <div class="agent-flow" id="agent-flow" style="margin-top:48px"></div>
-  </section>
-
-  <footer>
-    <div class="footer-top">
-      <div class="footer-brand">
-        <h3 id="footer-brand"></h3>
-        <p  id="footer-tagline"></p>
-      </div>
-      <div class="footer-links" id="footer-cols"></div>
-    </div>
-    <p class="footer-copy" id="footer-copy"></p>
-  </footer>
-</div><!-- /page-home -->
-
-
-<!-- ═══════════════════════════════════════
-     PAGE: ANALYZE
-════════════════════════════════════════ -->
-<div id="page-analyze" class="page">
-  <div class="analyze-layout">
-
-    <!-- Input form -->
-    <div class="form-card">
-      <h2 id="form-title"></h2>
-      <form id="analyze-form" novalidate>
-
-        <div class="form-group">
-          <label class="form-label" id="label-product" for="input-product"></label>
-          <input class="form-input" id="input-product" type="text" autocomplete="off" required />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" id="label-query" for="input-query"></label>
-          <textarea class="form-textarea" id="input-query" rows="4"></textarea>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" id="label-file"></label>
-          <div class="upload-area" id="upload-area">
-            <div class="upload-icon">↑</div>
-            <p class="upload-main" id="upload-main"></p>
-            <p class="upload-sub"  id="upload-sub"></p>
-          </div>
-          <div class="upload-file-info" id="upload-file-info">
-            <span class="upload-file-name" id="upload-file-name"></span>
-            <button type="button" class="upload-file-remove" id="upload-file-remove" title="移除">✕</button>
-          </div>
-          <input type="file" id="file-input" accept=".pdf,.doc,.docx,.txt" />
-        </div>
-
-        <button type="submit" class="submit-btn" id="submit-btn"></button>
-      </form>
-    </div>
-
-    <!-- Streaming panel -->
-    <div class="stream-panel">
-      <div class="stream-header">
-        <div class="term-dots">
-          <div class="term-dot" style="background:#FF6058"></div>
-          <div class="term-dot" style="background:#FFBD2E"></div>
-          <div class="term-dot" style="background:#28CA41"></div>
-        </div>
-        <span class="stream-title" id="stream-title"></span>
-      </div>
-
-      <div class="think-badge" id="think-badge">
-        <div class="think-dot"></div>
-        <span id="think-label"></span>
-        <span id="think-time"></span>
-      </div>
-
-      <div class="log-body" id="log-body">
-        <p class="log-placeholder" id="stream-placeholder"></p>
-      </div>
-
-      <div class="progress-wrap">
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" id="progress-fill"></div>
-        </div>
-        <p class="progress-label" id="progress-label"></p>
-      </div>
-    </div>
-
   </div>
-</div><!-- /page-analyze -->
+
+  <div class="hero-right">
+    <div class="report-card">
+      <div class="report-card-hd">
+        <span class="report-card-title" id="t-report-title">竞品分析报告</span>
+        <span class="pdf-badge">PDF</span>
+      </div>
+
+      <div class="report-preview-area">
+        <div class="report-bar"></div>
+        <div class="chip-row">
+          <span class="chip chip-teal">飞书</span>
+          <span class="chip chip-green">DingTalk</span>
+          <span class="chip chip-orange">Slack</span>
+        </div>
+        <!-- Mini bar chart matching Figma exactly -->
+        <div class="mini-chart">
+          <div class="bar-grp">
+            <div class="bar" style="height:90px;background:#40c4d0"></div>
+            <div class="bar" style="height:65px;background:#49bf8a"></div>
+            <div class="bar" style="height:78px;background:#df7f37"></div>
+          </div>
+          <div class="bar-grp">
+            <div class="bar" style="height:70px;background:#40c4d0"></div>
+            <div class="bar" style="height:85px;background:#49bf8a"></div>
+            <div class="bar" style="height:60px;background:#df7f37"></div>
+          </div>
+          <div class="bar-grp">
+            <div class="bar" style="height:80px;background:#40c4d0"></div>
+            <div class="bar" style="height:72px;background:#49bf8a"></div>
+            <div class="bar" style="height:90px;background:#df7f37"></div>
+          </div>
+          <div class="bar-grp">
+            <div class="bar" style="height:60px;background:#40c4d0"></div>
+            <div class="bar" style="height:88px;background:#49bf8a"></div>
+            <div class="bar" style="height:50px;background:#df7f37"></div>
+          </div>
+        </div>
+        <div class="summary-lines">
+          <div class="summary-line" style="width:320px"></div>
+          <div class="summary-line" style="width:280px"></div>
+          <div class="summary-line" style="width:200px"></div>
+        </div>
+      </div>
+
+      <div class="report-footer">
+        <span class="report-filename" id="t-report-filename">飞书竞品分析报告_2026.pdf</span>
+        <button class="btn-sm" onclick="scrollTo('analyze')" id="t-dl-btn">下载 PDF</button>
+      </div>
+    </div>
+  </div>
+</section>
 
 
-<!-- ═══════════════════════════════════════
-     PAGE: RESULT
-════════════════════════════════════════ -->
-<div id="page-result" class="page">
-  <h2 id="result-title"></h2>
+<!-- ═══════════════════════════════════════════
+     PRODUCT INTRO
+════════════════════════════════════════════ -->
+<section id="product">
+  <p class="sec-label" id="t-p-label">我们产品干什么</p>
+  <p class="sec-title" id="t-p-title">全自动 AI 竞品分析，一键生成专业报告</p>
+  <p class="sec-sub"   id="t-p-sub">输入目标产品，上传参考文档，多智能体自动完成竞品采集、情感分析与报告撰写</p>
 
-  <div class="pdf-viewer-wrap">
+  <div class="step-cards" id="step-cards">
+    <div class="step-card">
+      <div class="step-num">01</div>
+      <h3 id="t-s1-title">输入 &amp; 上传</h3>
+      <p  id="t-s1-desc">输入目标产品名 + 分析需求，可上传一份参考文档（PDF/Word）</p>
+    </div>
+    <div class="step-card">
+      <div class="step-num">02</div>
+      <h3 id="t-s2-title">多智能体分析</h3>
+      <p  id="t-s2-desc">PM 制定计划 → Collector 联网采集 → Insight 情感分析，全程流式输出</p>
+    </div>
+    <div class="step-card">
+      <div class="step-num">03</div>
+      <h3 id="t-s3-title">报告预览 &amp; 下载</h3>
+      <p  id="t-s3-desc">在线预览 PDF 报告，包含 SWOT 分析、定价对比、竞品横向评分</p>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════
+     AGENT FEATURES
+════════════════════════════════════════════ -->
+<section id="agents">
+  <p class="sec-label" id="t-a-label">智能体功能介绍</p>
+  <p class="sec-title" id="t-a-title">多智能体协同工作流</p>
+
+  <div class="agent-flow">
+    <!-- PM Agent -->
+    <div class="agent-card">
+      <div class="agent-dot" style="background:#40c4d0"></div>
+      <div class="agent-name" id="t-ag1-name">PM Agent</div>
+      <div class="agent-role" style="background:rgba(59,130,246,.1);color:#40c4d0" id="t-ag1-role">制定计划</div>
+      <div class="agent-desc" id="t-ag1-desc">解析用户需求<br>制定任务简报<br>分配 Collect &amp; Insight 任务</div>
+    </div>
+    <div class="agent-sep"><div class="agent-sep-line"></div></div>
+
+    <!-- Collector -->
+    <div class="agent-card">
+      <div class="agent-dot" style="background:#1eab7a"></div>
+      <div class="agent-name" id="t-ag2-name">Collector</div>
+      <div class="agent-role" style="background:rgba(30,171,122,.1);color:#1eab7a" id="t-ag2-role">联网采集</div>
+      <div class="agent-desc" id="t-ag2-desc">联网搜索竞品<br>采集定价 / 功能<br>ReAct 多轮探索</div>
+    </div>
+    <div class="agent-sep"><div class="agent-sep-line"></div></div>
+
+    <!-- Insight -->
+    <div class="agent-card">
+      <div class="agent-dot" style="background:#df7f37"></div>
+      <div class="agent-name" id="t-ag3-name">Insight</div>
+      <div class="agent-role" style="background:rgba(223,127,55,.1);color:#df7f37" id="t-ag3-role">情感分析</div>
+      <div class="agent-desc" id="t-ag3-desc">爬取用户评论<br>BERT 情感分类<br>提炼正负面观点</div>
+    </div>
+    <div class="agent-sep"><div class="agent-sep-line"></div></div>
+
+    <!-- Reporter -->
+    <div class="agent-card">
+      <div class="agent-dot" style="background:#9259f2"></div>
+      <div class="agent-name" id="t-ag4-name">Reporter</div>
+      <div class="agent-role" style="background:rgba(146,89,242,.1);color:#9259f2" id="t-ag4-role">报告生成</div>
+      <div class="agent-desc" id="t-ag4-desc">SWOT 分析<br>横向评分对比<br>输出 PDF 报告</div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════
+     ANALYZE SECTION (form + stream — same page)
+════════════════════════════════════════════ -->
+<section id="analyze">
+
+  <!-- Input form -->
+  <div class="form-card">
+    <h2 class="form-card-title" id="t-form-title">开始分析</h2>
+
+    <form id="analyze-form" novalidate>
+      <div class="form-group">
+        <label class="form-label" for="input-product" id="t-lbl-product">目标产品名称</label>
+        <input  class="form-input" id="input-product" type="text" autocomplete="off" required
+                placeholder="例如：飞书、DingTalk、Slack" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-query" id="t-lbl-query">分析需求描述</label>
+        <textarea class="form-textarea" id="input-query" rows="4"
+                  placeholder="请描述您的分析需求，例如：分析飞书与钉钉、Slack 的视频会议功能差异、定价策略对比..."></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" id="t-lbl-file">上传参考文档（最多 1 个文件）</label>
+        <div class="upload-area" id="upload-area">
+          <div class="upload-icon-wrap">↑</div>
+          <p class="upload-main-text" id="t-up-main">点击上传或拖拽文件至此处</p>
+          <p class="upload-sub-text"  id="t-up-sub">支持 PDF、Word、TXT，仅限 1 个文件，最大 20MB</p>
+        </div>
+        <div class="file-info" id="file-info">
+          <span class="file-name" id="file-name-text"></span>
+          <button type="button" class="file-remove" id="file-remove">✕</button>
+        </div>
+        <input type="file" id="file-input" accept=".pdf,.doc,.docx,.txt" />
+      </div>
+
+      <button type="submit" class="submit-btn" id="submit-btn">开始分析</button>
+    </form>
+  </div>
+
+  <!-- Streaming log panel -->
+  <div class="stream-panel">
+    <div class="stream-hd">
+      <div class="term-dots">
+        <div class="term-dot" style="background:#FF6058"></div>
+        <div class="term-dot" style="background:#FFBD2E"></div>
+        <div class="term-dot" style="background:#28CA41"></div>
+      </div>
+      <span class="stream-title" id="t-stream-title">智能体运行日志</span>
+    </div>
+
+    <div class="think-badge" id="think-badge">
+      <div class="think-dot"></div>
+      <span class="think-text" id="think-text">思考中...</span>
+    </div>
+
+    <div class="log-body" id="log-body">
+      <p class="log-placeholder" id="t-log-placeholder">点击「开始分析」后，智能体实时日志将在此处显示<br>您可以看到每个 Agent 的思考过程和工具调用</p>
+    </div>
+
+    <div class="progress-bg">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+    <p class="progress-text" id="progress-text"></p>
+  </div>
+
+</section>
+
+
+<!-- ═══════════════════════════════════════════
+     PDF PREVIEW SECTION
+════════════════════════════════════════════ -->
+<section id="pdf-section">
+  <h2 id="t-pdf-title">竞品分析报告已生成</h2>
+
+  <div class="pdf-viewer" id="pdf-viewer">
     <div class="pdf-toolbar">
-      <span class="pdf-filename" id="pdf-filename"></span>
+      <span class="pdf-fname" id="pdf-fname">竞品分析报告_飞书_2024.pdf</span>
       <div class="pdf-actions">
-        <span class="pdf-page-info" id="pdf-page-info">第 1 / — 页</span>
-        <button class="btn btn-primary btn-sm" id="pdf-download"></button>
+        <span class="pdf-page-info" id="pdf-page-info">第 1 / 12 页</span>
+        <button class="btn-sm" id="pdf-dl-btn" onclick="downloadPdf()">↓&nbsp;&nbsp;下载到本地</button>
       </div>
     </div>
     <div class="pdf-content" id="pdf-content">
-      <div class="pdf-placeholder">
+      <div class="pdf-empty">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round"
             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
         </svg>
-        <p>PDF 报告将在此预览</p>
+        <p id="t-pdf-empty">完成分析后，PDF 报告将在此处预览</p>
       </div>
     </div>
   </div>
+</section>
 
-  <div style="text-align:center;margin-top:24px">
-    <button class="btn btn-outline" id="back-to-analyze">← 返回重新分析</button>
+
+<!-- ═══════════════════════════════════════════
+     FOOTER
+════════════════════════════════════════════ -->
+<footer>
+  <div class="footer-top">
+    <div class="footer-brand">
+      <h3>Dreamcode</h3>
+      <p id="t-footer-tagline">AI 驱动的竞品分析平台</p>
+    </div>
+    <div class="footer-cols">
+      <div class="footer-col">
+        <h4 id="t-fc1-title">产品</h4>
+        <a href="#" onclick="scrollTo('product')">功能介绍</a>
+        <a href="#" onclick="scrollTo('agents')">智能体</a>
+        <a href="#">定价</a>
+      </div>
+      <div class="footer-col">
+        <h4 id="t-fc2-title">支持</h4>
+        <a href="#">文档</a>
+        <a href="#">联系我们</a>
+        <a href="#">关于</a>
+      </div>
+    </div>
   </div>
-</div><!-- /page-result -->
+  <p class="footer-copy" id="t-footer-copy">© 2024 Dreamcode · 保留所有权利</p>
+</footer>
 
 
 <script src="static/js/app.js"></script>
