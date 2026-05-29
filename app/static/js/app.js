@@ -193,9 +193,7 @@ function applyLang() {
   setText('think-text', T.thinkText);
   setHTML('t-log-hint-text', T.logHintText);
 
-  // Navbar download btn
-  const navDl = $('t-nav-dl');
-  if (navDl) { const s = navDl.querySelector('span'); if (s) s.textContent = T.navDlBtn; }
+  setText('t-nav-dl', T.navDlBtn);
 
   // Optional tags
   setText('t-optional1', T.optionalTag);
