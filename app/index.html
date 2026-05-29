@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dreamcode — AI 竞品分析平台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="static/css/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════
+     NAVBAR  (always visible)
+════════════════════════════════════════ -->
+<nav class="navbar">
+  <a class="logo" href="#">
+    <div class="logo-icon">D</div>
+    <span class="logo-text">Dreamcode</span>
+  </a>
+
+  <div class="nav-links" id="nav-links"></div>
+
+  <div class="lang-switcher">
+    <button class="lang-btn active" data-lang="zh">中</button>
+    <button class="lang-btn"        data-lang="en">EN</button>
+  </div>
+</nav>
+
+
+<!-- ═══════════════════════════════════════
+     PAGE: HOME
+════════════════════════════════════════ -->
+<div id="page-home" class="page active">
+
+  <!-- Hero -->
+  <section id="hero">
+    <div class="hero-left">
+      <div class="eyebrow">
+        <span class="eyebrow-dot"></span>
+        <span id="eyebrow-text"></span>
+      </div>
+      <h1 class="hero-title" id="hero-title"></h1>
+      <p class="hero-sub"    id="hero-sub"></p>
+      <p class="hero-sub-en" id="hero-sub-en"></p>
+      <div class="hero-btns">
+        <button class="btn btn-primary" id="hero-cta"></button>
+        <button class="btn btn-outline" id="hero-more"></button>
+      </div>
+    </div>
+
+    <div class="hero-right">
+      <div class="report-card">
+        <div class="report-card-header">
+          <span class="report-card-title">竞品分析报告</span>
+          <span class="pdf-badge">PDF</span>
+        </div>
+
+        <div class="report-preview">
+          <div class="report-preview-bar"></div>
+          <div class="chip-row">
+            <span class="chip chip-blue">飞书</span>
+            <span class="chip chip-green">DingTalk</span>
+            <span class="chip chip-orange">Slack</span>
+          </div>
+          <!-- Mini bar chart -->
+          <div class="chart">
+            <div class="bar-group">
+              <div class="bar" style="width:22px;height:90px;background:#3B82F6;border-radius:3px"></div>
+              <div class="bar" style="width:22px;height:65px;background:#1EBF89;border-radius:3px"></div>
+              <div class="bar" style="width:22px;height:78px;background:#DF7F37;border-radius:3px"></div>
+            </div>
+            <div class="bar-group">
+              <div class="bar" style="width:22px;height:70px;background:#3B82F6;border-radius:3px"></div>
+              <div class="bar" style="width:22px;height:85px;background:#1EBF89;border-radius:3px"></div>
+              <div class="bar" style="width:22px;height:60px;background:#DF7F37;border-radius:3px"></div>
+            </div>
+            <div class="bar-group">
+              <div class="bar" style="width:22px;height:80px;background:#3B82F6;border-radius:3px"></div>
+              <div class="bar" style="width:22px;height:72px;background:#1EBF89;border-radius:3px"></div>
+              <div class="bar" style="width:22px;height:90px;background:#DF7F37;border-radius:3px"></div>
+            </div>
+            <div class="bar-group">
+              <div class="bar" style="width:22px;height:60px;background:#3B82F6;border-radius:3px"></div>
+              <div class="bar" style="width:22px;height:88px;background:#1EBF89;border-radius:3px"></div>
+              <div class="bar" style="width:22px;height:50px;background:#DF7F37;border-radius:3px"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="report-footer">
+          <span class="report-filename">竞品分析报告_2024.pdf</span>
+          <button class="btn btn-primary btn-sm" onclick="document.getElementById('hero-cta').click()">下载 PDF</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Product intro -->
+  <section id="section-product" style="background:#fff">
+    <p class="section-label" id="sec1-label"></p>
+    <h2 class="section-title" id="sec1-title"></h2>
+    <p class="section-sub"   id="sec1-sub"></p>
+    <div class="step-cards"  id="step-cards"></div>
+  </section>
+
+  <!-- Agent features -->
+  <section id="section-agents" style="background:var(--blue-pale)">
+    <p class="section-label" id="sec2-label"></p>
+    <h2 class="section-title" id="sec2-title"></h2>
+    <div class="agent-flow" id="agent-flow" style="margin-top:48px"></div>
+  </section>
+
+  <footer>
+    <div class="footer-top">
+      <div class="footer-brand">
+        <h3 id="footer-brand"></h3>
+        <p  id="footer-tagline"></p>
+      </div>
+      <div class="footer-links" id="footer-cols"></div>
+    </div>
+    <p class="footer-copy" id="footer-copy"></p>
+  </footer>
+</div><!-- /page-home -->
+
+
+<!-- ═══════════════════════════════════════
+     PAGE: ANALYZE
+════════════════════════════════════════ -->
+<div id="page-analyze" class="page">
+  <div class="analyze-layout">
+
+    <!-- Input form -->
+    <div class="form-card">
+      <h2 id="form-title"></h2>
+      <form id="analyze-form" novalidate>
+
+        <div class="form-group">
+          <label class="form-label" id="label-product" for="input-product"></label>
+          <input class="form-input" id="input-product" type="text" autocomplete="off" required />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" id="label-query" for="input-query"></label>
+          <textarea class="form-textarea" id="input-query" rows="4"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" id="label-file"></label>
+          <div class="upload-area" id="upload-area">
+            <div class="upload-icon">↑</div>
+            <p class="upload-main" id="upload-main"></p>
+            <p class="upload-sub"  id="upload-sub"></p>
+          </div>
+          <div class="upload-file-info" id="upload-file-info">
+            <span class="upload-file-name" id="upload-file-name"></span>
+            <button type="button" class="upload-file-remove" id="upload-file-remove" title="移除">✕</button>
+          </div>
+          <input type="file" id="file-input" accept=".pdf,.doc,.docx,.txt" />
+        </div>
+
+        <button type="submit" class="submit-btn" id="submit-btn"></button>
+      </form>
+    </div>
+
+    <!-- Streaming panel -->
+    <div class="stream-panel">
+      <div class="stream-header">
+        <div class="term-dots">
+          <div class="term-dot" style="background:#FF6058"></div>
+          <div class="term-dot" style="background:#FFBD2E"></div>
+          <div class="term-dot" style="background:#28CA41"></div>
+        </div>
+        <span class="stream-title" id="stream-title"></span>
+      </div>
+
+      <div class="think-badge" id="think-badge">
+        <div class="think-dot"></div>
+        <span id="think-label"></span>
+        <span id="think-time"></span>
+      </div>
+
+      <div class="log-body" id="log-body">
+        <p class="log-placeholder" id="stream-placeholder"></p>
+      </div>
+
+      <div class="progress-wrap">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-fill"></div>
+        </div>
+        <p class="progress-label" id="progress-label"></p>
+      </div>
+    </div>
+
+  </div>
+</div><!-- /page-analyze -->
+
+
+<!-- ═══════════════════════════════════════
+     PAGE: RESULT
+════════════════════════════════════════ -->
+<div id="page-result" class="page">
+  <h2 id="result-title"></h2>
+
+  <div class="pdf-viewer-wrap">
+    <div class="pdf-toolbar">
+      <span class="pdf-filename" id="pdf-filename"></span>
+      <div class="pdf-actions">
+        <span class="pdf-page-info" id="pdf-page-info">第 1 / — 页</span>
+        <button class="btn btn-primary btn-sm" id="pdf-download"></button>
+      </div>
+    </div>
+    <div class="pdf-content" id="pdf-content">
+      <div class="pdf-placeholder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <p>PDF 报告将在此预览</p>
+      </div>
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-top:24px">
+    <button class="btn btn-outline" id="back-to-analyze">← 返回重新分析</button>
+  </div>
+</div><!-- /page-result -->
+
+
+<script src="static/js/app.js"></script>
+</body>
+</html>
