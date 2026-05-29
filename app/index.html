@@ -27,10 +27,10 @@
   </a>
 
   <div class="nav-links" id="nav-links">
-    <a onclick="scrollTo('product')">产品介绍</a>
-    <a onclick="scrollTo('agents')">智能体</a>
-    <a onclick="scrollTo('analyze')">开始分析</a>
-    <a class="login" onclick="handleLogin()">登录</a>
+    <a onclick="jumpTo('product');return false;">产品介绍</a>
+    <a onclick="jumpTo('agents');return false;">智能体</a>
+    <a onclick="jumpTo('analyze');return false;">开始分析</a>
+    <a class="login" onclick="handleLogin();return false;">登录</a>
   </div>
 
   <div class="lang-switcher">
@@ -53,8 +53,7 @@
     <p class="hero-sub"    id="t-hero-sub">多智能体协同分析 · 自动生成专业竞品报告 · 支持中英双语</p>
     <p class="hero-sub-en" id="t-hero-sub-en">Start your exclusive competitive analysis</p>
     <div class="hero-btns">
-      <button class="btn-primary" onclick="scrollTo('analyze')" id="t-hero-cta">立即开始分析</button>
-      <button class="btn-outline"  onclick="scrollTo('product')" id="t-hero-more">了解更多 →</button>
+      <button class="btn-primary" onclick="jumpTo('analyze');return false;" id="t-hero-cta">立即开始分析</button>
     </div>
   </div>
 
@@ -104,7 +103,7 @@
 
       <div class="report-footer">
         <span class="report-filename" id="t-report-filename">飞书竞品分析报告_2026.pdf</span>
-        <button class="btn-sm" onclick="scrollTo('analyze')" id="t-dl-btn">下载 PDF</button>
+        <span class="btn-sm btn-demo" id="t-dl-btn">下载 PDF</span>
       </div>
     </div>
   </div>
@@ -293,8 +292,8 @@
     <div class="footer-cols">
       <div class="footer-col">
         <h4 id="t-fc1-title">产品</h4>
-        <a href="#" onclick="scrollTo('product')">功能介绍</a>
-        <a href="#" onclick="scrollTo('agents')">智能体</a>
+        <a href="#" onclick="jumpTo('product');return false;">功能介绍</a>
+        <a href="#" onclick="jumpTo('agents');return false;">智能体</a>
         <a href="#">定价</a>
       </div>
       <div class="footer-col">
@@ -305,7 +304,7 @@
       </div>
     </div>
   </div>
-  <p class="footer-copy" id="t-footer-copy">© 2024 Dreamcode · 保留所有权利</p>
+  <p class="footer-copy" id="t-footer-copy">© 2026 Dreamcode · 保留所有权利</p>
 </footer>
 
 

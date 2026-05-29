@@ -168,6 +168,8 @@ body {
   transition: background .2s;
 }
 .btn-sm:hover { background: var(--teal-dark); }
+/* Demo-only button — visually same but not interactive */
+.btn-demo { cursor: default; pointer-events: none; opacity: .85; }
 
 /* ══════════════════════════════════
    PRODUCT INTRO

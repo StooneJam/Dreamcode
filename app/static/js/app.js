@@ -44,7 +44,7 @@ const I18N = {
     progress: (p, s) => `分析进度 ${p}% · 预计剩余 ${s} 秒`,
     footerTagline: 'AI 驱动的竞品分析平台',
     fc1Title: '产品', fc2Title: '支持',
-    footerCopy: '© 2024 Dreamcode · 保留所有权利',
+    footerCopy: '© 2026 Dreamcode · 保留所有权利',
     errNoProduct: '请输入目标产品名称',
     errFiletype: '仅支持 PDF、Word、TXT 格式',
     errFilesize: '文件不能超过 20MB',
@@ -90,7 +90,7 @@ const I18N = {
     progress: (p, s) => `Progress ${p}% · ~${s}s remaining`,
     footerTagline: 'AI-powered Competitive Analysis',
     fc1Title: 'Product', fc2Title: 'Support',
-    footerCopy: '© 2024 Dreamcode · All rights reserved',
+    footerCopy: '© 2026 Dreamcode · All rights reserved',
     errNoProduct: 'Please enter a target product name',
     errFiletype: 'Only PDF, Word, TXT supported',
     errFilesize: 'File must be under 20 MB',
@@ -112,7 +112,7 @@ let eventSource = null;
 function $(id) { return document.getElementById(id); }
 function T(k)  { return I18N[lang][k]; }
 
-function scrollTo(sectionId) {
+function jumpTo(sectionId) {
   const el = document.getElementById(sectionId);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   return false;
