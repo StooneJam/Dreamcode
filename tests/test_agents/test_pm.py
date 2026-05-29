@@ -1115,6 +1115,181 @@ def test_handle_signal_node_debate_only_does_not_bump_reroute(
     assert "reroute_count" not in result   # 未增量则不写回
 
 
+# ── Phase 2: bucket coverage + mapping ────────────────────────────────
+
+
+class TestBucketCoverageFlags:
+    """_bucket_coverage_flags 是 Phase 2 引入的纯函数；只测它本身。"""
+
+    def test_full_coverage_no_flags(self):
+        from cca.agents.pm import _bucket_coverage_flags
+        dims = ["AI 智能纪要", "视频会议人数", "Pro 月费"]
+        buckets = ["AI 助手", "视频会议", "定价"]
+        keywords = {"AI 助手": ["AI", "智能"], "视频会议": ["视频", "会议"], "定价": ["Pro", "定价"]}
+        assert _bucket_coverage_flags(dims, buckets, keywords) == []
+
+    def test_single_bucket_missing(self):
+        from cca.agents.pm import _bucket_coverage_flags
+        dims = ["视频会议人数", "Pro 月费"]   # 无 AI 类
+        buckets = ["AI 助手", "视频会议", "定价"]
+        keywords = {"AI 助手": ["AI", "智能"], "视频会议": ["视频", "会议"], "定价": ["Pro", "定价"]}
+        flags = _bucket_coverage_flags(dims, buckets, keywords)
+        assert flags == ["bucket_uncovered: AI 助手"]
+
+    def test_multiple_buckets_missing(self):
+        from cca.agents.pm import _bucket_coverage_flags
+        dims = ["定价 Pro"]
+        buckets = ["AI 助手", "视频会议", "定价"]
+        keywords = {"AI 助手": ["AI", "智能"], "视频会议": ["视频", "会议"], "定价": ["Pro", "定价"]}
+        flags = _bucket_coverage_flags(dims, buckets, keywords)
+        assert "bucket_uncovered: AI 助手" in flags
+        assert "bucket_uncovered: 视频会议" in flags
+        assert "bucket_uncovered: 定价" not in flags  # "定价 Pro" 含 "Pro"
+
+    def test_empty_tentative_buckets_returns_empty(self):
+        """Phase 2 关闭场景。"""
+        from cca.agents.pm import _bucket_coverage_flags
+        assert _bucket_coverage_flags(["任意 dim"], [], {}) == []
+
+
+def test_check_data_completeness_includes_bucket_uncovered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 2 端到端：_check_data_completeness 在 collector pre_flags 中追加 bucket_uncovered。"""
+    from cca.agents.pm import _check_data_completeness
+
+    profile = {
+        "product_name": "x",
+        "dimensions": [{
+            "name": "用户体验",   # 不命中 "视频"/"会议"/"AI"/"智能"
+            "category": "x",
+            "facts": [{"statement": "s", "evidence": [
+                {"source_url": "u", "snippet": "s", "fetched_at": "t"}]}],
+        }],
+        "sources": [{"source_url": "u", "snippet": "s", "fetched_at": "t"}],
+        "sentiment": {"representative_reviews": [{"text": "r"}, {"text": "r"}, {"text": "r"}]},
+    }
+    task_plan = {
+        "collect_tasks": [{"product_name": "x"}],
+        "insight_tasks": [{"product_name": "x"}],
+        "tentative_buckets": ["视频会议", "AI 助手"],
+        "bucket_keywords": [
+            {"bucket": "视频会议", "keywords": ["视频", "会议"]},
+            {"bucket": "AI 助手", "keywords": ["AI", "智能"]},
+        ],
+    }
+    flags = _check_data_completeness({"x": profile}, task_plan)
+    assert "collector:x" in flags
+    assert "bucket_uncovered: 视频会议" in flags["collector:x"]
+    assert "bucket_uncovered: AI 助手" in flags["collector:x"]
+    # insight 端不查 bucket，仍 passed
+    assert "insight:x" not in flags
+
+
+def test_review_node_emits_bucket_uncovered_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 2: bucket 缺失 → pre_flag → coerce needs_retry → AgentSignal data_gap → 走 reroute。"""
+    output = ReviewOutput(
+        review_units=[
+            ReviewUnit(agent="collector", product_name="x", status="passed", retry_count=0),
+            ReviewUnit(agent="insight", product_name="x", status="passed", retry_count=0),
+        ],
+        decision_records=[_mk_decision("review_judgement")],
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import review_node
+    # collector 端 dim 不命中 bucket → pre_flag bucket_uncovered；insight 端完整不干扰
+    profile = {
+        "product_name": "x",
+        "dimensions": [{"name": "无关维度", "category": "x", "facts": [
+            {"statement": "s", "evidence": [
+                {"source_url": "u", "snippet": "s", "fetched_at": "t"}]}]}],
+        "sources": [{"source_url": "u", "snippet": "s", "fetched_at": "t"}],
+        "sentiment": {"representative_reviews": [{"text": "r"}, {"text": "r"}, {"text": "r"}]},
+    }
+    state = _make_minimal_state(
+        profiles={"x": profile},
+        task_plan={
+            "collect_tasks": [{"product_name": "x"}],
+            "insight_tasks": [{"product_name": "x"}],
+            "tentative_buckets": ["视频会议"],
+            "bucket_keywords": [{"bucket": "视频会议", "keywords": ["视频", "会议"]}],
+        },
+    )
+    result = review_node(state)
+    collector_unit = next(u for u in result["review_state"] if u["agent"] == "collector")
+    assert collector_unit["status"] == "needs_retry"
+    assert any("bucket_uncovered" in f for f in collector_unit["qa_flags"])
+    # signal 应被 raise（pm 转 data_gap signal）
+    assert len(result["agent_signals"]) >= 1
+    assert any(
+        any("bucket_uncovered" in e for e in s["payload"]["evidence"])
+        for s in result["agent_signals"]
+    )
+
+
+class TestEnsureMappingCoverage:
+    """_ensure_mapping_coverage 是 Phase 2 后置校正函数。"""
+
+    def test_full_coverage_passes_through(self):
+        from cca.agents.pm import _ensure_mapping_coverage
+        report_task = ReportTask(
+            target_product="t", competitors=["c"], product_names=["t", "c"],
+            dimension_canonical_map={"dim_a": "X", "dim_b": "Y"},
+        )
+        profiles = {
+            "t": {"dimensions": [{"name": "dim_a"}]},
+            "c": {"dimensions": [{"name": "dim_b"}]},
+        }
+        coerced, fallback = _ensure_mapping_coverage(report_task, profiles)
+        assert fallback == []
+        assert coerced.dimension_canonical_map == {"dim_a": "X", "dim_b": "Y"}
+
+    def test_missing_dim_falls_back_to_other(self):
+        """LLM 漏掉 dim_b → 自动归 '其他' 桶 + 返 fallback 列表。"""
+        from cca.agents.pm import _FALLBACK_BUCKET, _ensure_mapping_coverage
+        report_task = ReportTask(
+            target_product="t", competitors=["c"], product_names=["t", "c"],
+            dimension_canonical_map={"dim_a": "X"},   # 漏 dim_b
+        )
+        profiles = {
+            "t": {"dimensions": [{"name": "dim_a"}]},
+            "c": {"dimensions": [{"name": "dim_b"}]},
+        }
+        coerced, fallback = _ensure_mapping_coverage(report_task, profiles)
+        assert fallback == ["dim_b"]
+        assert coerced.dimension_canonical_map == {"dim_a": "X", "dim_b": _FALLBACK_BUCKET}
+
+
+def test_report_task_node_logs_mapping_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """report_task_node 漏掉 mapping → audit_log 记 fallback dim 列表。"""
+    output = ReportTaskOutput(
+        report_task=ReportTask(
+            target_product="飞书",
+            competitors=["钉钉"],
+            product_names=["飞书", "钉钉"],
+            focus_dimensions=[],
+            invoke_call_report_reviewer=False,
+            dimension_canonical_map={"dim_a": "X"},   # 漏 dim_b
+        ),
+        decision_records=[_mk_decision("analysis_focus")],
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import report_task_node
+    state = _make_minimal_state(
+        competitor_names=["钉钉"],
+        profiles={
+            "飞书": {"product_name": "飞书", "dimensions": [{"name": "dim_a"}]},
+            "钉钉": {"product_name": "钉钉", "dimensions": [{"name": "dim_b"}]},
+        },
+    )
+    result = report_task_node(state)
+    assert result["report_task"]["dimension_canonical_map"]["dim_b"] == "其他"
+    assert any(
+        e.get("event") == "mapping_fallback_others" and "dim_b" in e.get("fallback_dims", [])
+        for e in result.get("audit_log", [])
+    )
+
+
 def test_build_reroute_context_excludes_large_fields() -> None:
     """reroute 上下文只含决策必需切片，不带 profiles / audit_log / decision_log。"""
     import json as _json

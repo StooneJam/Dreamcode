@@ -19,6 +19,7 @@ from cca.agents.qa_report import (
     _collect_forced_keys,
     _extract_final_md,
     _extract_pdf_path,
+    _invert_canonical_map,
     _serialize_profiles,
 )
 from cca.schema import QAResult, ReportTask
@@ -263,6 +264,36 @@ class TestBuildInitialMessage:
         # 但 ReportTask 块与 profiles 块仍在
         assert "报告任务" in msg
         assert "产品档案数据" in msg
+
+    def test_mapping_block_included_when_non_empty(self, mock_state):
+        """Phase 2: dimension_canonical_map 非空时，mapping 段块进 prompt。"""
+        msg = self._call(mock_state)
+        assert "维度归类映射" in msg
+        assert "视频会议人数上限" in msg   # 正向 mapping key
+        assert "视频会议" in msg           # bucket 名（反向索引 key 也是它）
+        assert "正向" in msg and "反向索引" in msg
+
+    def test_mapping_block_omitted_when_empty(self, mock_state):
+        """dimension_canonical_map 为空时不渲染 mapping 段块。"""
+        mock_state["report_task"]["dimension_canonical_map"] = {}
+        report_task = ReportTask(**mock_state["report_task"])
+        profiles_json = _serialize_profiles(mock_state["profiles"], set())
+        msg = _build_initial_message(
+            report_task, profiles_json,
+            exploration_result=None, task_plan=None, review_state=[],
+        )
+        assert "维度归类映射" not in msg
+
+
+class TestInvertCanonicalMap:
+    def test_inverts_simple_mapping(self):
+        mapping = {"AI 智能纪要": "AI 助手", "AI 日历": "AI 助手", "Pro 月费": "定价"}
+        inv = _invert_canonical_map(mapping)
+        assert sorted(inv["AI 助手"]) == ["AI 日历", "AI 智能纪要"]
+        assert inv["定价"] == ["Pro 月费"]
+
+    def test_empty_mapping_returns_empty(self):
+        assert _invert_canonical_map({}) == {}
 
 
 class TestExtractHelpers:

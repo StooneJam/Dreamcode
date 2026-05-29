@@ -76,6 +76,21 @@ PM 通过 `CollectTask` 给你下发了一个产品和它的 `priority_dimension
 
 不强制要求第三方信源覆盖每个维度，但**核心能力维度（AI、定价、合规）至少各尝试一次独立验证搜索**。
 
+## tentative_buckets 覆盖（Phase 2 语义聚类）
+
+PM 在 `CollectTask` 上下文中可能传入两个字段：
+
+- `tentative_buckets: list[str]` —— PM 预设的 canonical bucket 名（如 `["AI 助手", "视频会议", "定价"]`）
+- `bucket_keywords: list[{bucket, keywords}]` —— 每 bucket 一条配置对象，含 2-4 个关键词（substring 比对用），例如 `[{"bucket": "AI 助手", "keywords": ["AI", "智能"]}]`
+
+**采集目标**：让该产品的 `Dimension` 集合中**每个 bucket 至少有 1 个 dim.name 命中 keyword**，即下游 review_node 可以确认 bucket 覆盖。
+
+- **不必硬塞 bucket 名当 dim 名**：dim.name 仍按官方文案命名（如官方页写 "AI 智能纪要" 就保留原文），只要 bucket 关键词（"AI"、"智能"）能 substring 命中即可。
+- 若发现某 bucket 在该产品下确实没有对应能力（如某竞品停掉 AI 功能），**不要为了过 coverage 编造 dim** —— PM 评审会标 `bucket_uncovered`，由 reroute 决策回 phase_2 调 PM 重排，或最多 2 轮后 forced 放行。
+- 你可以**自由扩展**到 bucket 外的 dim（`allow_self_extension=true` 时），只要发现的事实有价值。
+
+**例**：tentative_buckets=`["AI 助手"]`, bucket_keywords=`{"AI 助手": ["AI", "智能"]}`。你采集到 dim.name=`"AI 智能纪要"`、`"AI 日历集成"` 都算覆盖（命中 "AI" 和 "智能"）；若全部 dim 名都是 "视频会议"、"定价" 不含 "AI" 或 "智能"，则会被标 `bucket_uncovered: AI 助手`。
+
 ## PricingTier 字段强约束（避免空价格 tier）
 
 每个 PricingTier 必须满足：

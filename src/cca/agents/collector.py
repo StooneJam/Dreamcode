@@ -262,10 +262,14 @@ def build_collect_context(state: CCAState, product_name: str) -> dict:
         (b for b in exploration.get("initial_profiles", []) if b.get("product_name") == product_name),
         None,
     )
+    task_plan = state.get("task_plan") or {}
     return {
         "target_product": state["target_product"],
         "domain_seed": state.get("domain_seed"),
         "product_brief": brief,
+        # Phase 2: 让 Collector 知道目标 bucket，引导每个 bucket 至少 1 项 fact
+        "tentative_buckets": task_plan.get("tentative_buckets") or [],
+        "bucket_keywords": task_plan.get("bucket_keywords") or {},
     }
 
 

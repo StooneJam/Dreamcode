@@ -80,6 +80,8 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         target_audience="产品负责人",
         sections=["执行摘要", "核心功能对比", "定价结构", "用户口碑", "SWOT 分析", "结论与建议"],
         invoke_call_report_reviewer=invoke_reviewer,
+        # Phase 2 mapping：profile 中 dim.name 是"视频会议人数上限"，归 "视频会议" bucket
+        dimension_canonical_map={"视频会议人数上限": "视频会议"},
     )
     review_state = [
         ReviewUnit(agent="collector", product_name="钉钉", status="passed", retry_count=0).model_dump(),
@@ -106,6 +108,12 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
             competitor_names=["钉钉", "企业微信"],
             collect_tasks=[CollectTask(product_name="钉钉"), CollectTask(product_name="企业微信")],
             insight_tasks=[InsightTask(product_name="钉钉"), InsightTask(product_name="企业微信")],
+            # Phase 2: tentative_buckets + bucket_keywords，与 profile dim.name "视频会议人数上限" 对齐
+            tentative_buckets=["视频会议", "定价"],
+            bucket_keywords=[
+                {"bucket": "视频会议", "keywords": ["视频", "会议"]},
+                {"bucket": "定价", "keywords": ["定价", "Pro"]},
+            ],
         ).model_dump(),
         report_task=report_task.model_dump(),
         profiles=profiles,

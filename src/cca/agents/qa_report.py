@@ -119,6 +119,27 @@ def _format_review_state(review_state: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _invert_canonical_map(mapping: dict[str, str]) -> dict[str, list[str]]:
+    """{dim_name → bucket} → {bucket → [dim_name, ...]}。Reporter 按 bucket 抓 fact 用。"""
+    inv: dict[str, list[str]] = {}
+    for dim_name, bucket in mapping.items():
+        inv.setdefault(bucket, []).append(dim_name)
+    return inv
+
+
+def _format_canonical_mapping(mapping: dict[str, str]) -> str:
+    """Phase 2 mapping 段块：正向 + 反向索引，让 Reporter 按 bucket 横向排名。"""
+    if not mapping:
+        return ""
+    inv = _invert_canonical_map(mapping)
+    return (
+        "## 维度归类映射（dimension_canonical_map，Phase 2）\n"
+        "Reporter 横向排名按 canonical bucket 进行；正文叙述时引用细分 dim 名以保溯源。\n"
+        f"### 正向（dim_name → bucket）\n```json\n{json.dumps(mapping, ensure_ascii=False, indent=2)}\n```\n"
+        f"### 反向索引（bucket → [dim_name, ...]）\n```json\n{json.dumps(inv, ensure_ascii=False, indent=2)}\n```"
+    )
+
+
 def _build_initial_message(
     task: ReportTask,
     profiles_json: str,
@@ -126,7 +147,7 @@ def _build_initial_message(
     task_plan: dict | None,
     review_state: list[dict],
 ) -> str:
-    """5 段拼装：ReportTask → exploration → task_plan → review_state → profiles JSON。"""
+    """6 段拼装：ReportTask → exploration → task_plan → review_state → mapping → profiles JSON。"""
     audience = task.target_audience or "产品团队"
     focus = "、".join(task.focus_dimensions) if task.focus_dimensions else "（自主判断）"
     sections = "、".join(task.sections) if task.sections else "（自主决定）"
@@ -154,6 +175,7 @@ def _build_initial_message(
         _format_exploration(exploration_result),
         _format_task_plan(task_plan),
         _format_review_state(review_state),
+        _format_canonical_mapping(task.dimension_canonical_map),
         profiles_block,
     ]
     return "\n\n".join(b for b in blocks if b)

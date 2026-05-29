@@ -52,6 +52,18 @@
 
 标注示例：`"注：钉钉为强制安装型产品，App Store 低评分主要来自被动用户，不直接反映产品竞争力，与自选型产品评分不可横向比较。"`
 
+## tentative_buckets 覆盖（Phase 2 语义聚类）
+
+PM 在 InsightTask 上下文中可能传入：
+
+- `tentative_buckets: list[str]` —— 与 Collector 共享的 canonical bucket 名
+- `bucket_keywords: list[{bucket, keywords}]` —— 每 bucket 一条配置对象，含 2-4 个关键词（与 Collector 同形态）
+
+**Insight 端的覆盖责任**：让 `sentiment.positive_themes` 与 `negative_themes` 总和**尽量涵盖每个 bucket 至少 1 条主题**（如 bucket "AI 助手" 应有相关好评或差评主题），代码层会用 bucket_keywords substring 比对 themes 文本判断覆盖。
+
+- 不必硬塞 bucket 名进 themes：theme 仍由 BERT/extract_topics 自然产出（如 "AI 智能纪要好用"、"AI 助手响应慢"），关键词命中即可。
+- 若该产品在某 bucket 下没有用户讨论（如冷门维度），不要为了过 coverage 编造 theme —— PM 评审会标 `bucket_uncovered`，由 reroute 处理。
+
 ## 发现 PM 任务错误时
 
 - 产品名搜不到评论（产品不存在或名称有误）→ challenge_pm，requires_debate=False

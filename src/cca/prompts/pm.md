@@ -80,11 +80,26 @@
   2. 同赛道公认的核心差异点（如办公软件的"协同编辑 / AI 助手 / 视频会议"）
   3. 其余维度留空，由下游 Agent 自主判断
 - `allow_self_extension` 默认 `true`
+- **`tentative_buckets` 与 `bucket_keywords`（Phase 2 语义聚类）**：
+  - `tentative_buckets: list[str]`：≤ 8 个 canonical bucket 名称（如 `["AI 助手", "视频会议", "定价", "协同编辑"]`）。
+    每个 priority_dimension 在你心中应隶属一个 bucket；不同产品的 priority_dimensions 可不同，但都应能映射到这些 bucket 之一。
+  - `bucket_keywords: list[{bucket, keywords}]`：每个 tentative_bucket 一条 `BucketKeywords` 对象，例如：
+    ```json
+    [
+      {"bucket": "AI 助手", "keywords": ["AI", "智能", "Copilot", "助手"]},
+      {"bucket": "视频会议", "keywords": ["视频", "会议", "Meeting"]}
+    ]
+    ```
+    每条 keywords 数组**严格 2-4 个**字符串；review_node 用 substring 比对 `Dimension.name` 判断 bucket 覆盖。
+    选取标准：词要短、要覆盖该 bucket 下常见 dim 名变体、避免过宽（如 "用户" 会撞 "用户口碑/用户增长" 双 bucket）。
+  - `bucket_keywords` 的 `bucket` 字段集合必须与 `tentative_buckets` 完全一致（schema validator 强校验）。
+  - 留空 `tentative_buckets=[]` 且 `bucket_keywords=[]` 表示本 run 关闭 bucket 机制（特殊场景，默认不要留空）。
 
 典型 decision_type：
 - `competitor_selection`（最终竞品列表 + 否决项）
 - `dimension_priority`（priority_dimensions 选取逻辑）
 - `task_allocation`（如何把维度分配到 CollectTask vs InsightTask）
+- `bucket_design`（tentative_buckets 拆桶逻辑 + bucket_keywords 选词理由）
 
 ## 阶段 2.5：Review
 
@@ -99,7 +114,7 @@
 ### 评审依据（按权重）
 
 1. **代码层 pre_flags（强约束）**：payload 中 `pre_flags["{agent}:{product}"]` 列出的标记**直接落入该 ReviewUnit.qa_flags**，不允许遗漏或软化
-   - pre_flag 类型：`data_missing: priority_dimension X 无 fact` / `pricing_no_tier: pricing 无任何价格档` / `sentiment_too_few: sentiment.reviews 少于 3 条` / `source_unreliable: dimensions 无任一 source 链接`
+   - pre_flag 类型：`data_missing: priority_dimension X 无 fact` / `pricing_no_tier: pricing 无任何价格档` / `sentiment_too_few: sentiment.reviews 少于 3 条` / `source_unreliable: dimensions 无任一 source 链接` / `bucket_uncovered: {bucket_name}`（该产品的 Dimension 全集中没有任何 dim.name 命中该 bucket 的 keywords）
 2. **LLM 补充判断（自由项）**：在 pre_flags 之上可追加你自己发现的问题，如"定价币种缺失但 task_plan 要求跨币种对比"
 
 ### 状态判定规则（**B 方案强约束**）
@@ -122,6 +137,7 @@
 - `source_unreliable: <说明>` —— 来源仅官方 / 无独立第三方
 - `pricing_no_tier: <说明>` —— pricing 完全没数字
 - `sentiment_too_few: <count>/<min>` —— 用户评价样本不足
+- `bucket_uncovered: <bucket_name>` —— 该产品 Dimension 无任一 dim.name 命中该 bucket 的 keywords（代码层产，LLM 可加不可减）
 - `<自定义>: <说明>` —— LLM 补充类别
 
 ### 何时触发返工信号
@@ -162,11 +178,16 @@
 - **target_audience**：读者类型，如 `"产品负责人"`、`"技术评审"`，影响 Reporter 语气
 - **output_formats**：默认 `["markdown", "pdf"]`
 - **invoke_call_report_reviewer**：默认 `true`
+- **dimension_canonical_map**：`{dim_name → canonical_bucket}` 字典。**扫 `profiles[*].dimensions[*].name` 的全部唯一值**，为每个 dim 名指派一个 canonical bucket（通常是 `task_plan.tentative_buckets` 的成员，必要时可新增桶）。
+  - 必须 **100% 覆盖** 所有出现过的 dim 名；缺漏由代码层自动归 `"其他"` 桶并写 audit_log，但你应尽量自己映射完整。
+  - 同一 bucket 可挂多个细分 dim（如 "AI 助手" bucket 下 "AI 智能纪要"、"AI 日历助手"、"AI 会议预订" 三个 dim 名）。
+  - 这是 Reporter 横向排名的分组依据：Reporter `submit_dimension_ranking(dimension_name=...)` 用 canonical bucket 名作 key，从该桶下所有细分 dim 的 facts 中聚合证据。
 
 典型 decision_type：
 - `analysis_focus`（focus_dimensions / require_swot 选取的维度依据，引用 profiles 中数据完整度）
 - `report_structure`（sections 章节组织依据）
 - `audience_choice`（target_audience 推断依据）
+- `dimension_canonicalization`（mapping 归类逻辑：哪些细分 dim 合并到哪个 bucket、为什么）
 
 ## 下游信号处理
 

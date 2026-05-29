@@ -83,11 +83,15 @@ def _build_human_message(task_plan: TaskPlan, profiles: dict, sentiment_model: s
 
 def build_insight_context(state: CCAState, product_name: str) -> dict:
     """抽出单产品 insight 所需的最小 state 切片。"""
+    task_plan = state.get("task_plan") or {}
     return {
         "profiles": state.get("profiles", {}),
         "competitor_names": state.get("competitor_names", []),
         "sentiment_model": load_config().get("nlp", {}).get("sentiment_model", "llm"),
         "target_product": state["target_product"],
+        # Phase 2: 让 Insight 知道目标 bucket，sentiment themes 尽量覆盖
+        "tentative_buckets": task_plan.get("tentative_buckets") or [],
+        "bucket_keywords": task_plan.get("bucket_keywords") or {},
     }
 
 

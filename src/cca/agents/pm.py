@@ -21,6 +21,7 @@ from cca.schema import (
     DebateResult,
     DecisionRecord,
     InitialBriefOutput,
+    ReportTask,
     ReportTaskOutput,
     ReviewOutput,
     ReviewUnit,
@@ -183,29 +184,107 @@ def task_plan_node(state: CCAState) -> dict:
     }
 
 
+_FALLBACK_BUCKET = "其他"
+
+
+def _ensure_mapping_coverage(
+    report_task: ReportTask, profiles: dict[str, dict],
+) -> tuple[ReportTask, list[str]]:
+    """Phase 2 校正：dimension_canonical_map 必须覆盖 profiles 中所有 dim 名。
+
+    缺漏的 dim 名自动归 _FALLBACK_BUCKET（"其他"），返新 report_task + fallback dim 名列表（供 audit）。
+    Reporter 端遇到 _FALLBACK_BUCKET 时按"补充信息"形式处理，不进主排名（见 report_agent.md）。
+    """
+    all_dim_names = {
+        dim.get("name") for p in profiles.values()
+        for dim in (p.get("dimensions") or [])
+        if dim.get("name")
+    }
+    mapped = set(report_task.dimension_canonical_map.keys())
+    missing = sorted(all_dim_names - mapped)
+    if not missing:
+        return report_task, []
+    updated_map = {
+        **report_task.dimension_canonical_map,
+        **{name: _FALLBACK_BUCKET for name in missing},
+    }
+    return report_task.model_copy(update={"dimension_canonical_map": updated_map}), missing
+
+
 def report_task_node(state: CCAState) -> dict:
     """阶段三：基于 profiles + review_state 产 ReportTask（含分析任务）+ 决策档案。
 
     Analyst 已并入 Reporter——ReportTask 同时携带 focus_dimensions / require_swot
     和 sections / target_audience，Reporter ReAct 据此调内部分析工具。
+
+    Phase 2：invoke 后用 _ensure_mapping_coverage 校正 dimension_canonical_map，
+    缺漏 dim 名自动归 "其他" 桶。
     """
+    profiles = state.get("profiles") or {}
+    task_plan = state.get("task_plan") or {}
     result = cast(ReportTaskOutput, _invoke_pm(
         ReportTaskOutput, "阶段三 ReportTask",
         {
             "user_query": state["user_query"],
             "target_product": state["target_product"],
             "competitor_names": state.get("competitor_names", []),
-            "profiles": state.get("profiles", {}),
+            "profiles": profiles,
             "review_state": state.get("review_state", []),
+            # Phase 2: 让 LLM 知道 PM 阶段二定的 buckets，产 mapping 时优先沿用
+            "tentative_buckets": task_plan.get("tentative_buckets") or [],
+            "bucket_keywords": task_plan.get("bucket_keywords") or [],
         },
     ))
-    return {
-        "report_task": result.report_task.model_dump(),
+    coerced_task, fallback_dims = _ensure_mapping_coverage(result.report_task, profiles)
+    updates: dict = {
+        "report_task": coerced_task.model_dump(),
         "decision_log": _stamp_decisions(result.decision_records, "report_task"),
     }
+    if fallback_dims:
+        updates["audit_log"] = [{
+            "agent": "pm", "event": "mapping_fallback_others",
+            "fallback_dims": fallback_dims,
+            "note": f"{len(fallback_dims)} 个 dim 未在 LLM mapping 中出现，自动归 '{_FALLBACK_BUCKET}'",
+        }]
+    return updates
 
 
 # ── 阶段 2.5 Review ─────────────────────────────────────────────────
+
+
+def _bucket_keywords_to_dict(raw: list[dict] | dict | None) -> dict[str, list[str]]:
+    """task_plan["bucket_keywords"] 归一为 dict[str, list[str]]。
+
+    兼容两种存储形态：
+    - list[BucketKeywords.model_dump()] = list[{bucket, keywords}]（schema 现态）
+    - dict[str, list[str]]（旧形态或测试直接构造）
+    """
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    return {item["bucket"]: item["keywords"] for item in raw if "bucket" in item}
+
+
+def _bucket_coverage_flags(
+    dim_names: list[str],
+    tentative_buckets: list[str],
+    bucket_keywords: dict[str, list[str]],
+) -> list[str]:
+    """单产品 → bucket_uncovered flag list。纯函数，无 task_plan 上下文。
+
+    判定：bucket 的 keywords 中任一 substring 命中任一 dim_name → 视为覆盖。
+    keywords 缺失（如 bucket_keywords 没该 bucket 条目）→ 跳过该 bucket（不报 flag，PM TaskPlan validator 已强校验同步性，理论不应到这）。
+    tentative_buckets 为空 → 返空列表（Phase 2 机制关闭场景）。
+    """
+    if not tentative_buckets:
+        return []
+    return [
+        f"bucket_uncovered: {bucket}"
+        for bucket in tentative_buckets
+        if bucket_keywords.get(bucket)
+        and not any(kw in name for name in dim_names for kw in bucket_keywords[bucket])
+    ]
 
 
 def _check_data_completeness(
@@ -214,12 +293,15 @@ def _check_data_completeness(
 ) -> dict[str, list[str]]:
     """代码层数据完整度预检，产 pre_flags：{f"{agent}:{product}": ["data_missing: ...", ...]}。
 
-    Phase 1 范围：dimensions 有 fact / profile 有 sources / sentiment 有足够 reviews。
-    bucket coverage 在 Phase 2 追加。
+    Phase 1：dimensions 有 fact / profile 有 sources / sentiment 有足够 reviews。
+    Phase 2：collector 循环内追加 bucket_uncovered 检查（通过 _bucket_coverage_flags）。
     """
     flags: dict[str, list[str]] = {}
     if not task_plan:
         return flags
+
+    tentative_buckets = task_plan.get("tentative_buckets") or []
+    bucket_keywords = _bucket_keywords_to_dict(task_plan.get("bucket_keywords"))
 
     for ct in task_plan.get("collect_tasks") or []:
         product = ct.get("product_name")
@@ -236,6 +318,11 @@ def _check_data_completeness(
                     unit_flags.append(f"data_missing: dimension '{dim.get('name', '?')}' 无 fact")
         if not (profile.get("sources") or []):
             unit_flags.append("source_unreliable: profile.sources 为空")
+        # Phase 2: bucket 覆盖检查（dim 名 substring 比对 bucket_keywords）
+        unit_flags.extend(_bucket_coverage_flags(
+            [dim.get("name", "") for dim in dimensions],
+            tentative_buckets, bucket_keywords,
+        ))
         if unit_flags:
             flags[f"collector:{product}"] = unit_flags
 
@@ -367,6 +454,9 @@ def review_node(state: CCAState) -> dict:
         "per_unit_retry_limit": _PER_UNIT_RETRY_LIMIT,
         "profiles": profiles,
         "historical_review_state": review_state,
+        # Phase 2: LLM 须知本轮 bucket 设定，便于判断 pre_flags 中 bucket_uncovered 的根因
+        "tentative_buckets": (task_plan or {}).get("tentative_buckets") or [],
+        "bucket_keywords": (task_plan or {}).get("bucket_keywords") or [],
     }
     result = cast(ReviewOutput, _invoke_pm(ReviewOutput, "阶段 2.5 Review", payload))
 

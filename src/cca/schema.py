@@ -265,6 +265,17 @@ class InsightTask(BaseModel):
     )
 
 
+class BucketKeywords(BaseModel):
+    """单个 canonical bucket 的关键词配置；list[BucketKeywords] 比 dict[str, list[str]]
+    对 LLM function_calling 更稳（标准 array-of-objects，非 additionalProperties dict）。"""
+
+    bucket: str = Field(description="canonical bucket 名称，与 TaskPlan.tentative_buckets 之一对应")
+    keywords: list[str] = Field(
+        min_length=2, max_length=4,
+        description="2-4 个关键词，review_node 用 substring 比对 dim.name 判 bucket 覆盖",
+    )
+
+
 class TaskPlan(BaseModel):
     """
     PM 阶段二：基于 CollectorExplorationResult 给 Collector 和 Insight 下发的细粒度任务包
@@ -275,6 +286,39 @@ class TaskPlan(BaseModel):
     competitor_names: list[str] = Field(description="一轮debate 收敛后的权威竞品列表")
     collect_tasks: list[CollectTask]
     insight_tasks: list[InsightTask]
+    tentative_buckets: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "PM 预设的 canonical bucket 列表，≤8。每个 priority_dimension 心中应隶属一个 bucket；"
+            "Collector/Insight 据此保证覆盖。空列表 = Phase 2 bucket 机制关闭。"
+        ),
+    )
+    bucket_keywords: list[BucketKeywords] = Field(
+        default_factory=list,
+        description=(
+            "每个 tentative_bucket 对应一条 BucketKeywords({bucket, keywords})。"
+            "bucket 集合必须与 tentative_buckets 完全一致（validator 校验）。"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_bucket_keywords(self) -> "TaskPlan":
+        """tentative_buckets 与 bucket_keywords[*].bucket 集合一致；每 BucketKeywords 自身已校验 2-4 keys。"""
+        bucket_set = set(self.tentative_buckets)
+        kw_set = {bk.bucket for bk in self.bucket_keywords}
+        if bucket_set != kw_set:
+            missing = sorted(bucket_set - kw_set)
+            extra = sorted(kw_set - bucket_set)
+            raise ValueError(
+                "bucket_keywords 的 bucket 集合必须与 tentative_buckets 完全一致："
+                f"缺 {missing}；多 {extra}"
+            )
+        return self
+
+    def bucket_keywords_as_dict(self) -> dict[str, list[str]]:
+        """消费方便利视图：{bucket → keywords list}。"""
+        return {bk.bucket: bk.keywords for bk in self.bucket_keywords}
 
 
 # PM 三轮下发 Report 的分析 + 撰写任务。原 AnalystTask 字段（focus_dimensions /
@@ -321,6 +365,13 @@ class ReportTask(BaseModel):
     invoke_call_report_reviewer: bool = Field(
         True,
         description="是否调用 call_report_reviewer skill（Doubao + DeepSeek debate 终审）",
+    )
+    dimension_canonical_map: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "profiles[*].dimensions[*].name → canonical bucket 的映射。PM 阶段三基于真实采集到的 "
+            "dim 名产出；代码层校验覆盖率 100%，缺漏自动归 '其他' 桶。Reporter 据此按 bucket 横向排名。"
+        ),
     )
 
 

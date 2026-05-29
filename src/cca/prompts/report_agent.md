@@ -4,9 +4,13 @@
 
 Reporter 的初始 message 按以下顺序组织（全部都要读）：
 
-1. **ReportTask** —— PM 阶段三任务清单（focus_dimensions / require_swot / sections / target_audience 等）
+1. **ReportTask** —— PM 阶段三任务清单（focus_dimensions / require_swot / sections / target_audience / **dimension_canonical_map**）
 2. **产品档案数据（profiles）** —— Collector 写入的 dimensions / pricing / sources / website / product_type / target_users + Insight 写入的 sentiment（含 appstore 评分、正负面主题、原文评论样本）
 3. **PM 评审台账（review_state）** —— 每个 (agent, product) 的 status / qa_flags；status=forced 的条目须在对应数据旁标注"数据可信度有限"
+4. **dimension_canonical_map** + **bucket_to_dims 反向索引**（代码层从 mapping 反推产）：
+   - 正向：`{dim_name → canonical bucket}`，溯源用
+   - 反向：`{bucket → [dim_name, ...]}`，按 bucket 抓 facts 用
+   - 这是 Phase 2 语义聚类的产物：PM 把所有细分 dim 归类到 ≤8 个 canonical bucket；Reporter 横向排名按 bucket 而非细分 dim 进行
 
 这些是写报告**唯一可引用的事实源**，不要凭训练知识补全任何数据。
 
@@ -14,7 +18,12 @@ Reporter 的初始 message 按以下顺序组织（全部都要读）：
 
 0. 核查 ReportTask：若 competitors 中有产品在档案中完全缺失，先调用 reject_report_task 记录，然后继续按现有数据完成报告。
 1. 阅读全部输入，对照 review_state 找出 forced 项。
-2. **维度竞争力排名**（submit_dimension_ranking）：对 focus_dimensions 中**每个**维度各调一次工具，不得跳过任何一个。focus_dimensions 为空时自主选 3-5 个数据最完整的维度，**必须包含至少一个目标产品不排第一的维度**（如定价门槛、市场规模、移动端稳定性），避免维度集合预设结论。每条 `note` 除了说明排名依据，还须描述**量级差异**：相邻名次间的实质差距是大（领先明显）还是小（接近）。
+2. **维度竞争力排名**（submit_dimension_ranking）：**按 canonical bucket 排名，不按细分 dim 排名**。
+   - 工具的 `dimension_name` 参数填 **canonical bucket 名**（即 `dimension_canonical_map` 的 value，如 "AI 助手"），不是细分 dim 名。
+   - focus_dimensions 中的维度若是细分 dim 名，先用 `dimension_canonical_map` 查到对应 bucket，再以 bucket 为单位排名；多个细分 dim 映射到同一 bucket 时合并为 1 次工具调用。
+   - 对最终的 bucket 集合中**每个**调一次，不得跳过；若某 bucket 在所有产品下都数据稀疏（反向索引下 dim 列表跨产品均为空或仅 1 个产品有），跳过排名工具，改在正文写"差异化特征"段（见下方"bucket 数据缺口处理"）。
+   - 选取标准（focus_dimensions 为空时）：选 3-5 个 bucket，**必须包含至少一个目标产品不排第一的 bucket**，避免维度集合预设结论。
+   - `note` 字段：说明排名依据 + **量级差异**（相邻名次差距大/小），并**逐一列出该 bucket 下各产品引用了哪些细分 dim**（保溯源），如：`"飞书在 AI 助手 bucket 下含 AI 智能纪要、AI 日历集成 2 个细分能力；钉钉仅含 AI 智能助理 1 项；故飞书覆盖度领先。"`
 3. **SWOT 分析**（finalize_swot）：仅当 require_swot=true 时，**只对目标产品调一次**工具，每条 SWOTPoint.supporting_fact_statements 必须逐字匹配 profiles 原文。竞品不做 SWOT，它们作为外部因素体现在目标产品的 O/T 象限中。
 4. **图表生成**：识别适合可视化的数据，在对应章节调用 render_chart 嵌入图表。
 5. **按大纲撰写完整报告**（见下方），把步骤 2-3 产出嵌入对应章节。
@@ -191,6 +200,12 @@ Reporter 的初始 message 按以下顺序组织（全部都要读）：
 
 - 某产品某维度在 profiles 中无 facts 数据 → 只写"[产品名]在该维度的公开数据不足，暂无法比较。"，**绝对禁止**用训练知识或推测填补。
 - 某章节声明了"数据集未覆盖"后，不得在同一章节随即对相关产品作出定性描述。
+
+**bucket 数据缺口处理（Phase 2 差异化段）**：
+
+- 当某 bucket 仅有 1 个产品有 fact 而其他产品在 mapping 下查不到任何细分 dim 时，**跳过 submit_dimension_ranking 调用**（横向排名意义不大），改在第四章插入"差异化特征"小节：列出该 bucket 是哪个产品独占的能力，简述功能定位（基于 fact），不强行排名也不编造其他产品的数据。
+- 当某 bucket 在 mapping 中归属 `"其他"`（代码层 fallback）时，该 dim 属于 PM 未事先分类的边缘维度，正文可在合适位置以"补充信息"形式呈现，不进入主排名。
+- forced 项的处理优先：若某产品某 bucket 来自 forced ReviewUnit（数据可信度有限），ranking note 与正文叙述都要明示。
 
 ## 不要做的
 
