@@ -7,7 +7,7 @@ const I18N = {
   zh: {
     eyebrow: 'AI 驱动的竞品分析平台',
     heroTitle: '开始你的<br>专属竞品分析',
-    heroSub: '多智能体协同分析 · 自动生成专业竞品报告 · 支持中英双语',
+    heroSub: '多智能体协同分析 · 自动生成专业竞品报告',
     heroSubEn: 'Start your exclusive competitive analysis',
     heroCta: '立即开始分析',
     heroMore: '了解更多 →',
@@ -25,7 +25,7 @@ const I18N = {
     ag2Role: '联网采集', ag2Desc: '联网搜索竞品<br>采集定价 / 功能<br>ReAct 多轮探索',
     ag3Role: '情感分析', ag3Desc: '爬取用户评论<br>BERT 情感分类<br>提炼正负面观点',
     ag4Role: '报告生成', ag4Desc: 'SWOT 分析<br>横向评分对比<br>输出 PDF 报告',
-    navLinks: ['产品介绍', '智能体', '开始分析'],
+    navLinks: ['首页', '产品介绍', '智能体', '开始分析'],
     navLoginBtn: '登录',
     formTitle: '开始分析',
     lblProduct: '目标产品名称', phProduct: '例如：飞书、DingTalk、Slack',
@@ -41,7 +41,7 @@ const I18N = {
     thinkText: '思考中...',
     logHintText: '点击「开始分析」后，智能体实时日志将在此处显示<br>您可以看到每个 Agent 的思考过程和工具调用',
     pdfTitle: '竞品分析报告已生成',
-    pdfFname: '竞品分析报告_飞书_2024.pdf',
+    pdfFname: '竞品分析报告_飞书_2026.pdf',
     pdfDl: '↓  下载到本地',
     pdfEmpty: '完成分析后，PDF 报告将在此处预览',
     pdfPageInfo: (c, t) => `第 ${c} / ${t} 页`,
@@ -75,7 +75,7 @@ const I18N = {
     ag2Role: 'Scraping', ag2Desc: 'Web searches competitors<br>Collects pricing & features<br>ReAct multi-round exploration',
     ag3Role: 'Sentiment', ag3Desc: 'Crawls user reviews<br>BERT sentiment analysis<br>Extracts positive/negative themes',
     ag4Role: 'Report Gen', ag4Desc: 'SWOT analysis<br>Cross-product scoring<br>Outputs PDF report',
-    navLinks: ['Product', 'Agents', 'Analyze'],
+    navLinks: ['Home', 'Product', 'Agents', 'Analyze'],
     navLoginBtn: 'Login',
     formTitle: 'Start Analysis',
     lblProduct: 'Target Product', phProduct: 'e.g. Feishu, DingTalk, Slack',
@@ -91,7 +91,7 @@ const I18N = {
     thinkText: 'Thinking...',
     logHintText: 'Agent logs will stream here after you click Start Analysis.<br>Follow each agent\'s reasoning and tool calls in real time.',
     pdfTitle: 'Competitive Analysis Report Ready',
-    pdfFname: 'competitive_analysis_2024.pdf',
+    pdfFname: 'competitive_analysis_2026.pdf',
     pdfDl: '↓  Download',
     pdfEmpty: 'PDF report will appear here after analysis is complete.',
     pdfPageInfo: (c, t) => `Page ${c} of ${t}`,
@@ -113,6 +113,8 @@ let lang = 'zh';
 let uploadedFile = null;
 let pdfPath = null;
 let eventSource = null;
+let navJumping  = false;
+let scrollLocked = false;
 
 /* ══════════════════════════════════════
    Helpers
@@ -120,9 +122,58 @@ let eventSource = null;
 function $(id) { return document.getElementById(id); }
 function T(k)  { return I18N[lang][k]; }
 
+const SECTION_NAV_MAP = { hero: 0, product: 1, agents: 2, analyze: 3, 'pdf-section': 4 };
+
+function updateNavActive(sectionId) {
+  const idx = SECTION_NAV_MAP[sectionId];
+  document.querySelectorAll('.nav-links a').forEach((a, i) => {
+    a.classList.toggle('active', i === idx);
+  });
+}
+
+function triggerSnapIn(el) {
+  el.classList.remove('snap-in');
+  void el.offsetHeight;
+  el.classList.add('snap-in');
+}
+
 function jumpTo(sectionId) {
   const el = document.getElementById(sectionId);
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!el) return false;
+
+  const veil = $('page-veil');
+  const html = document.documentElement;
+
+  // Immediately highlight the nav link — don't wait for IntersectionObserver
+  updateNavActive(sectionId);
+
+  navJumping = true;
+  veil.classList.add('visible'); // 0 → 700ms: veil fades in
+
+  setTimeout(() => {
+    // 650ms: veil fully opaque — safe to jump (no flash possible)
+    html.style.setProperty('scroll-snap-type', 'none');
+    el.scrollIntoView({ block: 'start', behavior: 'instant' });
+
+    // Two rAFs: let browser commit scroll before re-enabling snap
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      // Re-enable snap with scroll-behavior:auto so the browser's fractional-pixel
+      // snap correction fires instantly (veil still opaque — user sees nothing).
+      html.style.setProperty('scroll-behavior', 'auto');
+      html.style.removeProperty('scroll-snap-type');
+      // Restore smooth scroll one frame later, after correction is done
+      requestAnimationFrame(() => html.style.removeProperty('scroll-behavior'));
+
+      // Veil fade-out and section fade-in start simultaneously.
+      // Section animation starts while veil is still at opacity:1 → first
+      // frame of opacity:0 is invisible → no flash.
+      veil.classList.remove('visible');
+      triggerSnapIn(el);
+    }));
+
+    setTimeout(() => { navJumping = false; }, 1200);
+  }, 650);
+
   return false;
 }
 
@@ -386,7 +437,7 @@ function showPdf(path, filename) {
   const url = `/api/report/pdf?path=${encodeURIComponent(path)}`;
   $('pdf-content').innerHTML = `<iframe src="${url}" title="PDF Report"></iframe>`;
   if (filename) $('pdf-fname').textContent = filename;
-  $('pdf-section').scrollIntoView({ behavior: 'smooth' });
+  jumpTo('pdf-section');
 }
 
 /* ══════════════════════════════════════
@@ -427,7 +478,7 @@ function simulate(btn) {
           </svg>
           <p>${zh?'演示模式：实际部署后 PDF 将在此预览':'Demo mode: PDF preview available after deployment'}</p>
         </div>`;
-      $('pdf-section').scrollIntoView({ behavior: 'smooth' });
+      jumpTo('pdf-section');
     }],
   ];
 
@@ -436,10 +487,91 @@ function simulate(btn) {
 }
 
 /* ══════════════════════════════════════
+   Wheel scroll — 2s per section
+══════════════════════════════════════ */
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function getSnapElements() {
+  return [
+    ...document.querySelectorAll('#hero, #product, #agents, #analyze, #pdf-section'),
+    document.querySelector('footer'),
+  ].filter(Boolean);
+}
+
+function getCurrentSnapIndex(elements) {
+  const navH = document.querySelector('.navbar').offsetHeight;
+  const scrollY = window.scrollY;
+  let idx = 0;
+  for (let i = elements.length - 1; i >= 0; i--) {
+    if (elements[i].offsetTop - navH <= scrollY + 5) { idx = i; break; }
+  }
+  return idx;
+}
+
+function scrollToSnapElement(el) {
+  const html  = document.documentElement;
+  const navH  = document.querySelector('.navbar').offsetHeight;
+  const startY = window.scrollY;
+  const endY   = Math.max(0, el.offsetTop - navH);
+  const dist   = endY - startY;
+  if (Math.abs(dist) < 5) { scrollLocked = false; return; }
+
+  html.style.setProperty('scroll-snap-type', 'none');
+  html.style.setProperty('scroll-behavior', 'auto');
+
+  const startTime = performance.now();
+  function tick(now) {
+    const t = Math.min((now - startTime) / 1700, 1);
+    window.scrollTo(0, startY + dist * easeInOutCubic(t));
+    if (t < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      html.style.removeProperty('scroll-snap-type');
+      html.style.removeProperty('scroll-behavior');
+      updateNavActive(el.id);
+      setTimeout(() => { scrollLocked = false; }, 100);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+function handleWheel(e) {
+  if (navJumping || scrollLocked) { e.preventDefault(); return; }
+  if (Math.abs(e.deltaY) < 20) return;
+  e.preventDefault();
+
+  const els = getSnapElements();
+  const cur = getCurrentSnapIndex(els);
+  const next = Math.max(0, Math.min(els.length - 1, cur + (e.deltaY > 0 ? 1 : -1)));
+  if (next === cur) return;
+
+  scrollLocked = true;
+  scrollToSnapElement(els[next]);
+}
+
+/* ══════════════════════════════════════
+   Scroll snap — active nav + section animation
+══════════════════════════════════════ */
+function initSectionObserver() {
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting || navJumping) return;
+      updateNavActive(entry.target.id);
+    });
+  }, { threshold: 0.55 });
+
+  document.querySelectorAll('section[id]').forEach(s => obs.observe(s));
+}
+
+/* ══════════════════════════════════════
    Boot
 ══════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
   applyLang();
   initUpload();
+  initSectionObserver();
   $('analyze-form').addEventListener('submit', handleSubmit);
+  window.addEventListener('wheel', handleWheel, { passive: false });
 });
