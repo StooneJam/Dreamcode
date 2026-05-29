@@ -285,13 +285,10 @@ def report_node(state: CCAState) -> dict:
 
     # LLM 未调 render_pdf（Doubao dev override 常见）时，Python 侧兜底渲染
     if report_md and not pdf_path:
-        from cca.tools.pdf_renderer import _reportlab_pdf, _try_weasyprint
-        _out = Path("output")
-        _out.mkdir(parents=True, exist_ok=True)
-        _pdf = _out / f"report_{report_task.target_product}.pdf"
-        if not _try_weasyprint(report_md, _pdf):
-            _reportlab_pdf(report_md, _pdf)
-        pdf_path = str(_pdf)
+        pdf_path = render_pdf.invoke({
+            "markdown_content": report_md,
+            "target_product": report_task.target_product,
+        })
 
     if not report_task.invoke_call_report_reviewer:
         report_status = "unreviewed"
