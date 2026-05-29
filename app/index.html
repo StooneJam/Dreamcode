@@ -30,20 +30,20 @@
     <a onclick="jumpTo('product');return false;">产品介绍</a>
     <a onclick="jumpTo('agents');return false;">智能体</a>
     <a onclick="jumpTo('analyze');return false;">开始分析</a>
-    <a class="login" onclick="handleLogin();return false;">登录</a>
-  </div>
-
-  <div class="navbar-right">
     <button class="nav-dl-btn" onclick="jumpTo('pdf-section');return false;" id="t-nav-dl">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
         <path d="M7 1v8M4 6l3 3 3-3M2 11h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <span>报告下载</span>
     </button>
+  </div>
+
+  <div class="navbar-right">
     <div class="lang-switcher">
       <button class="lang-btn active" data-lang="zh" onclick="setLang('zh')">中</button>
       <button class="lang-btn"        data-lang="en" onclick="setLang('en')">EN</button>
     </div>
+    <a class="nav-login-btn" onclick="handleLogin();return false;" id="t-nav-login">登录</a>
   </div>
 
 </nav>
@@ -285,7 +285,7 @@
         </div>
         <div class="log-line preview-line">
           <span class="log-agent" style="color:#6870a0">[Collector]</span>
-          <span class="log-msg log-dim">→ web_search({ query: "飞书 pricing 2024" })</span>
+          <span class="log-msg log-dim">→ web_search({ query: "飞书 pricing 2026" })</span>
         </div>
         <div class="log-line preview-line">
           <span class="log-agent" style="color:#6870a0">[Collector]</span>
@@ -333,7 +333,7 @@
 
   <div class="pdf-viewer" id="pdf-viewer">
     <div class="pdf-toolbar">
-      <span class="pdf-fname" id="pdf-fname">竞品分析报告_飞书_2024.pdf</span>
+      <span class="pdf-fname" id="pdf-fname">竞品分析报告_飞书_2026.pdf</span>
       <div class="pdf-actions">
         <span class="pdf-page-info" id="pdf-page-info">第 1 / 12 页</span>
         <button class="btn-sm" id="pdf-dl-btn" onclick="downloadPdf()">↓&nbsp;&nbsp;下载到本地</button>

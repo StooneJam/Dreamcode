@@ -25,7 +25,8 @@ const I18N = {
     ag2Role: '联网采集', ag2Desc: '联网搜索竞品<br>采集定价 / 功能<br>ReAct 多轮探索',
     ag3Role: '情感分析', ag3Desc: '爬取用户评论<br>BERT 情感分类<br>提炼正负面观点',
     ag4Role: '报告生成', ag4Desc: 'SWOT 分析<br>横向评分对比<br>输出 PDF 报告',
-    navLinks: ['产品介绍', '智能体', '开始分析', '登录'],
+    navLinks: ['产品介绍', '智能体', '开始分析'],
+    navLoginBtn: '登录',
     formTitle: '开始分析',
     lblProduct: '目标产品名称', phProduct: '例如：飞书、DingTalk、Slack',
     lblQuery: '分析需求描述', phQuery: '请描述您的分析需求，例如：分析飞书与钉钉、Slack 的视频会议功能差异、定价策略对比...',
@@ -74,7 +75,8 @@ const I18N = {
     ag2Role: 'Scraping', ag2Desc: 'Web searches competitors<br>Collects pricing & features<br>ReAct multi-round exploration',
     ag3Role: 'Sentiment', ag3Desc: 'Crawls user reviews<br>BERT sentiment analysis<br>Extracts positive/negative themes',
     ag4Role: 'Report Gen', ag4Desc: 'SWOT analysis<br>Cross-product scoring<br>Outputs PDF report',
-    navLinks: ['Product', 'Agents', 'Analyze', 'Login'],
+    navLinks: ['Product', 'Agents', 'Analyze'],
+    navLoginBtn: 'Login',
     formTitle: 'Start Analysis',
     lblProduct: 'Target Product', phProduct: 'e.g. Feishu, DingTalk, Slack',
     lblQuery: 'Analysis Request', phQuery: 'Describe your analysis needs, e.g. Compare video conferencing features and pricing between Feishu and DingTalk...',
@@ -147,6 +149,7 @@ function applyLang() {
   document.querySelectorAll('.lang-btn').forEach(b => b.classList.toggle('active', b.dataset.lang === lang));
   const links = document.querySelectorAll('.nav-links a');
   T.navLinks.forEach((txt, i) => { if (links[i]) links[i].textContent = txt; });
+  setText('t-nav-login', T.navLoginBtn);
 
   // Hero
   setText('t-eyebrow', T.eyebrow);
