@@ -59,7 +59,10 @@ class RerouteDecision(BaseModel):
 
 def reroute(signal: AgentSignal, state_json: str) -> RerouteDecision:
     """分析事实性信号，输出回溯决策。state_json 为 state 的最小切片快照。"""
-    llm = gpt.with_structured_output(RerouteDecision)
+    # method="function_calling" 显式指定，绕开 langchain-openai 0.3+ 默认 json_schema strict mode。
+    # strict mode 要求 dict 字段显式 additionalProperties=false，RerouteDecision.fix_summary 是裸 dict，
+    # 会被 strict mode 拒（400 BadRequest）。与 pm._invoke_pm 同样模式。
+    llm = gpt.with_structured_output(RerouteDecision, method="function_calling")
     user = json.dumps({"signal": signal.model_dump(), "state": state_json}, ensure_ascii=False)
     return cast(
         RerouteDecision,
