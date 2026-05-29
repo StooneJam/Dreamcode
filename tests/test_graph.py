@@ -11,6 +11,7 @@ from cca.graph import (
     NODE_INSIGHT_PRODUCT,
     NODE_REPORT,
     NODE_REPORT_TASK,
+    NODE_REVIEW,
     NODE_TASK_PLAN,
     build_graph,
     empty_state,
@@ -18,7 +19,7 @@ from cca.graph import (
 
 
 def test_graph_compiles_with_report() -> None:
-    """include_report=True 默认路径，所有 8 个节点都在。"""
+    """include_report=True 默认路径，所有 9 个节点都在（含 review）。"""
     graph = build_graph()
     nodes = set(graph.get_graph().nodes)
     assert NODE_INITIAL_BRIEF in nodes
@@ -26,6 +27,7 @@ def test_graph_compiles_with_report() -> None:
     assert NODE_TASK_PLAN in nodes
     assert NODE_COLLECT_PRODUCT in nodes
     assert NODE_INSIGHT_PRODUCT in nodes
+    assert NODE_REVIEW in nodes
     assert NODE_REPORT_TASK in nodes
     assert NODE_REPORT in nodes
     assert NODE_HANDLE_SIGNAL in nodes
@@ -59,10 +61,11 @@ def test_empty_state_user_files_optional() -> None:
 
 
 def test_graph_edges_fanout_path() -> None:
-    """主路径：START → initial_brief → exploration → task_plan → [fanout] → report_task → report → END。
+    """主路径：START → initial_brief → exploration → task_plan → [fanout] → review → report_task → report → END。
 
     task_plan 后由 conditional_edges dispatcher 派发 Send 至 collect_product / insight_product；
-    worker 完成后汇入 report_task。handle_signal 不在主线边里。
+    worker 完成后汇入 review；review 条件边到 handle_signal（有 pending signal）或 report_task。
+    handle_signal 条件边回 exploration / task_plan / report_task / END（按清空字段路由）。
     """
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
@@ -71,13 +74,31 @@ def test_graph_edges_fanout_path() -> None:
         ("__start__", NODE_INITIAL_BRIEF),
         (NODE_INITIAL_BRIEF, NODE_EXPLORATION),
         (NODE_EXPLORATION, NODE_TASK_PLAN),
-        (NODE_COLLECT_PRODUCT, NODE_REPORT_TASK),
-        (NODE_INSIGHT_PRODUCT, NODE_REPORT_TASK),
+        (NODE_COLLECT_PRODUCT, NODE_REVIEW),
+        (NODE_INSIGHT_PRODUCT, NODE_REVIEW),
         (NODE_REPORT_TASK, NODE_REPORT),
         (NODE_REPORT, "__end__"),
     ]
     for src, dst in expected:
         assert (src, dst) in edges, f"主路径缺边 {src} → {dst}"
+
+
+def test_graph_review_routes_to_handle_signal_and_report_task() -> None:
+    """review 出口的条件边目标必须含 handle_signal 和 report_task。"""
+    graph = build_graph()
+    edges = {(e.source, e.target) for e in graph.get_graph().edges}
+    assert (NODE_REVIEW, NODE_HANDLE_SIGNAL) in edges
+    assert (NODE_REVIEW, NODE_REPORT_TASK) in edges
+
+
+def test_graph_handle_signal_routes_to_three_phase_targets() -> None:
+    """handle_signal 条件边按 apply_reroute 清空字段回三个 PM 阶段或 END。"""
+    graph = build_graph()
+    edges = {(e.source, e.target) for e in graph.get_graph().edges}
+    assert (NODE_HANDLE_SIGNAL, NODE_EXPLORATION) in edges
+    assert (NODE_HANDLE_SIGNAL, NODE_TASK_PLAN) in edges
+    assert (NODE_HANDLE_SIGNAL, NODE_REPORT_TASK) in edges
+    assert (NODE_HANDLE_SIGNAL, "__end__") in edges
 
 
 def test_graph_no_report_edge_to_end() -> None:

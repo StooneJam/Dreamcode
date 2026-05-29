@@ -16,6 +16,8 @@ from cca.schema import (
     InitialBriefOutput,
     ReportTask,
     ReportTaskOutput,
+    ReviewOutput,
+    ReviewUnit,
     TaskPlan,
     TaskPlanOutput,
 )
@@ -73,6 +75,7 @@ def _make_minimal_state(**overrides) -> CCAState:
         "report_task": None,
         "profiles": {},
         "review_state": [],
+        "reroute_count": 0,
         "qa_results": [],
         "report_status": "pending",
         "report_md": None,
@@ -819,6 +822,297 @@ def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -
     # _TARGET_TO_DEBATE 把 signal.target='report_task' 映射成 debate target='report'
     assert called_targets == ["report"]
     assert result["consumed_signal_ids"] == [new.signal_id]
+
+
+# ── review_node + reroute_count 上限 ──────────────────────────────────
+
+
+def _mk_task_plan(*products: str) -> dict:
+    """构造最小 task_plan：每个 product 对应一个 CollectTask + InsightTask。"""
+    return TaskPlan(
+        target_product=products[0] if products else "x",
+        product_type="SaaS",
+        competitor_names=list(products[1:]),
+        collect_tasks=[{"product_name": p} for p in products],  # type: ignore[arg-type]
+        insight_tasks=[{"product_name": p} for p in products],  # type: ignore[arg-type]
+    ).model_dump()
+
+
+def _complete_profile(name: str) -> dict:
+    """构造数据完整的 profile：有 1 个 dim+fact、有 sources、sentiment 含 ≥3 review。"""
+    return {
+        "product_name": name,
+        "dimensions": [{
+            "name": "视频会议",
+            "category": "功能",
+            "facts": [{
+                "statement": f"{name} 支持 300 人会议",
+                "evidence": [{"source_url": f"https://{name}.com", "snippet": "x",
+                              "fetched_at": "2026-05-23T00:00:00Z"}],
+            }],
+        }],
+        "sources": [{"source_url": f"https://{name}.com", "snippet": "x",
+                     "fetched_at": "2026-05-23T00:00:00Z"}],
+        "sentiment": {
+            "representative_reviews": [
+                {"text": "r1", "platform": "appstore_cn"},
+                {"text": "r2", "platform": "appstore_cn"},
+                {"text": "r3", "platform": "appstore_cn"},
+            ],
+        },
+    }
+
+
+def test_check_data_completeness_complete_profile_returns_empty() -> None:
+    from cca.agents.pm import _check_data_completeness
+
+    profiles = {"飞书": _complete_profile("飞书")}
+    task_plan = _mk_task_plan("飞书")
+    flags = _check_data_completeness(profiles, task_plan)
+    assert flags == {}
+
+
+def test_check_data_completeness_missing_dimensions_flags_collector() -> None:
+    from cca.agents.pm import _check_data_completeness
+
+    profiles = {"x": {"product_name": "x"}}  # 无 dimensions / sources / sentiment
+    task_plan = _mk_task_plan("x")
+    flags = _check_data_completeness(profiles, task_plan)
+    assert "collector:x" in flags
+    assert any("dimensions" in f for f in flags["collector:x"])
+    assert any("sources" in f for f in flags["collector:x"])
+    assert "insight:x" in flags
+    assert any("sentiment" in f for f in flags["insight:x"])
+
+
+def test_check_data_completeness_dim_without_facts_flagged() -> None:
+    from cca.agents.pm import _check_data_completeness
+
+    profiles = {"y": {
+        "product_name": "y",
+        "dimensions": [{"name": "定价", "category": "定价", "facts": []}],
+        "sources": [{"source_url": "u", "snippet": "s", "fetched_at": "t"}],
+        "sentiment": {"representative_reviews": [{"text": "r"}, {"text": "r"}, {"text": "r"}]},
+    }}
+    task_plan = _mk_task_plan("y")
+    flags = _check_data_completeness(profiles, task_plan)
+    assert "collector:y" in flags
+    assert any("定价" in f for f in flags["collector:y"])
+
+
+def test_check_data_completeness_sentiment_too_few_flagged() -> None:
+    from cca.agents.pm import _check_data_completeness
+
+    profiles = {"z": {
+        "product_name": "z",
+        "dimensions": [{"name": "x", "category": "x", "facts": [
+            {"statement": "s", "evidence": [
+                {"source_url": "u", "snippet": "s", "fetched_at": "t"}]},
+        ]}],
+        "sources": [{"source_url": "u", "snippet": "s", "fetched_at": "t"}],
+        "sentiment": {"representative_reviews": [{"text": "r1"}]},  # 仅 1 条
+    }}
+    task_plan = _mk_task_plan("z")
+    flags = _check_data_completeness(profiles, task_plan)
+    assert "insight:z" in flags
+    assert any("sentiment_too_few" in f for f in flags["insight:z"])
+    # Collector 这边数据齐全，不应有 flag
+    assert "collector:z" not in flags
+
+
+def _mk_review_output(*units: dict) -> ReviewOutput:
+    """构造 ReviewOutput；units 形如 {"agent":..., "product_name":..., "status":..., "retry_count":..., "qa_flags":[...]}。"""
+    return ReviewOutput(
+        review_units=[ReviewUnit(**u) for u in units],
+        decision_records=[_mk_decision("review_judgement")],
+    )
+
+
+def test_review_node_all_passed_no_signals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """全部数据完整 + LLM 标 passed → review_state 全 passed，无 signal。"""
+    output = _mk_review_output(
+        {"agent": "collector", "product_name": "飞书", "status": "passed", "retry_count": 0},
+        {"agent": "insight", "product_name": "飞书", "status": "passed", "retry_count": 0},
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import review_node
+
+    state = _make_minimal_state(
+        profiles={"飞书": _complete_profile("飞书")},
+        task_plan=_mk_task_plan("飞书"),
+    )
+    result = review_node(state)
+    assert all(u["status"] == "passed" for u in result["review_state"])
+    assert result["agent_signals"] == []
+    assert result["audit_log"][0]["passed"] == 2
+    assert result["audit_log"][0]["signals_raised"] == 0
+
+
+def test_review_node_B_constraint_coerces_llm_passed_when_pre_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B 方案强约束：代码层 pre_flag 非空时，LLM 标 passed 被覆盖为 needs_retry。"""
+    output = _mk_review_output(
+        # LLM 试图"宽容放过"，但数据是缺的
+        {"agent": "collector", "product_name": "x", "status": "passed", "retry_count": 0, "qa_flags": []},
+        {"agent": "insight", "product_name": "x", "status": "passed", "retry_count": 0},
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import review_node
+
+    state = _make_minimal_state(
+        profiles={"x": {"product_name": "x"}},  # 数据全空
+        task_plan=_mk_task_plan("x"),
+    )
+    result = review_node(state)
+    collector_unit = next(u for u in result["review_state"] if u["agent"] == "collector")
+    assert collector_unit["status"] == "needs_retry"
+    assert any("dimensions" in f for f in collector_unit["qa_flags"])
+    assert any(s["from_agent"] == "collector" for s in result["agent_signals"])
+
+
+def test_review_node_reroute_count_at_limit_coerces_to_forced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """reroute_count 达上限 → needs_retry 全部升 forced，不再 raise signal。"""
+    output = _mk_review_output(
+        {"agent": "collector", "product_name": "x", "status": "needs_retry", "retry_count": 0,
+         "qa_flags": ["data_missing: x"]},
+        {"agent": "insight", "product_name": "x", "status": "passed", "retry_count": 0},
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import _REROUTE_HARD_LIMIT, review_node
+
+    state = _make_minimal_state(
+        profiles={"x": {"product_name": "x"}},
+        task_plan=_mk_task_plan("x"),
+        reroute_count=_REROUTE_HARD_LIMIT,
+    )
+    result = review_node(state)
+    collector_unit = next(u for u in result["review_state"] if u["agent"] == "collector")
+    assert collector_unit["status"] == "forced"
+    assert result["agent_signals"] == []
+    assert result["audit_log"][0]["forced"] >= 1
+
+
+def test_review_node_per_unit_retry_limit_forces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """单 unit 历史 retry_count 达上限 → forced，不再 needs_retry。
+
+    profile 给 insight 端完整数据避免它干扰断言；只让 collector 端缺数据。
+    """
+    output = _mk_review_output(
+        {"agent": "collector", "product_name": "x", "status": "needs_retry", "retry_count": 99,
+         "qa_flags": ["data_missing: dim"]},
+        {"agent": "insight", "product_name": "x", "status": "passed", "retry_count": 0},
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import _PER_UNIT_RETRY_LIMIT, review_node
+
+    # collector 端无 dim/sources；insight 端 sentiment 完整 → 只 collector 触发 pre_flag
+    profile = _complete_profile("x")
+    profile["dimensions"] = []
+    profile["sources"] = []
+
+    # 历史 review_state 含 _PER_UNIT_RETRY_LIMIT 条该 collector 的 needs_retry 记录
+    historical = [
+        ReviewUnit(agent="collector", product_name="x", status="needs_retry",
+                   retry_count=i, qa_flags=["x"]).model_dump()
+        for i in range(_PER_UNIT_RETRY_LIMIT)
+    ]
+    state = _make_minimal_state(
+        profiles={"x": profile},
+        task_plan=_mk_task_plan("x"),
+        review_state=historical,
+        reroute_count=0,
+    )
+    result = review_node(state)
+    collector_unit = next(u for u in result["review_state"] if u["agent"] == "collector")
+    assert collector_unit["status"] == "forced"
+    assert collector_unit["retry_count"] == _PER_UNIT_RETRY_LIMIT
+    # insight 完整 → passed，所以 agent_signals 应为空（collector 已 forced 不 raise）
+    assert result["agent_signals"] == []
+
+
+def test_review_node_llm_skips_unit_code_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLM 漏审某个 (agent, product) → 代码层兜底产 ReviewUnit。"""
+    # LLM 只返回 collector 一条，漏掉 insight
+    output = ReviewOutput(
+        review_units=[ReviewUnit(
+            agent="collector", product_name="x", status="passed", retry_count=0,
+        )],
+        decision_records=[_mk_decision("review_judgement")],
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import review_node
+
+    state = _make_minimal_state(
+        profiles={"x": _complete_profile("x")},
+        task_plan=_mk_task_plan("x"),
+    )
+    result = review_node(state)
+    assert len(result["review_state"]) == 2
+    insight_unit = next(u for u in result["review_state"] if u["agent"] == "insight")
+    assert insight_unit["pm_note"] == "LLM 漏审，代码层兜底"
+    assert insight_unit["status"] == "passed"   # 兜底场景 + 无 pre_flag → passed
+
+
+def test_handle_signal_node_bumps_reroute_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """成功 reroute 一个事实性 signal → reroute_count += 1。"""
+    from cca.agents.pm import handle_signal_node
+    from cca.skills.reroute import RerouteDecision
+
+    decision = RerouteDecision(
+        target_phase="phase_2", root_cause="x", fix_summary={}, rationale="y",
+    )
+    monkeypatch.setattr("cca.agents.pm.reroute", lambda s, ctx: decision, raising=False)
+    monkeypatch.setattr(
+        "cca.agents.pm.apply_reroute",
+        lambda d: {"task_plan": None, "audit_log": [{"agent": "reroute"}]},
+        raising=False,
+    )
+    signal = AgentSignal(
+        from_agent="collector", kind="data_gap", target="task_plan",
+        payload=_mk_payload("缺数据"), requires_debate=False,
+        ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(agent_signals=[signal.model_dump()], reroute_count=0)
+    result = handle_signal_node(state)
+    assert result["reroute_count"] == 1
+
+
+def test_handle_signal_node_debate_only_does_not_bump_reroute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """只走 debate 的 signal 不应增加 reroute_count。"""
+    from cca.agents.pm import handle_signal_node
+
+    monkeypatch.setattr(
+        "cca.agents.pm.run_debate",
+        lambda **kwargs: _make_debate_result(final_verdict="accepted"),
+        raising=False,
+    )
+    signal = AgentSignal(
+        from_agent="report", kind="pm_challenge", target="task_plan",
+        payload=_mk_payload("x"), requires_debate=True,
+        ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[signal.model_dump()], reroute_count=0,
+        task_plan={"product_type": "S"},
+    )
+    result = handle_signal_node(state)
+    assert "reroute_count" not in result   # 未增量则不写回
 
 
 def test_build_reroute_context_excludes_large_fields() -> None:

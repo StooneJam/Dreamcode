@@ -368,7 +368,7 @@ class DecisionRecord(BaseModel):
         default_factory=lambda: f"D-{uuid4().hex[:8]}",
         description="决策唯一标识，可被报告段落引用（如脚注 [D-a1b2c3d4]）",
     )
-    phase: Literal["initial_brief", "task_plan", "report_task"] | None = Field(
+    phase: Literal["initial_brief", "task_plan", "review", "report_task"] | None = Field(
         None,
         description="由代码端 _stamp_decisions 强制覆盖，LLM 无需填写",
     )
@@ -474,6 +474,17 @@ class ReportTaskOutput(BaseModel):
     """阶段三联合输出：ReportTask + 决策档案。"""
 
     report_task: ReportTask
+    decision_records: list[DecisionRecord] = Field(min_length=1)
+
+
+class ReviewOutput(BaseModel):
+    """阶段 2.5 PM 评审联合输出：本轮全部 ReviewUnit + 决策档案。
+
+    LLM 一次性产出所有 (agent, product) 对的评审结论，不分次调用。
+    review_units 顺序无要求；代码层按 (agent, product_name) 索引。
+    """
+
+    review_units: list[ReviewUnit] = Field(min_length=1)
     decision_records: list[DecisionRecord] = Field(min_length=1)
 
 

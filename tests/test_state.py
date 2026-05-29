@@ -17,6 +17,7 @@ REQUIRED_FIELDS = {
     "report_task",           # PM 阶段三（含原 AnalystTask 字段，Reporter 内部分析）
     "profiles",
     "review_state",
+    "reroute_count",         # PM review → handle_signal reroute 累计次数，达 2 时升 forced 防死循环
     "qa_results",
     "report_status",
     "report_md",

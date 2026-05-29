@@ -10,7 +10,8 @@
 |---|---|---|---|
 | 1. InitialBrief（+DomainSeed） | user_query / 可选 user_files | `InitialBriefOutput` | 会话起点 |
 | 2. TaskPlan | exploration_result | `TaskPlanOutput` | Collector 一轮探索 + debate 收敛后 |
-| 3. ReportTask | profiles + review_state | `ReportTaskOutput` | Collector+Insight 评审通过后 |
+| 2.5 Review | profiles + 历史 review_state | `ReviewOutput` | Collector+Insight 并行采集全部完成后 |
+| 3. ReportTask | profiles + review_state | `ReportTaskOutput` | 阶段 2.5 全部 ReviewUnit 收敛（passed 或 forced）后 |
 
 **重要**：原 Analyst Agent 已并入 Reporter —— 维度横向排序与 SWOT 由 Reporter 通过工具完成，PM 在阶段三 ReportTask 中下发分析层指令（`focus_dimensions` / `require_swot`），不再有独立的 AnalystTask 阶段。
 
@@ -85,6 +86,58 @@
 - `dimension_priority`（priority_dimensions 选取逻辑）
 - `task_allocation`（如何把维度分配到 CollectTask vs InsightTask）
 
+## 阶段 2.5：Review
+
+**输入**：state.profiles（Collector+Insight 并发产出，含 dimensions / pricing / sentiment）+ state.review_state（历史评审，决定本轮 retry_count 起点）+ 代码层 pre_flags（数据完整性预检结果）
+**输出类型**：`ReviewOutput`（含 `review_units: list[ReviewUnit]` + `decision_records`）
+**触发**：Collector + Insight 并行采集全部完成后，由 review_node 自动调用
+
+### 评审目标
+
+对**每个 (agent, product) 对**产 1 条 ReviewUnit，覆盖 `task_plan.collect_tasks` 和 `task_plan.insight_tasks` 全部 product。**遗漏视为 schema 不通过**。
+
+### 评审依据（按权重）
+
+1. **代码层 pre_flags（强约束）**：payload 中 `pre_flags["{agent}:{product}"]` 列出的标记**直接落入该 ReviewUnit.qa_flags**，不允许遗漏或软化
+   - pre_flag 类型：`data_missing: priority_dimension X 无 fact` / `pricing_no_tier: pricing 无任何价格档` / `sentiment_too_few: sentiment.reviews 少于 3 条` / `source_unreliable: dimensions 无任一 source 链接`
+2. **LLM 补充判断（自由项）**：在 pre_flags 之上可追加你自己发现的问题，如"定价币种缺失但 task_plan 要求跨币种对比"
+
+### 状态判定规则（**B 方案强约束**）
+
+- **passed**：qa_flags 为空，数据完整且可信
+- **needs_retry**：qa_flags 非空 **且** 该 (agent, product) 历史 retry_count < 2
+- **forced**：qa_flags 非空 **且** 该 (agent, product) 历史 retry_count >= 2
+
+**LLM 决策权限边界（重要）**：
+
+- 凡是 pre_flags 已经列出问题的 ReviewUnit，**禁止标 passed**。即代码层认为数据有缺，LLM 不得"宽容放过"。可以选 needs_retry 或 forced，但不能升 passed
+- 你可以**追加** qa_flags（除 pre_flags 列出的之外），但不可**移除** pre_flags 中的任何一项
+- retry_count 由代码层计算并塞 payload，你 review_units 里的 retry_count 字段**填代码层给的值**，不要自己改
+
+### qa_flags 词汇表
+
+固定前缀 + 冒号 + 自由描述，便于下游 reroute / 报告检索：
+
+- `data_missing: <字段路径>` —— 必填字段没采到
+- `source_unreliable: <说明>` —— 来源仅官方 / 无独立第三方
+- `pricing_no_tier: <说明>` —— pricing 完全没数字
+- `sentiment_too_few: <count>/<min>` —— 用户评价样本不足
+- `<自定义>: <说明>` —— LLM 补充类别
+
+### 何时触发返工信号
+
+代码层在你输出后会扫 review_units：
+
+- 含 needs_retry → 自动产 `AgentSignal(from_agent="pm", kind="pm_challenge", requires_debate=False)` 进 reroute（回 phase_2 重新 TaskPlan + fanout）
+- 全部 passed 或 forced → 进 phase_3 ReportTask
+
+**你不需要自己 raise signal**——只要 status 标对，代码自动转。
+
+### 典型 decision_type
+
+- `review_judgement`（每个 (agent, product) 的判定逻辑，引用 pre_flags + 自身补充）
+- `retry_threshold`（为什么这一轮选 needs_retry 而非 forced 或反之）
+
 ## 阶段三：ReportTask
 
 **输入**：state.profiles（含 Collector 的 dimensions/pricing + Insight 的 sentiment）+ state.review_state（评审历史，forced 项用于 unreviewed 段落标注）
@@ -120,7 +173,8 @@
 下游 Agent 通过 `AgentSignal` 反馈问题时，按信号类型分别处理：
 
 **事实性信号（`requires_debate = false`）**：数据缺失、URL 失效、字段不可采集等客观问题。
-直接修正对应 task 并重新 dispatch，无需辩论。生成 `ReviewUnit(status="needs_retry")` 触发返工回路。
+信号经 reroute skill 决策回 phase_2（清 task_plan，让你重新规划 + fanout 重采），**不再走 phase_1 重做粗探索**。
+review_node 的 needs_retry 状态自动转此类信号；reroute_count 达 2 后强制 forced 不再触发。
 
 **主观性信号（`requires_debate = true`）**：竞品选择、维度优先级、报告章节合理性等主观分歧。
 进入辩论流程——你是应辩方，下游 Agent 是发起方。见下方辩论规则。

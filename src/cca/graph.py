@@ -18,6 +18,7 @@ from cca.agents.pm import (
     handle_signal_node,
     initial_brief_node,
     report_task_node,
+    review_node,
     task_plan_node,
 )
 from cca.agents.qa_report import report_node
@@ -29,6 +30,7 @@ NODE_EXPLORATION = "exploration"
 NODE_TASK_PLAN = "task_plan"
 NODE_COLLECT_PRODUCT = "collect_product"
 NODE_INSIGHT_PRODUCT = "insight_product"
+NODE_REVIEW = "review"
 NODE_REPORT_TASK = "report_task"
 NODE_REPORT = "report"
 NODE_HANDLE_SIGNAL = "handle_signal"
@@ -49,13 +51,13 @@ def _insight_product_node(state: CCAState) -> dict:
 def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
     """task_plan 后 fanout 出 collect_product + insight_product 并行。
 
-    空 tasks 时直接路由到 report_task，避免空 fanout。
+    空 tasks 时直接路由到 review，避免空 fanout。
     """
     raw = state.get("task_plan") or {}
     try:
         tp = TaskPlan(**raw)
     except Exception:
-        return NODE_REPORT_TASK
+        return NODE_REVIEW
 
     sends: list[Send] = []
     for ct in tp.collect_tasks:
@@ -72,8 +74,37 @@ def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
         }))
 
     if not sends:
-        return NODE_REPORT_TASK
+        return NODE_REVIEW
     return sends
+
+
+def _route_after_review(state: CCAState) -> str:
+    """review 出口：有未消费的事实性 signal → handle_signal；否则 → report_task。
+
+    reroute_count 已达上限时 review_node 内部已经把 needs_retry 全升 forced 不再 raise signal，
+    所以此处只需简单判断 agent_signals 是否有 unconsumed pending。
+    """
+    raw = state.get("agent_signals") or []
+    consumed = set(state.get("consumed_signal_ids") or [])
+    pending_factual = [
+        s for s in raw
+        if s.get("signal_id") not in consumed and not s.get("requires_debate")
+    ]
+    return NODE_HANDLE_SIGNAL if pending_factual else NODE_REPORT_TASK
+
+
+def _route_after_signal(state: CCAState) -> str:
+    """handle_signal 出口：按 apply_reroute 清空的字段决定回到哪个 PM 阶段。
+
+    debate 路径不会清空字段时落到 END（避免回路；debate 应辩后由 PM 阶段重做）。
+    """
+    if state.get("exploration_result") is None:
+        return NODE_EXPLORATION
+    if state.get("task_plan") is None:
+        return NODE_TASK_PLAN
+    if state.get("report_task") is None:
+        return NODE_REPORT_TASK
+    return END
 
 
 def build_graph(*, include_report: bool = True):
@@ -89,6 +120,7 @@ def build_graph(*, include_report: bool = True):
     g.add_node(NODE_TASK_PLAN, task_plan_node)
     g.add_node(NODE_COLLECT_PRODUCT, _collect_product_node)
     g.add_node(NODE_INSIGHT_PRODUCT, _insight_product_node)
+    g.add_node(NODE_REVIEW, review_node)
     g.add_node(NODE_REPORT_TASK, report_task_node)
     g.add_node(NODE_HANDLE_SIGNAL, handle_signal_node)
 
@@ -96,13 +128,24 @@ def build_graph(*, include_report: bool = True):
     g.add_edge(NODE_INITIAL_BRIEF, NODE_EXPLORATION)
     g.add_edge(NODE_EXPLORATION, NODE_TASK_PLAN)
 
-    # Send fanout：collect_product ‖ insight_product → report_task
+    # Send fanout：collect_product ‖ insight_product → review
     g.add_conditional_edges(
         NODE_TASK_PLAN, _dispatch_collect_insight,
-        path_map=[NODE_COLLECT_PRODUCT, NODE_INSIGHT_PRODUCT, NODE_REPORT_TASK],
+        path_map=[NODE_COLLECT_PRODUCT, NODE_INSIGHT_PRODUCT, NODE_REVIEW],
     )
-    g.add_edge(NODE_COLLECT_PRODUCT, NODE_REPORT_TASK)
-    g.add_edge(NODE_INSIGHT_PRODUCT, NODE_REPORT_TASK)
+    g.add_edge(NODE_COLLECT_PRODUCT, NODE_REVIEW)
+    g.add_edge(NODE_INSIGHT_PRODUCT, NODE_REVIEW)
+
+    # review 后：有 pending signal → handle_signal；否则 → report_task
+    g.add_conditional_edges(
+        NODE_REVIEW, _route_after_review,
+        path_map=[NODE_HANDLE_SIGNAL, NODE_REPORT_TASK],
+    )
+    # handle_signal 后按清空字段路由回 PM 阶段
+    g.add_conditional_edges(
+        NODE_HANDLE_SIGNAL, _route_after_signal,
+        path_map=[NODE_EXPLORATION, NODE_TASK_PLAN, NODE_REPORT_TASK, END],
+    )
 
     if include_report:
         g.add_node(NODE_REPORT, report_node)
@@ -128,6 +171,7 @@ def empty_state(user_query: str, target_product: str, user_files: list[str] | No
         "report_task": None,
         "profiles": {},
         "review_state": [],
+        "reroute_count": 0,
         "qa_results": [],
         "report_status": "pending",
         "report_md": None,

@@ -58,6 +58,10 @@ class CCAState(TypedDict):
     # status=forced 的项即报告中"未经充分审核"段落的数据源
     review_state: Annotated[list[dict], add]   # list[ReviewUnit.model_dump()]
 
+    # reroute 累计次数。review_node 触发 needs_retry → handle_signal 成功 reroute → +1。
+    # 达 2 时 review_node 把所有 needs_retry 升 forced 不再 raise signal，防死循环。
+    reroute_count: int
+
     # 报告终审产出（来自 call_report_reviewer skill 的跨家族 debate）
     qa_results: list[dict]
     report_status: Literal["pending", "passed", "failed", "unreviewed"]

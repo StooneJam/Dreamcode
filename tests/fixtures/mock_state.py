@@ -110,6 +110,7 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         report_task=report_task.model_dump(),
         profiles=profiles,
         review_state=review_state,
+        reroute_count=0,
         qa_results=[],
         report_status="pending",
         report_md=None,

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, cast
 
@@ -15,11 +16,14 @@ from cca.llm.factory import gpt
 from cca.schema import (
     AgentFamily,
     AgentSignal,
+    ChallengePayload,
     DebatePosition,
     DebateResult,
     DecisionRecord,
     InitialBriefOutput,
     ReportTaskOutput,
+    ReviewOutput,
+    ReviewUnit,
     TaskPlanOutput,
 )
 from cca.skills.debate import DebateTarget, run_debate
@@ -40,7 +44,12 @@ _DEBATE_TARGET_TO_TASK_FIELD = {"pm_taskplan": "task_plan", "report": "report_ta
 # 单文档截断保护，防 prompt 爆
 _MAX_FILE_CHARS = 50_000
 
-PMPhase = Literal["initial_brief", "task_plan", "report_task"]
+PMPhase = Literal["initial_brief", "task_plan", "review", "report_task"]
+
+# review_node 配置
+_REROUTE_HARD_LIMIT = 2          # state.reroute_count 达此值后 needs_retry → forced
+_PER_UNIT_RETRY_LIMIT = 2        # 单 (agent, product) 历史返工次数达此值后 needs_retry → forced
+_SENTIMENT_MIN_REVIEWS = 3       # Insight sentiment 评论样本下限
 
 
 def _load_system_prompt() -> str:
@@ -196,6 +205,213 @@ def report_task_node(state: CCAState) -> dict:
     }
 
 
+# ── 阶段 2.5 Review ─────────────────────────────────────────────────
+
+
+def _check_data_completeness(
+    profiles: dict[str, dict],
+    task_plan: dict | None,
+) -> dict[str, list[str]]:
+    """代码层数据完整度预检，产 pre_flags：{f"{agent}:{product}": ["data_missing: ...", ...]}。
+
+    Phase 1 范围：dimensions 有 fact / profile 有 sources / sentiment 有足够 reviews。
+    bucket coverage 在 Phase 2 追加。
+    """
+    flags: dict[str, list[str]] = {}
+    if not task_plan:
+        return flags
+
+    for ct in task_plan.get("collect_tasks") or []:
+        product = ct.get("product_name")
+        if not product:
+            continue
+        unit_flags: list[str] = []
+        profile = profiles.get(product) or {}
+        dimensions = profile.get("dimensions") or []
+        if not dimensions:
+            unit_flags.append("data_missing: profile.dimensions 为空")
+        else:
+            for dim in dimensions:
+                if not dim.get("facts"):
+                    unit_flags.append(f"data_missing: dimension '{dim.get('name', '?')}' 无 fact")
+        if not (profile.get("sources") or []):
+            unit_flags.append("source_unreliable: profile.sources 为空")
+        if unit_flags:
+            flags[f"collector:{product}"] = unit_flags
+
+    for it in task_plan.get("insight_tasks") or []:
+        product = it.get("product_name")
+        if not product:
+            continue
+        unit_flags = []
+        profile = profiles.get(product) or {}
+        sentiment = profile.get("sentiment")
+        if not sentiment:
+            unit_flags.append("data_missing: sentiment 字段为空")
+        else:
+            reviews = sentiment.get("representative_reviews") or []
+            if len(reviews) < _SENTIMENT_MIN_REVIEWS:
+                unit_flags.append(f"sentiment_too_few: {len(reviews)}/{_SENTIMENT_MIN_REVIEWS}")
+        if unit_flags:
+            flags[f"insight:{product}"] = unit_flags
+
+    return flags
+
+
+def _compute_retry_count(review_state: list[dict], agent: str, product: str) -> int:
+    """该 (agent, product) 历史 needs_retry / forced 累计次数。"""
+    return sum(
+        1 for u in review_state
+        if u.get("agent") == agent and u.get("product_name") == product
+        and u.get("status") in ("needs_retry", "forced")
+    )
+
+
+def _enumerate_expected_units(task_plan: dict | None) -> list[tuple[str, str]]:
+    """从 task_plan 枚举本轮应产的全部 (agent, product_name) 对。"""
+    if not task_plan:
+        return []
+    expected: list[tuple[str, str]] = []
+    for ct in task_plan.get("collect_tasks") or []:
+        if pn := ct.get("product_name"):
+            expected.append(("collector", pn))
+    for it in task_plan.get("insight_tasks") or []:
+        if pn := it.get("product_name"):
+            expected.append(("insight", pn))
+    return expected
+
+
+def _coerce_review_unit(
+    unit: ReviewUnit,
+    pre_flags: list[str],
+    retry_count: int,
+    reroute_count: int,
+) -> ReviewUnit:
+    """B 方案强约束：
+    1. pre_flags 全量并入 qa_flags（不允许 LLM 遗漏）
+    2. pre_flags 非空 → 禁止 passed
+    3. retry_count 强制覆盖为代码层值
+    4. reroute_count 或 unit retry_count 达上限 → needs_retry 升 forced
+    """
+    merged_flags = list(unit.qa_flags)
+    for pf in pre_flags:
+        if pf not in merged_flags:
+            merged_flags.append(pf)
+
+    new_status = unit.status
+    if pre_flags and new_status == "passed":
+        new_status = "needs_retry"
+    if new_status == "needs_retry" and (
+        reroute_count >= _REROUTE_HARD_LIMIT or retry_count >= _PER_UNIT_RETRY_LIMIT
+    ):
+        new_status = "forced"
+
+    return ReviewUnit(
+        agent=unit.agent,
+        product_name=unit.product_name,
+        status=new_status,
+        retry_count=retry_count,
+        qa_flags=merged_flags,
+        pm_note=unit.pm_note,
+        reviewed_at=unit.reviewed_at or _now_iso(),
+    )
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _build_retry_signal(unit: ReviewUnit) -> dict:
+    """needs_retry ReviewUnit → AgentSignal(data_gap, requires_debate=False) → reroute → phase_2。"""
+    return AgentSignal(
+        from_agent=unit.agent,
+        kind="data_gap",
+        target="task_plan",
+        payload=ChallengePayload(
+            claim=f"{unit.agent}:{unit.product_name} 数据评审失败",
+            evidence=unit.qa_flags or ["pre_check_failed"],
+            suggested_fix="重新规划 task_plan 并 fanout 重采该产品",
+        ),
+        requires_debate=False,
+        ts=_now_iso(),
+    ).model_dump()
+
+
+def review_node(state: CCAState) -> dict:
+    """阶段 2.5：评审 Collector + Insight 并发产出。
+
+    流程：
+    1. 代码层 _check_data_completeness → pre_flags
+    2. LLM ReviewOutput 评审（含 pre_flags + retry_counts + profiles 上下文）
+    3. B 方案 post-check：pre_flags 非空禁 passed；retry 上限自动升 forced
+    4. needs_retry 单元 → AgentSignal(data_gap) → 下一节点 handle_signal 走 reroute
+    """
+    profiles = state.get("profiles") or {}
+    task_plan = state.get("task_plan")
+    review_state = state.get("review_state") or []
+    reroute_count = state.get("reroute_count") or 0
+
+    pre_flags = _check_data_completeness(profiles, task_plan)
+    expected = _enumerate_expected_units(task_plan)
+    retry_counts = {
+        f"{agent}:{product}": _compute_retry_count(review_state, agent, product)
+        for agent, product in expected
+    }
+
+    payload = {
+        "expected_units": [f"{a}:{p}" for a, p in expected],
+        "pre_flags": pre_flags,
+        "retry_counts": retry_counts,
+        "reroute_count": reroute_count,
+        "reroute_hard_limit": _REROUTE_HARD_LIMIT,
+        "per_unit_retry_limit": _PER_UNIT_RETRY_LIMIT,
+        "profiles": profiles,
+        "historical_review_state": review_state,
+    }
+    result = cast(ReviewOutput, _invoke_pm(ReviewOutput, "阶段 2.5 Review", payload))
+
+    # 索引 LLM 输出，按 (agent, product) 校正；缺失的 expected unit 用代码层兜底产 ReviewUnit
+    llm_index = {(u.agent, u.product_name): u for u in result.review_units}
+    coerced: list[ReviewUnit] = []
+    for agent, product in expected:
+        key = f"{agent}:{product}"
+        rc = retry_counts.get(key, 0)
+        pre = pre_flags.get(key, [])
+        if (agent, product) in llm_index:
+            coerced.append(_coerce_review_unit(llm_index[(agent, product)], pre, rc, reroute_count))
+        else:
+            # LLM 漏审 → 代码层兜底；存在 pre_flag 时按上限规则定 status
+            status = "passed" if not pre else (
+                "forced" if rc >= _PER_UNIT_RETRY_LIMIT or reroute_count >= _REROUTE_HARD_LIMIT
+                else "needs_retry"
+            )
+            coerced.append(ReviewUnit(
+                agent=cast(Literal["collector", "insight"], agent),
+                product_name=product,
+                status=cast(Literal["passed", "needs_retry", "forced"], status),
+                retry_count=rc,
+                qa_flags=pre,
+                pm_note="LLM 漏审，代码层兜底",
+                reviewed_at=_now_iso(),
+            ))
+
+    signals = [_build_retry_signal(u) for u in coerced if u.status == "needs_retry"]
+
+    return {
+        "review_state": [u.model_dump() for u in coerced],
+        "agent_signals": signals,
+        "decision_log": _stamp_decisions(result.decision_records, "review"),
+        "audit_log": [{
+            "agent": "pm", "event": "review_done",
+            "passed": sum(1 for u in coerced if u.status == "passed"),
+            "needs_retry": sum(1 for u in coerced if u.status == "needs_retry"),
+            "forced": sum(1 for u in coerced if u.status == "forced"),
+            "signals_raised": len(signals),
+            "reroute_count": reroute_count,
+        }],
+    }
+
+
 # ── 信号处理：debate（主观）+ reroute（事实性） ──────────────────────
 
 
@@ -308,16 +524,26 @@ def handle_signal_node(state: CCAState) -> dict:
 
     debate_results, audit_log = [], []
     scalar_updates: dict = {}
+    reroute_bumps = 0
     for sig in ordered:
-        partial = _handle_debate_signal(sig, state) if sig.requires_debate \
-                  else _handle_reroute_signal(sig, state)
+        if sig.requires_debate:
+            partial = _handle_debate_signal(sig, state)
+        else:
+            partial = _handle_reroute_signal(sig, state)
+            # apply_reroute 清空 phase 字段才算一次有效 reroute
+            if any(partial.get(k) is None and k in partial
+                   for k in ("exploration_result", "task_plan", "report_task")):
+                reroute_bumps += 1
         debate_results.extend(partial.pop("debate_results", []))
         audit_log.extend(partial.pop("audit_log", []))
         scalar_updates.update(partial)
 
-    return {
+    updates: dict = {
         **scalar_updates,
         "debate_results": debate_results,
         "audit_log": audit_log,
         "consumed_signal_ids": [s.signal_id for s in ordered],
     }
+    if reroute_bumps:
+        updates["reroute_count"] = (state.get("reroute_count") or 0) + reroute_bumps
+    return updates

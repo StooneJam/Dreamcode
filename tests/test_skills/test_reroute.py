@@ -43,21 +43,22 @@ def _make_signal(**overrides) -> AgentSignal:
     return AgentSignal(**defaults)
 
 
-def test_reroute_data_gap_returns_phase_1(
+def test_reroute_data_gap_returns_phase_2(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """单产品数据缺失走 phase_2 重采，不重做 exploration（保留 debate 已收敛的 competitor_names）。"""
     from cca.skills.reroute import RerouteDecision, reroute
 
     decision = RerouteDecision(
-        target_phase="phase_1",
+        target_phase="phase_2",
         root_cause="Collector 采集遗漏定价信息",
         fix_summary={"product_name": "企业微信", "priority_dimensions": ["定价"]},
-        rationale="缺失数据属于采集层，回溯到阶段 1 重采",
+        rationale="缺失数据走 phase_2 让 PM 重排任务后 fanout 重采",
     )
     _patch_reroute_gpt(monkeypatch, decision)
 
     result = reroute(_make_signal(), '{"competitor_names": ["钉钉","企业微信"]}')
-    assert result.target_phase == "phase_1"
+    assert result.target_phase == "phase_2"
     assert "定价" in result.root_cause
 
 

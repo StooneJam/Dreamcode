@@ -32,13 +32,15 @@ _SYSTEM_PROMPT = """你是竞品分析系统的纠偏 skill - reroute。
   采集+情感数据无误但报告任务不合理时回到此阶段。
 
 ## 决策规则
-- 数据缺失 / URL 失效 / 抓错 → phase_1
+- 单产品数据缺失 / URL 失效 / 抓错 → phase_2
+  （PM 重排 task_plan 加上缺失维度后 fanout 重采，不重做 exploration 以保留收敛过 debate 的 competitor_names）
 - 产品虚假 / 停服 → phase_1
+  （exploration 本身错，必须重做粗探索）
 - exploration_result 大面积数据不可用 → phase_1
 - 采集数据正确但 competitor_names / priority_dimensions / 任务分配有误 → phase_2
 - ReviewUnit 已通过但 ReportTask 的 focus_dimensions / sections 数据不足 → phase_3
 - 章节超出数据范围、SWOT 覆盖产品超出 profiles → phase_3
-- 能定位到采集层的优先 phase_1，避免基于脏数据反复返工
+- 默认偏好 phase_2 重采集，避免重做 exploration 丢失已收敛信息
 """
 
 
