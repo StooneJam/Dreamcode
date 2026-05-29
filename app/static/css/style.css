@@ -59,6 +59,20 @@ body {
 .nav-links a.login { color: var(--teal); }
 .nav-links a:hover { color: var(--teal); }
 
+/* Navbar right group */
+.navbar-right { display: flex; align-items: center; gap: 12px; }
+
+/* Report download button in navbar */
+.nav-dl-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--teal); color: #fff; border: none;
+  border-radius: 8px; padding: 7px 14px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background .18s, transform .15s;
+  white-space: nowrap;
+}
+.nav-dl-btn:hover { background: var(--teal-dark); transform: translateY(-1px); }
+
 .lang-switcher {
   display: flex; gap: 2px;
   background: var(--bg-pale); border-radius: 20px; padding: 4px;
@@ -170,6 +184,15 @@ body {
 .btn-sm:hover { background: var(--teal-dark); }
 /* Demo-only button — visually same but not interactive */
 .btn-demo { cursor: default; pointer-events: none; opacity: .85; }
+
+/* Required star & optional tag */
+.required-star { color: #ef4444; margin-left: 3px; font-weight: 700; }
+.optional-tag {
+  margin-left: 6px; font-size: 11px; font-weight: 500;
+  color: var(--muted); background: var(--border);
+  padding: 1px 6px; border-radius: 4px;
+  vertical-align: middle;
+}
 
 /* ══════════════════════════════════
    PRODUCT INTRO
@@ -329,6 +352,7 @@ body {
   font-family: 'Roboto Mono', 'Courier New', monospace;
   font-size: 12px; line-height: 1.5;
   scrollbar-width: thin; scrollbar-color: #262938 transparent;
+  display: flex; flex-direction: column; gap: 12px;
 }
 .log-body::-webkit-scrollbar { width: 4px; }
 .log-body::-webkit-scrollbar-thumb { background: #262938; border-radius: 2px; }
@@ -337,7 +361,44 @@ body {
 .log-msg   { word-break: break-all; line-height: 1.5; }
 .log-bright { color: #dbdbeb; }
 .log-dim    { color: #808099; }
-.log-placeholder { color: #3a3d5c; font-size: 12px; line-height: 1.8; font-family: 'Inter', sans-serif; margin-top: 16px; }
+
+/* Hint block */
+.log-hint {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: rgba(64,196,208,.07); border: 1px solid rgba(64,196,208,.18);
+  border-radius: 8px; padding: 12px 14px;
+  font-family: 'Inter', sans-serif; font-size: 12px;
+  color: #8890b0; line-height: 1.7;
+}
+.log-hint-icon { flex-shrink: 0; margin-top: 1px; }
+.log-hint p { margin: 0; }
+
+/* Preview block */
+.log-preview {
+  display: flex; flex-direction: column; gap: 0;
+  border-radius: 8px; overflow: hidden;
+  border: 1px solid #1e2235;
+}
+.log-preview-label {
+  font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 600;
+  color: #3a3d5c; text-align: center; letter-spacing: 1px;
+  padding: 6px 0; background: #0e1020;
+  border-bottom: 1px solid #1e2235;
+}
+.preview-line {
+  padding: 3px 12px; margin-bottom: 0;
+  transition: background .15s;
+}
+.preview-line:hover { background: rgba(255,255,255,.03); }
+.preview-line:last-child { padding-bottom: 10px; }
+
+/* Blinking cursor */
+.cursor-blink {
+  display: inline-block; color: #40c4d0;
+  animation: blink-cursor .9s step-end infinite;
+  margin-left: 2px;
+}
+@keyframes blink-cursor { 0%,100%{opacity:1} 50%{opacity:0} }
 
 /* Progress bar */
 .progress-bg   { height: 6px; background: #262938; border-radius: 3px; }

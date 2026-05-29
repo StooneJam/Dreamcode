@@ -33,10 +33,19 @@
     <a class="login" onclick="handleLogin();return false;">登录</a>
   </div>
 
-  <div class="lang-switcher">
-    <button class="lang-btn active" data-lang="zh" onclick="setLang('zh')">中</button>
-    <button class="lang-btn"        data-lang="en" onclick="setLang('en')">EN</button>
+  <div class="navbar-right">
+    <button class="nav-dl-btn" onclick="jumpTo('pdf-section');return false;" id="t-nav-dl">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M7 1v8M4 6l3 3 3-3M2 11h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>报告下载</span>
+    </button>
+    <div class="lang-switcher">
+      <button class="lang-btn active" data-lang="zh" onclick="setLang('zh')">中</button>
+      <button class="lang-btn"        data-lang="en" onclick="setLang('en')">EN</button>
+    </div>
   </div>
+
 </nav>
 
 
@@ -195,19 +204,25 @@
 
     <form id="analyze-form" novalidate>
       <div class="form-group">
-        <label class="form-label" for="input-product" id="t-lbl-product">目标产品名称</label>
+        <label class="form-label" for="input-product">
+          <span id="t-lbl-product">目标产品名称</span><span class="required-star">*</span>
+        </label>
         <input  class="form-input" id="input-product" type="text" autocomplete="off" required
                 placeholder="例如：飞书、DingTalk、Slack" />
       </div>
 
       <div class="form-group">
-        <label class="form-label" for="input-query" id="t-lbl-query">分析需求描述</label>
+        <label class="form-label" for="input-query">
+          <span id="t-lbl-query">分析需求描述</span><span class="optional-tag" id="t-optional1">可选</span>
+        </label>
         <textarea class="form-textarea" id="input-query" rows="4"
                   placeholder="请描述您的分析需求，例如：分析飞书与钉钉、Slack 的视频会议功能差异、定价策略对比..."></textarea>
       </div>
 
       <div class="form-group">
-        <label class="form-label" id="t-lbl-file">上传参考文档（最多 1 个文件）</label>
+        <label class="form-label" id="t-lbl-file">
+          <span id="t-lbl-file-text">上传参考文档（最多 1 个文件）</span><span class="optional-tag" id="t-optional2">可选</span>
+        </label>
         <div class="upload-area" id="upload-area">
           <div class="upload-icon-wrap">↑</div>
           <p class="upload-main-text" id="t-up-main">点击上传或拖拽文件至此处</p>
@@ -241,7 +256,64 @@
     </div>
 
     <div class="log-body" id="log-body">
-      <p class="log-placeholder" id="t-log-placeholder">点击「开始分析」后，智能体实时日志将在此处显示<br>您可以看到每个 Agent 的思考过程和工具调用</p>
+      <!-- Hint -->
+      <div class="log-hint" id="log-hint">
+        <div class="log-hint-icon">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <circle cx="9" cy="9" r="8" stroke="#40c4d0" stroke-width="1.4"/>
+            <path d="M9 8v5M9 6v.5" stroke="#40c4d0" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <p id="t-log-hint-text">点击「开始分析」后，智能体实时日志将在此处显示<br>您可以看到每个 Agent 的思考过程和工具调用</p>
+      </div>
+
+      <!-- Preview of expected streaming output -->
+      <div class="log-preview" id="log-preview">
+        <div class="log-preview-label">— 示例输出预览 —</div>
+
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#40c4d0">[PM Agent]</span>
+          <span class="log-msg log-bright">分析用户查询，制定竞品分析计划...</span>
+        </div>
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#6870a0">[PM Agent]</span>
+          <span class="log-msg log-dim">→ initial_brief({ target: "飞书", competitors: ["钉钉","Slack"] })</span>
+        </div>
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#1eab7a">[Collector]</span>
+          <span class="log-msg log-bright">联网搜索飞书官方定价页...</span>
+        </div>
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#6870a0">[Collector]</span>
+          <span class="log-msg log-dim">→ web_search({ query: "飞书 pricing 2024" })</span>
+        </div>
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#6870a0">[Collector]</span>
+          <span class="log-msg log-dim">← web_search (2.1KB) 飞书商业版 ¥15/人/月...</span>
+        </div>
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#df7f37">[Insight]</span>
+          <span class="log-msg log-bright">App Store 情感分析：抓取用户评论...</span>
+        </div>
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#6870a0">[Insight]</span>
+          <span class="log-msg log-dim">→ appstore_search({ product: "飞书", region: "cn" })</span>
+        </div>
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#9259f2">[Reporter]</span>
+          <span class="log-msg log-bright">生成 SWOT 分析报告，撰写竞品对比章节...</span>
+        </div>
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#6870a0">[Reporter]</span>
+          <span class="log-msg log-dim">→ finalize_swot({ strengths: [...], weaknesses: [...] })</span>
+        </div>
+
+        <!-- Fake cursor blink -->
+        <div class="log-line preview-line">
+          <span class="log-agent" style="color:#9259f2">[Reporter]</span>
+          <span class="log-msg log-bright">PDF 报告渲染完成 ✓<span class="cursor-blink">▌</span></span>
+        </div>
+      </div>
     </div>
 
     <div class="progress-bg">

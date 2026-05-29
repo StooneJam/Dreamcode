@@ -33,9 +33,12 @@ const I18N = {
     upMain: '点击上传或拖拽文件至此处',
     upSub: '支持 PDF、Word、TXT，仅限 1 个文件，最大 20MB',
     submitBtn: '开始分析',
+    navDlBtn: '报告下载',
+    optionalTag: '可选',
+    lblFileText: '上传参考文档（最多 1 个文件）',
     streamTitle: '智能体运行日志',
     thinkText: '思考中...',
-    logPlaceholder: '点击「开始分析」后，智能体实时日志将在此处显示<br>您可以看到每个 Agent 的思考过程和工具调用',
+    logHintText: '点击「开始分析」后，智能体实时日志将在此处显示<br>您可以看到每个 Agent 的思考过程和工具调用',
     pdfTitle: '竞品分析报告已生成',
     pdfFname: '竞品分析报告_飞书_2024.pdf',
     pdfDl: '↓  下载到本地',
@@ -79,9 +82,12 @@ const I18N = {
     upMain: 'Click to upload or drag file here',
     upSub: 'PDF, Word, TXT supported · 1 file max · 20 MB limit',
     submitBtn: 'Start Analysis',
+    navDlBtn: 'Download Report',
+    optionalTag: 'Optional',
+    lblFileText: 'Upload Reference Document (max 1 file)',
     streamTitle: 'Agent Run Log',
     thinkText: 'Thinking...',
-    logPlaceholder: 'Agent logs will stream here after you click Start Analysis.<br>Follow each agent\'s reasoning and tool calls in real time.',
+    logHintText: 'Agent logs will stream here after you click Start Analysis.<br>Follow each agent\'s reasoning and tool calls in real time.',
     pdfTitle: 'Competitive Analysis Report Ready',
     pdfFname: 'competitive_analysis_2024.pdf',
     pdfDl: '↓  Download',
@@ -175,7 +181,6 @@ function applyLang() {
   setAttr('input-product', 'placeholder', T.phProduct);
   setText('t-lbl-query', T.lblQuery);
   setAttr('input-query', 'placeholder', T.phQuery);
-  setText('t-lbl-file', T.lblFile);
   setText('t-up-main', T.upMain);
   setText('t-up-sub', T.upSub);
   setText('submit-btn', T.submitBtn);
@@ -183,7 +188,16 @@ function applyLang() {
   // Stream
   setText('t-stream-title', T.streamTitle);
   setText('think-text', T.thinkText);
-  setHTML('t-log-placeholder', T.logPlaceholder);
+  setHTML('t-log-hint-text', T.logHintText);
+
+  // Navbar download btn
+  const navDl = $('t-nav-dl');
+  if (navDl) { const s = navDl.querySelector('span'); if (s) s.textContent = T.navDlBtn; }
+
+  // Optional tags
+  setText('t-optional1', T.optionalTag);
+  setText('t-optional2', T.optionalTag);
+  setText('t-lbl-file-text', T.lblFileText);
 
   // PDF
   setText('t-pdf-title', T.pdfTitle);
@@ -253,10 +267,15 @@ const AGENT_COLORS = {
   'Reporter': '#9259f2',
 };
 
+function clearPreview() {
+  // Hide the static preview; keep the hint at top
+  const preview = $('log-preview');
+  if (preview) preview.style.display = 'none';
+}
+
 function appendLog(agent, msg, dim) {
   const body = $('log-body');
-  const placeholder = body.querySelector('.log-placeholder');
-  if (placeholder) placeholder.remove();
+  clearPreview();
 
   const line = document.createElement('div');
   line.className = 'log-line';
