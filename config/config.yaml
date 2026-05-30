@@ -2,7 +2,6 @@
 
 # 当前分析任务（输入层）
 task:
-  target_vertical: office_software       # 决定使用哪个 domain_seed（可选）
   primary_competitor: 飞书                # 用户主要分析的产品（必填）
   competitors: []                         # 可选 seed；为空则由 PM 自动扩展
   n_competitors: 5                        # PM 扩展时输出的竞品总数（默认 5）
@@ -60,7 +59,6 @@ nlp:
 
 # 路径
 paths:
-  domain_seeds_dir: src/cca/domain_seeds
   checkpoints_db: data/checkpoints.db
   store_db: data/memory/store.db
   cache_dir: data/cache
