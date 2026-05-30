@@ -86,6 +86,7 @@ logs/*
 
 #报告
 output/
+scripts/output/
 reports/*.pdf
 reports/*.html
 reports/*.docx
