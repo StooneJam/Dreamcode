@@ -144,6 +144,68 @@ def test_graph_no_report_edge_to_end() -> None:
     assert (NODE_REPORT_TASK, "__end__") in edges
 
 
+def _two_product_task_plan() -> dict:
+    """最小 task_plan：两产品各一 collect_task + insight_task。"""
+    return {
+        "target_product": "甲",
+        "product_type": "SaaS",
+        "competitor_names": ["甲", "乙"],
+        "collect_tasks": [{"product_name": "甲"}, {"product_name": "乙"}],
+        "insight_tasks": [{"product_name": "甲"}, {"product_name": "乙"}],
+        "tentative_buckets": [],
+        "bucket_keywords": [],
+    }
+
+
+def test_dispatch_first_round_fanouts_all() -> None:
+    """首轮无 review 记录 → 全部 4 个 unit 都 fanout。"""
+    from cca.graph import _dispatch_collect_insight
+
+    state = empty_state(user_query="x", target_product="甲")
+    state["task_plan"] = _two_product_task_plan()
+    sends = _dispatch_collect_insight(state)
+    assert isinstance(sends, list)
+    assert len(sends) == 4
+
+
+def test_dispatch_skips_passed_units_on_retry() -> None:
+    """reroute 重排后：只重派上一轮 needs_retry 的 unit，passed/forced 跳过。"""
+    from cca.graph import _dispatch_collect_insight
+
+    state = empty_state(user_query="x", target_product="甲")
+    state["task_plan"] = _two_product_task_plan()
+    # 甲 全过；乙 collector needs_retry、乙 insight forced
+    state["review_state"] = [
+        {"agent": "collector", "product_name": "甲", "status": "passed"},
+        {"agent": "insight", "product_name": "甲", "status": "passed"},
+        {"agent": "collector", "product_name": "乙", "status": "needs_retry"},
+        {"agent": "insight", "product_name": "乙", "status": "forced"},
+    ]
+    sends = _dispatch_collect_insight(state)
+    assert isinstance(sends, list)
+    # 仅 乙 collector 一个 needs_retry 被重派
+    assert len(sends) == 1
+    assert sends[0].arg["_fanout_task"]["product_name"] == "乙"
+
+
+def test_dispatch_latest_status_overrides_earlier() -> None:
+    """同一 unit 多条 review 记录 → 取最新；先 needs_retry 后 passed 应跳过。"""
+    from cca.graph import _dispatch_collect_insight
+
+    state = empty_state(user_query="x", target_product="甲")
+    state["task_plan"] = {
+        "target_product": "甲", "product_type": "SaaS", "competitor_names": ["甲"],
+        "collect_tasks": [{"product_name": "甲"}],
+        "insight_tasks": [],
+        "tentative_buckets": [], "bucket_keywords": [],
+    }
+    state["review_state"] = [
+        {"agent": "collector", "product_name": "甲", "status": "needs_retry"},
+        {"agent": "collector", "product_name": "甲", "status": "passed"},
+    ]
+    assert _dispatch_collect_insight(state) == "review"
+
+
 @pytest.mark.skip(reason="需要真 LLM；用 demo 脚本配 dry-run 覆盖端到端")
 def test_graph_invoke_dry_run() -> None:
     """端到端 invoke 覆盖见 scripts/demo/runner.py（图模式）或 scripts/demo/dry_run.py（mock）。"""

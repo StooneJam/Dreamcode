@@ -28,7 +28,7 @@ from cca.schema import (
     TaskPlanOutput,
 )
 from cca.skills.debate import DebateTarget, run_debate
-from cca.skills.reroute import apply_reroute, reroute
+from cca.skills.reroute import apply_reroute, apply_reroute_phase, reroute
 from cca.state import CCAState
 from cca.tools.pdf_reader import UnsupportedFormat, read_file
 
@@ -417,7 +417,10 @@ def _now_iso() -> str:
 
 
 def _build_retry_signal(unit: ReviewUnit) -> dict:
-    """needs_retry ReviewUnit → AgentSignal(data_gap, requires_debate=False) → reroute → phase_2。"""
+    """needs_retry ReviewUnit → AgentSignal(data_gap) → 直接回 phase_2 重排（跳过 reroute LLM）。
+
+    review 预检已知根因恒为 phase_2，reroute_phase 直填，handle_signal 不再调 LLM 诊断。
+    """
     return AgentSignal(
         from_agent=unit.agent,
         kind="data_gap",
@@ -428,6 +431,7 @@ def _build_retry_signal(unit: ReviewUnit) -> dict:
             suggested_fix="重新规划 task_plan 并 fanout 重采该产品",
         ),
         requires_debate=False,
+        reroute_phase="phase_2",
         ts=_now_iso(),
     ).model_dump()
 
@@ -597,7 +601,13 @@ def _build_reroute_context(state: CCAState) -> str:
 
 
 def _handle_reroute_signal(signal: AgentSignal, state: CCAState) -> dict:
-    """事实性信号 → reroute skill 根因分析 + 阶段回溯。"""
+    """事实性信号 → 阶段回溯。
+
+    signal.reroute_phase 非空（review 预检 data_gap）→ 直接回该阶段，跳过 LLM 诊断；
+    否则（如 Collector request_product_replacement，phase_1/2 有歧义）→ reroute LLM 诊断。
+    """
+    if signal.reroute_phase:
+        return apply_reroute_phase(signal.reroute_phase)
     return apply_reroute(reroute(signal, _build_reroute_context(state)))
 
 
@@ -622,16 +632,17 @@ def handle_signal_node(state: CCAState) -> dict:
 
     debate_results, audit_log = [], []
     scalar_updates: dict = {}
-    reroute_bumps = 0
+    rerouted = False
     for sig in ordered:
         if sig.requires_debate:
             partial = _handle_debate_signal(sig, state)
         else:
             partial = _handle_reroute_signal(sig, state)
-            # apply_reroute 清空 phase 字段才算一次有效 reroute
+            # 清空 phase 字段才算一次有效 reroute。多个 signal 同轮失败只算一轮，
+            # 不逐 signal 累加——否则单轮多失败即耗尽 _REROUTE_HARD_LIMIT，熔断语义失真。
             if any(partial.get(k) is None and k in partial
                    for k in ("exploration_result", "task_plan", "report_task")):
-                reroute_bumps += 1
+                rerouted = True
         debate_results.extend(partial.pop("debate_results", []))
         audit_log.extend(partial.pop("audit_log", []))
         scalar_updates.update(partial)
@@ -642,6 +653,6 @@ def handle_signal_node(state: CCAState) -> dict:
         "audit_log": audit_log,
         "consumed_signal_ids": [s.signal_id for s in ordered],
     }
-    if reroute_bumps:
-        updates["reroute_count"] = (state.get("reroute_count") or 0) + reroute_bumps
+    if rerouted:
+        updates["reroute_count"] = (state.get("reroute_count") or 0) + 1
     return updates

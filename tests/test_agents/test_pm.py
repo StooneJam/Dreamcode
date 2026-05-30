@@ -1166,6 +1166,52 @@ def test_handle_signal_node_debate_only_does_not_bump_reroute(
     assert "reroute_count" not in result   # 未增量则不写回
 
 
+def test_handle_signal_node_reroute_phase_skips_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """signal.reroute_phase 非空（review 预检 data_gap）→ 直接清 task_plan，不调 reroute LLM。"""
+    from cca.agents.pm import handle_signal_node
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("reroute LLM 不应被调用")
+
+    monkeypatch.setattr("cca.agents.pm.reroute", _boom, raising=False)
+    signal = AgentSignal(
+        from_agent="collector", kind="data_gap", target="task_plan",
+        payload=_mk_payload("collector:x 数据评审失败"), requires_debate=False,
+        reroute_phase="phase_2", ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[signal.model_dump()], reroute_count=0,
+        task_plan={"product_type": "S"},
+    )
+    result = handle_signal_node(state)
+    assert result["task_plan"] is None        # phase_2 字段被清
+    assert result["reroute_count"] == 1
+
+
+def test_handle_signal_node_multiple_retry_signals_bump_reroute_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """同轮多个 needs_retry signal 只 bump reroute_count 一次（熔断按轮计，非按 signal）。"""
+    from cca.agents.pm import handle_signal_node
+
+    monkeypatch.setattr("cca.agents.pm.reroute", lambda *a, **k: None, raising=False)
+    sigs = [
+        AgentSignal(
+            from_agent="collector", kind="data_gap", target="task_plan",
+            payload=_mk_payload(f"collector:{p} 失败"), requires_debate=False,
+            reroute_phase="phase_2", ts="2026-05-23T00:00:00Z",
+        ).model_dump()
+        for p in ("x", "y", "z")
+    ]
+    state = _make_minimal_state(
+        agent_signals=sigs, reroute_count=0, task_plan={"product_type": "S"},
+    )
+    result = handle_signal_node(state)
+    assert result["reroute_count"] == 1        # 3 个 signal 仍只 +1
+
+
 # ── Phase 2: bucket coverage + mapping ────────────────────────────────
 
 

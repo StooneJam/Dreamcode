@@ -84,3 +84,18 @@ def apply_reroute(decision: RerouteDecision) -> dict:
         updates[field] = None
     updates["audit_log"] = [{"agent": "reroute", "decision": decision.model_dump()}]
     return updates
+
+
+def apply_reroute_phase(target_phase: RerouteTarget) -> dict:
+    """已知目标阶段时直接产 state 更新，跳过 LLM 诊断。
+
+    review_node 预检产的 data_gap 根因恒为 phase_2，无需再调一次 reroute LLM。
+    """
+    updates: dict = {}
+    if field := _PHASE_FIELD.get(target_phase):
+        updates[field] = None
+    updates["audit_log"] = [{
+        "agent": "reroute", "auto_phase": target_phase,
+        "note": "已知根因，跳过 LLM 诊断",
+    }]
+    return updates

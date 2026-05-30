@@ -631,4 +631,11 @@ class AgentSignal(BaseModel):
         False,
         description="主观判断时 True，触发跨家族 debate；事实性信号 False",
     )
+    reroute_phase: Literal["phase_1", "phase_2", "phase_3"] | None = Field(
+        None,
+        description=(
+            "非空时跳过 reroute LLM 诊断，直接回溯该阶段。"
+            "review_node 预检产的 data_gap 已知根因恒为 phase_2，无需再让 LLM 判一遍。"
+        ),
+    )
     ts: str = Field(description="ISO 8601 时间戳")
