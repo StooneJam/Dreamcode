@@ -1,7 +1,7 @@
 """Collector Agent —— 两阶段 ReAct 联网采集。
 
 Phase 1 exploration_node：粗探索竞品 + 维度候选；产 CollectorExplorationResult。
-Phase 2 collect_one_product / collect_node：单产品深采集；产 ProductProfile。
+Phase 2 collect_one_product：单产品深采集；产 ProductProfile。
 
 domain_seed 非空时 phase 1 优先采用其中的 dimension_candidates / competitor_mentions
 作为起点，再联网验证补充；为空走纯联网发现路径。
@@ -273,33 +273,3 @@ def build_collect_context(state: CCAState, product_name: str) -> dict:
     }
 
 
-def collect_node(state: CCAState) -> dict:
-    """Phase 2 顺序版：遍历 task_plan.collect_tasks 逐个调 collect_one_product。
-
-    保留供外部 caller 单步调用；主图已迁至 Send fanout（见 graph.py dispatch_collect_insight）。
-    """
-    raw_tasks = (state.get("task_plan") or {}).get("collect_tasks", [])
-    if not raw_tasks:
-        return {"audit_log": [{
-            "agent": "collector", "event": "collect_skipped",
-            "reason": "task_plan.collect_tasks 为空",
-        }]}
-
-    profiles_acc: dict[str, dict] = {}
-    signals_acc: list[dict] = []
-    audit_acc: list[dict] = []
-    for raw in raw_tasks:
-        task = CollectTask(**raw) if isinstance(raw, dict) else raw
-        ctx = build_collect_context(state, task.product_name)
-        partial = collect_one_product(task, ctx)
-        for name, profile in (partial.get("profiles") or {}).items():
-            profiles_acc[name] = profile
-        signals_acc.extend(partial.get("agent_signals") or [])
-        audit_acc.extend(partial.get("audit_log") or [])
-
-    updates: dict = {"audit_log": audit_acc}
-    if profiles_acc:
-        updates["profiles"] = profiles_acc
-    if signals_acc:
-        updates["agent_signals"] = signals_acc
-    return updates

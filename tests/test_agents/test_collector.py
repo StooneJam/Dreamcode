@@ -321,7 +321,7 @@ def test_exploration_node_uses_target_product_from_brief() -> None:
     assert "飞书" in human_msg.content
 
 
-# ── Phase 2: collect_one_product / collect_node ──────────────────────
+# ── Phase 2: collect_one_product ─────────────────────────────────────
 
 
 def _valid_profile_payload(product_name: str = "钉钉") -> dict:
@@ -460,73 +460,6 @@ def test_collect_one_product_passes_domain_seed_hint_to_prompt() -> None:
     human_msg = call_args["messages"][1]
     assert "domain_seed_hint" in human_msg.content
     assert "企业协作平台" in human_msg.content
-
-
-def test_collect_node_iterates_all_tasks() -> None:
-    """collect_node 遍历 task_plan.collect_tasks 顺序跑每个产品。"""
-    invocations: list[str] = []
-
-    def fake_one_product(task, context):  # noqa: ANN001
-        invocations.append(task.product_name)
-        return {
-            "profiles": {task.product_name: _valid_profile_payload(task.product_name)},
-            "audit_log": [{"agent": "collector", "event": "collect_done", "product_name": task.product_name}],
-        }
-
-    with patch("cca.agents.collector.collect_one_product", side_effect=fake_one_product):
-        from cca.agents.collector import collect_node
-        state = _empty_state(
-            task_plan={
-                "collect_tasks": [
-                    {"product_name": "钉钉", "priority_dimensions": [], "allow_self_extension": True},
-                    {"product_name": "企业微信", "priority_dimensions": [], "allow_self_extension": True},
-                ]
-            },
-        )
-        result = collect_node(state)
-
-    assert invocations == ["钉钉", "企业微信"]
-    assert set(result["profiles"].keys()) == {"钉钉", "企业微信"}
-    assert len(result["audit_log"]) == 2
-
-
-def test_collect_node_aggregates_signals_and_profiles() -> None:
-    """一个产品 finalize 成功 + 一个产品 request_replacement，两者结果都进 state 更新。"""
-    def fake_one_product(task, context):  # noqa: ANN001
-        if task.product_name == "幽灵":
-            return {
-                "agent_signals": [{"target": "task_plan", "from_agent": "collector"}],
-                "audit_log": [{"agent": "collector", "event": "collect_replacement_requested"}],
-            }
-        return {
-            "profiles": {task.product_name: _valid_profile_payload(task.product_name)},
-            "audit_log": [{"agent": "collector", "event": "collect_done"}],
-        }
-
-    with patch("cca.agents.collector.collect_one_product", side_effect=fake_one_product):
-        from cca.agents.collector import collect_node
-        state = _empty_state(
-            task_plan={
-                "collect_tasks": [
-                    {"product_name": "钉钉", "priority_dimensions": [], "allow_self_extension": True},
-                    {"product_name": "幽灵", "priority_dimensions": [], "allow_self_extension": True},
-                ]
-            },
-        )
-        result = collect_node(state)
-
-    assert "钉钉" in result["profiles"]
-    assert "幽灵" not in result.get("profiles", {})  # 没 finalize 就不进 profiles
-    assert len(result["agent_signals"]) == 1
-    assert len(result["audit_log"]) == 2
-
-
-def test_collect_node_empty_tasks_skipped() -> None:
-    from cca.agents.collector import collect_node
-    state = _empty_state(task_plan={"collect_tasks": []})
-    result = collect_node(state)
-    assert result["audit_log"][0]["event"] == "collect_skipped"
-    assert "profiles" not in result
 
 
 def testbuild_collect_context_finds_product_brief() -> None:

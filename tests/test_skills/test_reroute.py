@@ -19,7 +19,7 @@ def _patch_reroute_gpt(monkeypatch: pytest.MonkeyPatch, response):
     fake = _FakeStructuredLLM(response)
 
     class _FakeGPT:
-        def with_structured_output(self, target_type):  # noqa: ARG002
+        def with_structured_output(self, target_type, **_kwargs):  # noqa: ARG002
             return fake
 
     monkeypatch.setattr("cca.skills.reroute.gpt", _FakeGPT(), raising=False)
