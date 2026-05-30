@@ -41,13 +41,6 @@ _SYSTEM_PROMPT = """你是竞品分析系统的纠偏 skill - reroute。
 - ReviewUnit 已通过但 ReportTask 的 focus_dimensions / sections 数据不足 → phase_3
 - 章节超出数据范围、SWOT 覆盖产品超出 profiles → phase_3
 - 默认偏好 phase_2 重采集，避免重做 exploration 丢失已收敛信息
-
-## Phase 2 bucket 覆盖规则
-- 单产品某 bucket 缺失（qa_flags 含 `bucket_uncovered: X`）→ phase_2
-  （PM 重排 task_plan，可能调整该产品的 priority_dimensions 引导 Collector 补采）
-- 全产品都缺同一 bucket（多个 ReviewUnit 含同一 `bucket_uncovered: X`）→ phase_2
-  并在 root_cause 明示 "PM 应调整 tentative_buckets 或 bucket_keywords"（提示 PM 该 bucket 本身可能设定不合理，应在 phase_2 重生成 TaskPlan 时调整定义而非反复重采）
-- bucket 覆盖问题永不回 phase_1（这是任务规划层的语义聚类问题，不是采集层问题）
 """
 
 

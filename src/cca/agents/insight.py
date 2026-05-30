@@ -66,9 +66,8 @@ def build_insight_context(state: CCAState, product_name: str) -> dict:
         "competitor_names": state.get("competitor_names", []),
         "sentiment_model": load_config().get("nlp", {}).get("sentiment_model", "llm"),
         "target_product": state["target_product"],
-        # Phase 2: 让 Insight 知道目标 bucket，sentiment themes 尽量覆盖
+        # 软引导：让 Insight 知道 PM 预设的 bucket，themes 尽量覆盖；非强制
         "tentative_buckets": task_plan.get("tentative_buckets") or [],
-        "bucket_keywords": task_plan.get("bucket_keywords") or {},
     }
 
 

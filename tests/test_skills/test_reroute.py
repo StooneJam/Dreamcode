@@ -171,54 +171,6 @@ def test_apply_reroute_phase_3_clears_report_task() -> None:
     assert result["report_task"] is None
 
 
-# ── Phase 2: bucket 覆盖路由 ────────────────────────────────────────────
-
-
-def test_reroute_bucket_uncovered_returns_phase_2(monkeypatch: pytest.MonkeyPatch) -> None:
-    """单产品 bucket 缺失 → phase_2，由 PM 重排 task_plan 重采。"""
-    from cca.skills.reroute import RerouteDecision, reroute
-
-    signal = _make_signal(
-        from_agent="collector",
-        payload=_mk_payload("钉钉 collector bucket_uncovered: AI 助手"),
-    )
-    decision = RerouteDecision(
-        target_phase="phase_2",
-        root_cause="钉钉的 dimensions 不含命中 'AI 助手' bucket keywords 的 dim",
-        fix_summary={"product_name": "钉钉", "add_priority_dim": "AI 助手"},
-        rationale="单产品 bucket 缺失走 phase_2 让 PM 加上 priority_dim 后重采",
-    )
-    _patch_reroute_gpt(monkeypatch, decision)
-
-    result = reroute(signal, '{"task_plan": {"tentative_buckets": ["AI 助手"]}}')
-    assert result.target_phase == "phase_2"
-
-
-def test_reroute_global_bucket_miss_hints_tentative_revision(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """全产品都缺同一 bucket → phase_2 + root_cause 提示调整 tentative_buckets。"""
-    from cca.skills.reroute import RerouteDecision, reroute
-
-    signal = _make_signal(
-        from_agent="collector",
-        payload=_mk_payload(
-            "全部 3 个产品的 dimensions 均无 dim 命中 '自研芯片' bucket"
-        ),
-    )
-    decision = RerouteDecision(
-        target_phase="phase_2",
-        root_cause="全产品同 bucket 缺失，PM 应调整 tentative_buckets 或 bucket_keywords",
-        fix_summary={"remove_bucket": "自研芯片"},
-        rationale="bucket 本身脱离品类实际，不在 SaaS 协作产品的能力范围",
-    )
-    _patch_reroute_gpt(monkeypatch, decision)
-
-    result = reroute(signal, '{"task_plan": {"tentative_buckets": ["自研芯片"]}}')
-    assert result.target_phase == "phase_2"
-    assert "tentative_buckets" in result.root_cause or "bucket_keywords" in result.root_cause
-
-
 def test_apply_reroute_logs_audit() -> None:
     from cca.skills.reroute import RerouteDecision, apply_reroute
 

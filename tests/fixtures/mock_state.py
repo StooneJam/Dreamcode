@@ -108,12 +108,8 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
             competitor_names=["钉钉", "企业微信"],
             collect_tasks=[CollectTask(product_name="钉钉"), CollectTask(product_name="企业微信")],
             insight_tasks=[InsightTask(product_name="钉钉"), InsightTask(product_name="企业微信")],
-            # Phase 2: tentative_buckets + bucket_keywords，与 profile dim.name "视频会议人数上限" 对齐
+            # tentative_buckets 作为 Reporter canonical_map 的软引导
             tentative_buckets=["视频会议", "定价"],
-            bucket_keywords=[
-                {"bucket": "视频会议", "keywords": ["视频", "会议"]},
-                {"bucket": "定价", "keywords": ["定价", "Pro"]},
-            ],
         ).model_dump(),
         report_task=report_task.model_dump(),
         profiles=profiles,

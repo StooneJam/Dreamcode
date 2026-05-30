@@ -254,9 +254,8 @@ def build_collect_context(state: CCAState, product_name: str) -> dict:
         "target_product": state["target_product"],
         "domain_seed": state.get("domain_seed"),
         "product_brief": brief,
-        # Phase 2: 让 Collector 知道目标 bucket，引导每个 bucket 至少 1 项 fact
+        # 软引导：让 Collector 知道 PM 预设的 bucket，尽量覆盖；非强制（不再事后字面卡覆盖）
         "tentative_buckets": task_plan.get("tentative_buckets") or [],
-        "bucket_keywords": task_plan.get("bucket_keywords") or {},
     }
 
 

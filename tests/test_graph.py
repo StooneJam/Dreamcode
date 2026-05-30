@@ -153,7 +153,6 @@ def _two_product_task_plan() -> dict:
         "collect_tasks": [{"product_name": "甲"}, {"product_name": "乙"}],
         "insight_tasks": [{"product_name": "甲"}, {"product_name": "乙"}],
         "tentative_buckets": [],
-        "bucket_keywords": [],
     }
 
 

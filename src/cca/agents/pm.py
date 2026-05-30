@@ -253,9 +253,8 @@ def report_task_node(state: CCAState) -> dict:
             "competitor_names": state.get("competitor_names", []),
             "profiles": profiles,
             "review_state": state.get("review_state", []),
-            # Phase 2: 让 LLM 知道 PM 阶段二定的 buckets，产 mapping 时优先沿用
+            # 让 LLM 知道 PM 阶段二定的 buckets，产 dimension_canonical_map 时优先沿用
             "tentative_buckets": task_plan.get("tentative_buckets") or [],
-            "bucket_keywords": task_plan.get("bucket_keywords") or [],
         },
     ))
     coerced_task, fallback_dims = _ensure_mapping_coverage(result.report_task, profiles)
@@ -275,56 +274,19 @@ def report_task_node(state: CCAState) -> dict:
 # ── 阶段 2.5 Review ─────────────────────────────────────────────────
 
 
-def _bucket_keywords_to_dict(raw: list[dict] | dict | None) -> dict[str, list[str]]:
-    """task_plan["bucket_keywords"] 归一为 dict[str, list[str]]。
-
-    兼容两种存储形态：
-    - list[BucketKeywords.model_dump()] = list[{bucket, keywords}]（schema 现态）
-    - dict[str, list[str]]（旧形态或测试直接构造）
-    """
-    if not raw:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    return {item["bucket"]: item["keywords"] for item in raw if "bucket" in item}
-
-
-def _bucket_coverage_flags(
-    dim_names: list[str],
-    tentative_buckets: list[str],
-    bucket_keywords: dict[str, list[str]],
-) -> list[str]:
-    """单产品 → bucket_uncovered flag list。纯函数，无 task_plan 上下文。
-
-    判定：bucket 的 keywords 中任一 substring 命中任一 dim_name → 视为覆盖。
-    keywords 缺失（如 bucket_keywords 没该 bucket 条目）→ 跳过该 bucket（不报 flag，PM TaskPlan validator 已强校验同步性，理论不应到这）。
-    tentative_buckets 为空 → 返空列表（Phase 2 机制关闭场景）。
-    """
-    if not tentative_buckets:
-        return []
-    return [
-        f"bucket_uncovered: {bucket}"
-        for bucket in tentative_buckets
-        if bucket_keywords.get(bucket)
-        and not any(kw in name for name in dim_names for kw in bucket_keywords[bucket])
-    ]
-
-
 def _check_data_completeness(
     profiles: dict[str, dict],
     task_plan: dict | None,
 ) -> dict[str, list[str]]:
     """代码层数据完整度预检，产 pre_flags：{f"{agent}:{product}": ["data_missing: ...", ...]}。
 
-    Phase 1：dimensions 有 fact / profile 有 sources / sentiment 有足够 reviews。
-    Phase 2：collector 循环内追加 bucket_uncovered 检查（通过 _bucket_coverage_flags）。
+    只查客观、不依赖命名的数据质量：dimensions 有 fact / profile 有 sources / sentiment 有足够 reviews。
+    维度对齐（bucket 归并）不在此 —— 那是 Reporter 的 dimension_canonical_map 语义任务，
+    不该用字面匹配在采集后阻断重采（见 reroute / report_task）。
     """
     flags: dict[str, list[str]] = {}
     if not task_plan:
         return flags
-
-    tentative_buckets = task_plan.get("tentative_buckets") or []
-    bucket_keywords = _bucket_keywords_to_dict(task_plan.get("bucket_keywords"))
 
     for ct in task_plan.get("collect_tasks") or []:
         product = ct.get("product_name")
@@ -341,11 +303,6 @@ def _check_data_completeness(
                     unit_flags.append(f"data_missing: dimension '{dim.get('name', '?')}' 无 fact")
         if not (profile.get("sources") or []):
             unit_flags.append("source_unreliable: profile.sources 为空")
-        # Phase 2: bucket 覆盖检查（dim 名 substring 比对 bucket_keywords）
-        unit_flags.extend(_bucket_coverage_flags(
-            [dim.get("name", "") for dim in dimensions],
-            tentative_buckets, bucket_keywords,
-        ))
         if unit_flags:
             flags[f"collector:{product}"] = unit_flags
 
@@ -481,9 +438,6 @@ def review_node(state: CCAState) -> dict:
         "per_unit_retry_limit": _PER_UNIT_RETRY_LIMIT,
         "profiles": profiles,
         "historical_review_state": review_state,
-        # Phase 2: LLM 须知本轮 bucket 设定，便于判断 pre_flags 中 bucket_uncovered 的根因
-        "tentative_buckets": (task_plan or {}).get("tentative_buckets") or [],
-        "bucket_keywords": (task_plan or {}).get("bucket_keywords") or [],
     }
     # review 有完整代码层兜底（pre_flags 足以独立判 passed/needs_retry），
     # 所以 LLM 不死磕：少量重试，连续失败即降级为纯代码层判定，绝不让 Doubao 抽风崩掉整条流程。
