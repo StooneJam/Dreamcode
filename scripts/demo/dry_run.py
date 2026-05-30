@@ -29,6 +29,8 @@ from cca.schema import (
     InsightTask,
     ReportTask,
     ReportTaskOutput,
+    ReviewOutput,
+    ReviewUnit,
     TaskPlan,
     TaskPlanOutput,
     UserSentiment,
@@ -88,6 +90,19 @@ def _pm_responses() -> dict:
                 inputs_used=["exploration_result.competitor_names"],
             )],
         ),
+        ReviewOutput: ReviewOutput(
+            review_units=[
+                ReviewUnit(agent=a, product_name=p, status="passed", retry_count=0)
+                for a in ("collector", "insight")
+                for p in ("钉钉", "企业微信")
+            ],
+            decision_records=[DecisionRecord(
+                phase="review", decision_type="review_judgement",
+                chosen={"verdict": "all_passed"},
+                rationale="dry-run mock: 数据完整全部通过",
+                inputs_used=["profiles"],
+            )],
+        ),
         ReportTaskOutput: ReportTaskOutput(
             report_task=ReportTask(
                 target_product="飞书", competitors=["钉钉", "企业微信"],
@@ -126,9 +141,14 @@ def _collector_exploration_msgs() -> list[Any]:
 def _insight_msgs(names: list[str]) -> list[Any]:
     out: list[Any] = []
     for n in names:
+        from cca.schema import ReviewSample
         sentiment = UserSentiment(
             appstore_cn_rating=4.0, appstore_cn_review_count=10000,
             positive_themes=["界面简洁"], negative_themes=["偶发卡顿"],
+            representative_reviews=[
+                ReviewSample(text=f"{n} 评论 {i}", rating=4, platform="appstore_cn")
+                for i in range(3)
+            ],
         )
         out.append(AIMessage(content=f"(dry-run mock) {n} 情感完成"))
         out.append(ToolMessage(
