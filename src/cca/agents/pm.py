@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, cast
@@ -108,47 +109,56 @@ def _load_user_file(state: CCAState) -> tuple[str | None, str | None, list[dict]
     return path, text, audit
 
 
+_PM_INVOKE_MAX_RETRIES = int(os.getenv("PM_INVOKE_MAX_RETRIES", "4"))
+
+
 def _invoke_pm(output_type, phase_label: str, payload: dict):
     """PM 统一调用模板：with_structured_output + 失败自修。
 
-    两种失败模式各 retry 一次（PM 阶段节点非 ReAct，允许 try/except self-heal，见 D-035）：
+    失败模式：
     1. ValidationError —— LLM 漏 required 字段：反馈错误详情让 LLM 修
-    2. invoke 返 None —— LLM 用自由文本回答而非调 function（Doubao 在复杂嵌套
-       schema 上偶发）：显式指令"必须通过 function_call 返回"
+    2. invoke 返 None —— LLM 用自由文本而非 function call 回答（Doubao 在复杂嵌套
+       schema 上偶发）：显式强调必须用 function_call，最多重试 PM_INVOKE_MAX_RETRIES 次
 
-    二次仍失败 → raise RuntimeError，避免 NoneType.attribute 这种静默崩。
-
-    不接 cache —— D-039 撤回 PM cache hook，保留 LLM 在 schema 约束内的判断灵活度。
+    不接 cache —— 保留 LLM 在 schema 约束内的判断灵活度。
     """
     llm = gpt.with_structured_output(output_type, method="function_calling")
     user = _phase_prefix(phase_label) + json.dumps(payload, ensure_ascii=False)
     messages = [SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]
 
-    try:
-        result = llm.invoke(messages)
-    except ValidationError as e:
-        repair = HumanMessage(content=(
-            f"上一次输出有 schema 错误，请严格按 {output_type.__name__} schema 重新输出。\n"
-            f"错误详情：\n{e}\n\n"
-            f"特别注意：DecisionRecord.rationale 是必填字符串，"
-            f"每条 DecisionRecord 都必须有 rationale 字段。"
-        ))
-        result = llm.invoke(messages + [repair])
+    result = None
+    last_error: str | None = None
 
-    if result is None:
-        print(f"  [pm:{phase_label}] WARN: LLM 未调用 function（返 None），retry with 显式 hint", flush=True)
-        force = HumanMessage(content=(
-            f"上一次回复没有调用 function。必须通过 function_call 返回严格符合 "
-            f"{output_type.__name__} schema 的结构化对象，不要用自由文本回答。"
-        ))
-        result = llm.invoke(messages + [force])
+    for attempt in range(_PM_INVOKE_MAX_RETRIES):
+        try:
+            current_messages = messages if attempt == 0 else messages + [HumanMessage(content=last_error)]
+            result = llm.invoke(current_messages)
+        except ValidationError as e:
+            last_error = (
+                f"上一次输出有 schema 错误，请严格按 {output_type.__name__} schema 重新输出。\n"
+                f"错误详情：\n{e}\n\n"
+                f"特别注意：DecisionRecord.rationale 是必填字符串，"
+                f"每条 DecisionRecord 都必须有 rationale 字段。"
+            )
+            print(f"  [pm:{phase_label}] WARN: ValidationError on attempt {attempt + 1}, retrying", flush=True)
+            continue
 
-    if result is None:
-        raise RuntimeError(
-            f"PM {phase_label} 节点二次重试后 LLM 仍未调用 function，无法获得结构化输出。"
-            f"检查 model id 的 function_calling 支持，或 prompt 是否清晰。"
-        )
-    return result
+        if result is None:
+            last_error = (
+                f"上一次回复没有调用 function（第 {attempt + 1} 次）。"
+                f"你必须通过 function_call 返回严格符合 {output_type.__name__} schema 的结构化对象，"
+                f"禁止用自由文本回答。直接调用工具函数，不要输出任何解释文字。"
+            )
+            print(f"  [pm:{phase_label}] WARN: LLM 返 None（attempt {attempt + 1}/{_PM_INVOKE_MAX_RETRIES}），retry", flush=True)
+            continue
+
+        return result
+
+    raise RuntimeError(
+        f"PM {phase_label} 节点在 {_PM_INVOKE_MAX_RETRIES} 次重试后仍未获得结构化输出。"
+        f"最后错误：{last_error}。"
+        f"检查 model id 的 function_calling 支持，或 prompt 是否过长。"
+    )
 
 
 def initial_brief_node(state: CCAState) -> dict:
@@ -622,19 +632,21 @@ def handle_signal_node(state: CCAState) -> dict:
 
     debate_results, audit_log = [], []
     scalar_updates: dict = {}
-    reroute_bumps = 0
+    # reroute_bumps 最多 +1 per handle_signal_node 调用（一次循环 = 一次 reroute 周期）
+    # 防止一批 5 个 signal 同时触发 reroute，让 reroute_count 直接跳到 5 绕过 HARD_LIMIT=2
+    did_reroute = False
     for sig in ordered:
         if sig.requires_debate:
             partial = _handle_debate_signal(sig, state)
         else:
             partial = _handle_reroute_signal(sig, state)
-            # apply_reroute 清空 phase 字段才算一次有效 reroute
             if any(partial.get(k) is None and k in partial
                    for k in ("exploration_result", "task_plan", "report_task")):
-                reroute_bumps += 1
+                did_reroute = True
         debate_results.extend(partial.pop("debate_results", []))
         audit_log.extend(partial.pop("audit_log", []))
         scalar_updates.update(partial)
+    reroute_bumps = 1 if did_reroute else 0
 
     updates: dict = {
         **scalar_updates,
