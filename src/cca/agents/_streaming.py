@@ -8,11 +8,11 @@
 若 cache_key=None 则永不走缓存路径，跟无 hook 版本一样。
 
 打印格式：
-    [Collector] ▶ start (recursion_limit=40)
+    [Collector] start (recursion_limit=40)
     [Collector] thinking: ...
-    [Collector] → web_search({"query": "钉钉 官网"})
-    [Collector] ← finalize_exploration (628B) {"target_product":"飞书"...
-    [Collector] ◀ done (8 messages)
+    [Collector] call web_search({"query": "钉钉 官网"})
+    [Collector] ret finalize_exploration (628B) {"target_product":"飞书"...
+    [Collector] done (8 messages)
     [Collector] (cache replay)         # 仅 replay/auto 命中时
 
 若 MagicMock 的 .stream 返不出 dict（测试场景），自动 fallback 到 agent.invoke。
@@ -36,7 +36,7 @@ _TOOL_RESP_PREVIEW = 80
 
 def _short(text: str, n: int) -> str:
     text = text.replace("\n", " ").strip()
-    return text if len(text) <= n else text[:n] + "…"
+    return text if len(text) <= n else text[:n] + "..."
 
 
 def _print(label: str, line: str) -> None:
@@ -49,12 +49,12 @@ def _print_message(msg: Any, label: str) -> None:
         if tool_calls := getattr(msg, "tool_calls", None):
             for tc in tool_calls:
                 args_str = json.dumps(tc.get("args", {}), ensure_ascii=False)
-                _print(label, f"→ {tc['name']}({_short(args_str, _TOOL_ARG_PREVIEW)})")
+                _print(label, f"call {tc['name']}({_short(args_str, _TOOL_ARG_PREVIEW)})")
         elif content := (msg.content or "").strip():
             _print(label, f"thinking: {_short(content, _THINKING_PREVIEW)}")
     elif isinstance(msg, ToolMessage):
         size = len(msg.content or "")
-        _print(label, f"← {msg.name} ({size}B) {_short(msg.content or '', _TOOL_RESP_PREVIEW)}")
+        _print(label, f"ret {msg.name} ({size}B) {_short(msg.content or '', _TOOL_RESP_PREVIEW)}")
 
 
 def _stream_iter(agent: Any, messages: list, recursion_limit: int):
@@ -128,11 +128,11 @@ def stream_react(
         cached = react_cache.get(cache_node, cache_key)
         if cached is not None:
             messages_list = _deserialize_messages(cached["messages_json"])
-            _print(label, f"▶ start (cache replay, {len(messages_list)} messages)")
+            _print(label, f"start (cache replay, {len(messages_list)} messages)")
             sys.stdout.flush()
             for msg in messages_list:
                 _print_message(msg, label)
-            _print(label, f"◀ done ({len(messages_list)} messages) [cached]")
+            _print(label, f"done ({len(messages_list)} messages) [cached]")
             return messages_list
         if mode == "replay":
             raise RuntimeError(
@@ -141,10 +141,10 @@ def stream_react(
             )
 
     # ── 真跑路径 ──
-    _print(label, f"▶ start (recursion_limit={recursion_limit})")
+    _print(label, f"start (recursion_limit={recursion_limit})")
     sys.stdout.flush()
     final_messages = _run_real(agent, messages, label, recursion_limit)
-    _print(label, f"◀ done ({len(final_messages)} messages)")
+    _print(label, f"done ({len(final_messages)} messages)")
 
     # ── write / auto 写缓存 ──
     if use_cache and mode in ("write", "auto"):
