@@ -56,13 +56,30 @@ def run_questionnaire(product_name: str, competitor_names: str, dimensions: str)
 
 @tool
 def extract_topics(texts_json: str, n_topics: int = 5) -> str:
-    """NMF 主题提取。texts_json 是文本数组 JSON；返回主题关键词列表 JSON。"""
+    """NMF 主题提取（内置中文分词 + 停用词过滤）。
+
+    texts_json 是文本数组 JSON；返回主题关键词组列表 JSON，每条形如 "协同 / 消息 / 通知"。
+    样本太少 / 全是停用词时返回 []。
+    """
     texts, err = _safe_text_list(texts_json)
     if err:
         return err
     if not texts:
         return json.dumps([], ensure_ascii=False)
-    return json.dumps(_nmf_topics(texts, n_topics), ensure_ascii=False)
+    try:
+        topics = _nmf_topics(texts, n_topics)
+    except ImportError as e:
+        # D-035：工具永不向 ToolNode raise。依赖缺失时让 LLM 自行归纳主题后继续。
+        return (
+            f"主题提取工具不可用（{e}）。"
+            f"请基于评论文本自行归纳 2-3 个主题关键词，直接写入 finalize_sentiment 的 themes。"
+        )
+    except Exception as e:
+        return (
+            f"主题提取运行时错误：{type(e).__name__}: {e}。"
+            f"请基于评论文本自行归纳主题后继续。"
+        )
+    return json.dumps(topics, ensure_ascii=False)
 
 
 @tool

@@ -35,6 +35,7 @@ dependencies = [
     "matplotlib>=3.8.0",             # 图表渲染
     "pillow>=10.0.0",                # 图片处理
     "scikit-learn>=1.4.0",           # Insight NMF 主题提取
+    "jieba>=0.42.1",                 # NMF 预处理中文分词
     # NLP 推理（Insight BERT 情感分类；CPU 即可）
     "transformers>=4.40.0",
     "torch>=2.1.0",

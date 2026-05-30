@@ -50,6 +50,47 @@ class TestNmfTopics:
         from cca.utils.nlp_utils import _nmf_topics
         assert _nmf_topics([], n_topics=3) == []
 
+    def test_segments_chinese_into_words_not_sentences(self):
+        """中文整句须被 jieba 切成词，主题关键词不应是整句。"""
+        texts = [
+            "这个软件的协同编辑功能很好用",
+            "视频会议经常卡顿掉线体验差",
+            "定价太贵了性价比不高",
+            "移动端响应速度慢",
+        ]
+        topics = self._run(texts, n=3)
+        keywords = {kw for t in topics for kw in t.split(" / ")}
+        # 切出了词级关键词（如"协同"/"视频"/"定价"），且没有整句混入
+        assert any(kw in keywords for kw in ("协同", "编辑", "视频", "会议", "定价", "移动"))
+        assert not any(len(kw) > 6 for kw in keywords), f"出现整句未分词: {keywords}"
+
+    def test_filters_chinese_stopwords(self):
+        """中文功能词 / 业务泛词不应进入主题关键词。"""
+        texts = [
+            "这个产品的功能我觉得很好用",
+            "这个软件的体验真的不错",
+            "公司的工具使用起来还可以",
+        ]
+        keywords = {kw for t in self._run(texts, n=2) for kw in t.split(" / ")}
+        for stop in ("的", "这个", "产品", "软件", "公司", "觉得", "真的", "使用"):
+            assert stop not in keywords, f"停用词 {stop} 未被过滤: {keywords}"
+
+    def test_filters_english_stopwords(self):
+        """英文停用词不应进入主题关键词。"""
+        texts = [
+            "the app is buggy and crashes a lot",
+            "the search is slow and not useful",
+            "the interface is clean and intuitive",
+        ]
+        keywords = {kw for t in self._run(texts, n=2) for kw in t.split(" / ")}
+        for stop in ("the", "is", "and", "a", "app", "not"):
+            assert stop not in keywords, f"英文停用词 {stop} 未被过滤: {keywords}"
+
+    def test_all_stopwords_returns_empty(self):
+        """全是停用词 → 空词表，优雅返回 [] 而非抛异常。"""
+        from cca.utils.nlp_utils import _nmf_topics
+        assert _nmf_topics(["的 了 是 我们", "the and is"], n_topics=3) == []
+
 
 # ---------------------------------------------------------------------------
 # 问卷格式化

@@ -31,12 +31,14 @@
 - 返回 {positive: [...], negative: [...], neutral: [...]} 分组
 
 ### 第五步：extract_topics（分两次调用）
-- 对 positive 组调用，n_topics=3，得到 positive_themes
-- 对 negative 组调用，n_topics=3，得到 negative_themes
+- 对 positive 组评论文本调用，n_topics=3 → 得到正面主题关键词组
+- 对 negative 组评论文本调用，n_topics=3 → 得到负面主题关键词组
+- 工具已内置中文分词 + 停用词过滤，返回的每条形如 "协同 / 消息 / 通知" 的关键词组**即为一个主题**，无需你再加工
 
 ### 第六步：finalize_sentiment
 - 必须对每个产品调用一次
-- positive_themes / negative_themes 来自 extract_topics 结果
+- **positive_themes / negative_themes 必须逐条直接采用第五步 extract_topics 的返回值**，一个关键词组对应一条 theme，**不得用自己的话改写、概括或新增**主题；这是为了让报告主题可溯源到 NMF 分析，而非 LLM 主观臆断
+- 若某情感组评论过少，extract_topics 返回空列表 `[]` 或错误提示时，该组 themes 留空，并在 `sources[0].snippet` 备注"样本不足，主题未提取"，不要凭空编主题
 - appstore_cn_rating 来自 scrape_app_store 返回的 rating
 - appstore_cn_review_count 来自 scrape_app_store 返回的 review_count
 - representative_reviews 从 App Store reviews 或 web_search 摘要中选 3 条
@@ -73,6 +75,6 @@ PM 在 InsightTask 上下文中可能传入：
 ## 输出质量要求
 
 - 不捏造数据，搜不到的字段填 None
-- positive_themes 和 negative_themes 各至少 2 条
+- positive_themes 和 negative_themes 取自 extract_topics（数据充足时各 2-3 条；样本不足返空则可少于 2 条并按第六步备注），不自行编造
 - representative_reviews 每条 text 为原文摘录，不改写
 - 每条 sources Evidence 必须有有效 source_url
