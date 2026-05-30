@@ -153,19 +153,6 @@ def exploration_node(state: CCAState) -> dict:
 # ── Phase 2：单产品深采集 ──────────────────────────────────────────────
 
 
-# 测试与外部模块的稳定别名
-def _extract_exploration(messages: list) -> dict | None:
-    return _last_tool_json(messages, "finalize_exploration")
-
-
-def _extract_signals(messages: list) -> list[dict]:
-    return _extract_tool_jsons(messages, "challenge_pm")
-
-
-def _extract_replacement_signals(messages: list) -> list[dict]:
-    return _extract_tool_jsons(messages, "request_product_replacement")
-
-
 def _extract_finalized_profile(messages: list) -> dict | None:
     """取 finalize_profile 最后一次成功提交里的 profile 字段。"""
     for msg in reversed(messages):

@@ -42,11 +42,11 @@ def _empty_state(**overrides) -> CCAState:
     return state
 
 
-# ── _extract_exploration ──────────────────────────────────────────────
+# ── _last_tool_json(finalize_exploration) ─────────────────────────────
 
 
 def test_extract_exploration_returns_dict() -> None:
-    from cca.agents.collector import _extract_exploration
+    from cca.agents.collector import _last_tool_json
 
     exploration = CollectorExplorationResult(
         target_product="飞书",
@@ -63,22 +63,22 @@ def test_extract_exploration_returns_dict() -> None:
             name="finalize_exploration",
         ),
     ]
-    result = _extract_exploration(messages)
+    result = _last_tool_json(messages, "finalize_exploration")
     assert result is not None
     assert result["target_product"] == "飞书"
     assert result["competitor_names"] == ["钉钉", "企业微信"]
 
 
 def test_extract_exploration_returns_none_if_finalize_not_called() -> None:
-    from cca.agents.collector import _extract_exploration
+    from cca.agents.collector import _last_tool_json
 
     messages = [AIMessage(content="思考但没调工具")]
-    assert _extract_exploration(messages) is None
+    assert _last_tool_json(messages, "finalize_exploration") is None
 
 
 def test_extract_exploration_takes_latest_when_called_twice() -> None:
     """LLM 偶尔会多次 finalize，应以最新一次为准。"""
-    from cca.agents.collector import _extract_exploration
+    from cca.agents.collector import _last_tool_json
 
     early = json.dumps({
         "target_product": "X",
@@ -98,16 +98,16 @@ def test_extract_exploration_takes_latest_when_called_twice() -> None:
         ToolMessage(content=early, tool_call_id="1", name="finalize_exploration"),
         ToolMessage(content=late, tool_call_id="2", name="finalize_exploration"),
     ]
-    result = _extract_exploration(messages)
+    result = _last_tool_json(messages, "finalize_exploration")
     assert result is not None
     assert result["target_product"] == "Y"
 
 
-# ── _extract_signals ──────────────────────────────────────────────────
+# ── _extract_tool_jsons(challenge_pm) ─────────────────────────────────
 
 
 def test_extract_signals_collects_challenge_pm_outputs() -> None:
-    from cca.agents.collector import _extract_signals
+    from cca.agents.collector import _extract_tool_jsons
 
     sig_json = json.dumps({
         "signal_id": "abc",
@@ -122,18 +122,18 @@ def test_extract_signals_collects_challenge_pm_outputs() -> None:
         ToolMessage(content=sig_json, tool_call_id="1", name="challenge_pm"),
         ToolMessage(content='[{"title": "foo"}]', tool_call_id="2", name="web_search"),
     ]
-    signals = _extract_signals(messages)
+    signals = _extract_tool_jsons(messages, "challenge_pm")
     assert len(signals) == 1
     assert signals[0]["from_agent"] == "collector"
 
 
 def test_extract_signals_empty_when_no_challenge() -> None:
-    from cca.agents.collector import _extract_signals
+    from cca.agents.collector import _extract_tool_jsons
 
     messages = [
         ToolMessage(content='[]', tool_call_id="1", name="web_search"),
     ]
-    assert _extract_signals(messages) == []
+    assert _extract_tool_jsons(messages, "challenge_pm") == []
 
 
 # ── exploration_node ──────────────────────────────────────────────────
@@ -387,13 +387,13 @@ def test_extract_finalized_profile_returns_none_when_not_called() -> None:
 
 
 def test_extract_replacement_signals_collects_all() -> None:
-    from cca.agents.collector import _extract_replacement_signals
+    from cca.agents.collector import _extract_tool_jsons
 
     messages = [
         _replacement_tool_msg("X"),
         ToolMessage(content='[]', tool_call_id="z", name="web_search"),
     ]
-    signals = _extract_replacement_signals(messages)
+    signals = _extract_tool_jsons(messages, "request_product_replacement")
     assert len(signals) == 1
     assert signals[0]["target"] == "task_plan"
 
