@@ -221,7 +221,7 @@ def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
 
 def _extract_reviewer_result(messages: list) -> QAResult:
     """取 call_reviewer 最后一次返回的 QAResult；未调用时返默认 passed。"""
-    for msg in messages:
+    for msg in reversed(messages):
         if isinstance(msg, ToolMessage) and msg.name == "call_reviewer" and msg.content:
             try:
                 return QAResult.model_validate_json(msg.content)
