@@ -60,6 +60,7 @@ PMPhase = Literal["initial_brief", "task_plan", "review", "report_task"]
 _REROUTE_HARD_LIMIT = 2          # state.reroute_count 达此值后 needs_retry → forced
 _PER_UNIT_RETRY_LIMIT = 2        # 单 (agent, product) 历史返工次数达此值后 needs_retry → forced
 _SENTIMENT_MIN_REVIEWS = 3       # Insight sentiment 评论样本下限
+_REVIEW_INVOKE_ATTEMPTS = 2      # review 有代码层兜底，LLM 不死磕：1 首次 + 1 retry，失败即降级
 
 
 def _load_system_prompt() -> str:
@@ -112,16 +113,20 @@ def _load_user_file(state: CCAState) -> tuple[str | None, str | None, list[dict]
 _PM_INVOKE_MAX_RETRIES = int(os.getenv("PM_INVOKE_MAX_RETRIES", "4"))
 
 
-def _invoke_pm(output_type, phase_label: str, payload: dict):
+def _invoke_pm(output_type, phase_label: str, payload: dict, *, max_attempts: int | None = None):
     """PM 统一调用模板：with_structured_output + 失败自修。
 
     失败模式：
     1. ValidationError —— LLM 漏 required 字段：反馈错误详情让 LLM 修
     2. invoke 返 None —— LLM 用自由文本而非 function call 回答（Doubao 在复杂嵌套
-       schema 上偶发）：显式强调必须用 function_call，最多重试 PM_INVOKE_MAX_RETRIES 次
+       schema 上偶发）：显式强调必须用 function_call
+
+    max_attempts 控制总尝试次数（含首次）。默认 _PM_INVOKE_MAX_RETRIES；有代码层兜底的
+    节点（review）可传小值快速失败、不死磕。全部用尽仍失败 → raise，由调用方决定崩还是兜底。
 
     不接 cache —— 保留 LLM 在 schema 约束内的判断灵活度。
     """
+    attempts = max_attempts or _PM_INVOKE_MAX_RETRIES
     llm = gpt.with_structured_output(output_type, method="function_calling")
     user = _phase_prefix(phase_label) + json.dumps(payload, ensure_ascii=False)
     messages = [SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]
@@ -129,7 +134,7 @@ def _invoke_pm(output_type, phase_label: str, payload: dict):
     result = None
     last_error: str | None = None
 
-    for attempt in range(_PM_INVOKE_MAX_RETRIES):
+    for attempt in range(attempts):
         try:
             current_messages = messages if attempt == 0 else messages + [HumanMessage(content=last_error)]
             result = llm.invoke(current_messages)
@@ -149,13 +154,13 @@ def _invoke_pm(output_type, phase_label: str, payload: dict):
                 f"你必须通过 function_call 返回严格符合 {output_type.__name__} schema 的结构化对象，"
                 f"禁止用自由文本回答。直接调用工具函数，不要输出任何解释文字。"
             )
-            print(f"  [pm:{phase_label}] WARN: LLM 返 None（attempt {attempt + 1}/{_PM_INVOKE_MAX_RETRIES}），retry", flush=True)
+            print(f"  [pm:{phase_label}] WARN: LLM 返 None（attempt {attempt + 1}/{attempts}），retry", flush=True)
             continue
 
         return result
 
     raise RuntimeError(
-        f"PM {phase_label} 节点在 {_PM_INVOKE_MAX_RETRIES} 次重试后仍未获得结构化输出。"
+        f"PM {phase_label} 节点在 {attempts} 次尝试后仍未获得结构化输出。"
         f"最后错误：{last_error}。"
         f"检查 model id 的 function_calling 支持，或 prompt 是否过长。"
     )
@@ -480,10 +485,27 @@ def review_node(state: CCAState) -> dict:
         "tentative_buckets": (task_plan or {}).get("tentative_buckets") or [],
         "bucket_keywords": (task_plan or {}).get("bucket_keywords") or [],
     }
-    result = cast(ReviewOutput, _invoke_pm(ReviewOutput, "阶段 2.5 Review", payload))
+    # review 有完整代码层兜底（pre_flags 足以独立判 passed/needs_retry），
+    # 所以 LLM 不死磕：少量重试，连续失败即降级为纯代码层判定，绝不让 Doubao 抽风崩掉整条流程。
+    try:
+        result = cast(ReviewOutput, _invoke_pm(
+            ReviewOutput, "阶段 2.5 Review", payload, max_attempts=_REVIEW_INVOKE_ATTEMPTS,
+        ))
+        llm_index = {(u.agent, u.product_name): u for u in result.review_units}
+        decision_records = result.decision_records
+        llm_degraded = False
+    except RuntimeError as e:
+        print(f"  [pm:review] LLM 评审失败，降级代码层判定：{e}", flush=True)
+        llm_index = {}
+        decision_records = [DecisionRecord(
+            decision_type="other",
+            chosen={"review_mode": "code_layer_fallback"},
+            rationale="LLM 结构化评审连续失败，降级为代码层 pre_flags 判定；review 有完整兜底，不阻断流程。",
+            inputs_used=["pre_flags"],
+        )]
+        llm_degraded = True
 
     # 索引 LLM 输出，按 (agent, product) 校正；缺失的 expected unit 用代码层兜底产 ReviewUnit
-    llm_index = {(u.agent, u.product_name): u for u in result.review_units}
     coerced: list[ReviewUnit] = []
     for agent, product in expected:
         key = f"{agent}:{product}"
@@ -512,7 +534,7 @@ def review_node(state: CCAState) -> dict:
     return {
         "review_state": [u.model_dump() for u in coerced],
         "agent_signals": signals,
-        "decision_log": _stamp_decisions(result.decision_records, "review"),
+        "decision_log": _stamp_decisions(decision_records, "review"),
         "audit_log": [{
             "agent": "pm", "event": "review_done",
             "passed": sum(1 for u in coerced if u.status == "passed"),
@@ -520,6 +542,7 @@ def review_node(state: CCAState) -> dict:
             "forced": sum(1 for u in coerced if u.status == "forced"),
             "signals_raised": len(signals),
             "reroute_count": reroute_count,
+            "llm_degraded": llm_degraded,
         }],
     }
 

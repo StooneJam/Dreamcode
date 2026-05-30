@@ -1000,6 +1000,29 @@ def test_review_node_all_passed_no_signals(monkeypatch: pytest.MonkeyPatch) -> N
     assert result["audit_log"][0]["signals_raised"] == 0
 
 
+def test_review_node_degrades_to_code_layer_when_llm_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doubao 连续返 None → _invoke_pm raise → review 不崩，降级纯代码层判定。
+
+    数据完整产品仍 passed，缺数据产品仍 needs_retry —— 代码层 pre_flags 独立兜底。
+    """
+    _patch_pm_gpt(monkeypatch, None)  # LLM 永远返 None → review 内部 raise 被 catch
+
+    from cca.agents.pm import review_node
+
+    state = _make_minimal_state(
+        profiles={"全": _complete_profile("全"), "缺": {"product_name": "缺"}},
+        task_plan=_mk_task_plan("全", "缺"),
+    )
+    result = review_node(state)  # 不应抛
+    assert result["audit_log"][0]["llm_degraded"] is True
+    by_product = {(u["agent"], u["product_name"]): u["status"] for u in result["review_state"]}
+    assert by_product[("collector", "全")] == "passed"
+    assert by_product[("collector", "缺")] == "needs_retry"
+    assert any(s["from_agent"] == "collector" for s in result["agent_signals"])
+
+
 def test_review_node_B_constraint_coerces_llm_passed_when_pre_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
