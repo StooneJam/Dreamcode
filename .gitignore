@@ -57,10 +57,6 @@ htmlcov/
 *.db
 langsmith_traces/
 
-# 忽略目录内容但保留空目录（让队友看到完整架构）
-checkpoints/*
-!checkpoints/.gitkeep
-
 # Node.js
 node_modules/
 
@@ -76,8 +72,6 @@ data/bert_finetune/*
 data/models/*
 !data/models/.gitkeep
 
-logs/*
-!logs/.gitkeep
 *.log
 
 # 但保留示例数据
