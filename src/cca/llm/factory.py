@@ -23,7 +23,7 @@ load_dotenv(override=True)
 # DeepSeek 高峰期延迟也可能上来；180s 给个宽余量，必要时按家族通过环境变量调。
 _GPT_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "180"))
 _DEEPSEEK_TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT", "180"))
-_DOUBAO_TIMEOUT = int(os.getenv("DOUBAO_TIMEOUT", "120"))
+_DOUBAO_TIMEOUT = int(os.getenv("DOUBAO_TIMEOUT", "300"))
 
 # 单次 LLM 调用网络层 retry。OpenAI SDK 内置 exponential backoff，
 # 主要应对 Doubao Ark 在 Send fanout 并发下偶发的 TCP reset（WinError 10054）

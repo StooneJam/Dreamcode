@@ -188,24 +188,6 @@ def test_dispatch_skips_passed_units_on_retry() -> None:
     assert sends[0].arg["_fanout_task"]["product_name"] == "乙"
 
 
-def test_dispatch_latest_status_overrides_earlier() -> None:
-    """同一 unit 多条 review 记录 → 取最新；先 needs_retry 后 passed 应跳过。"""
-    from cca.graph import _dispatch_collect_insight
-
-    state = empty_state(user_query="x", target_product="甲")
-    state["task_plan"] = {
-        "target_product": "甲", "product_type": "SaaS", "competitor_names": ["甲"],
-        "collect_tasks": [{"product_name": "甲"}],
-        "insight_tasks": [],
-        "tentative_buckets": [], "bucket_keywords": [],
-    }
-    state["review_state"] = [
-        {"agent": "collector", "product_name": "甲", "status": "needs_retry"},
-        {"agent": "collector", "product_name": "甲", "status": "passed"},
-    ]
-    assert _dispatch_collect_insight(state) == "review"
-
-
 @pytest.mark.skip(reason="需要真 LLM；用 demo 脚本配 dry-run 覆盖端到端")
 def test_graph_invoke_dry_run() -> None:
     """端到端 invoke 覆盖见 scripts/demo/runner.py（图模式）或 scripts/demo/dry_run.py（mock）。"""

@@ -49,30 +49,11 @@ def _insight_product_node(state: CCAState) -> dict:
     return _insight_mod.insight_one_product(task, state["_fanout_context"])
 
 
-def _latest_review_status(review_state: list[dict]) -> dict[tuple[str, str], str]:
-    """每个 (agent, product) 的最新 review 状态。review_state 按追加序，后者覆盖前者。"""
-    latest: dict[tuple[str, str], str] = {}
-    for u in review_state:
-        agent, product = u.get("agent"), u.get("product_name")
-        if agent and product:
-            latest[(agent, product)] = u.get("status")
-    return latest
-
-
-def _should_dispatch(agent: str, product: str, latest: dict[tuple[str, str], str]) -> bool:
-    """选择性重派：首轮（无 review 记录）或上一轮 needs_retry → 派；passed/forced → 跳过。
-
-    reroute 回 phase_2 重排后，已通过产品的 profile 已在 state.profiles 持久，不必重采；
-    只重跑真正失败的 unit，避免单点失败触发全量重采（token 爆炸根因）。
-    """
-    return latest.get((agent, product)) not in ("passed", "forced")
-
-
 def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
     """task_plan 后 fanout 出 collect_product + insight_product 并行。
 
-    选择性重派：reroute 回 phase_2 时只 fanout 上一轮 needs_retry 的 unit，passed/forced 跳过。
-    空 tasks（首轮无任务，或全部已 passed/forced）时直接路由到 review，避免空 fanout。
+    空 tasks 时直接路由到 review，避免空 fanout。
+    reroute 重跑时跳过已通过评审的产品，避免全量重采。
     """
     raw = state.get("task_plan") or {}
     try:
@@ -80,10 +61,16 @@ def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
     except Exception:
         return NODE_REVIEW
 
-    latest = _latest_review_status(state.get("review_state") or [])
+    # 已通过评审的 (agent, product) 对不再重采
+    passed = {
+        (rs["agent"], rs["product_name"])
+        for rs in (state.get("review_state") or [])
+        if rs.get("status") in ("passed", "forced")
+    }
+
     sends: list[Send] = []
     for ct in tp.collect_tasks:
-        if not _should_dispatch("collector", ct.product_name, latest):
+        if ("collector", ct.product_name) in passed:
             continue
         ctx = _collector_mod.build_collect_context(state, ct.product_name)
         sends.append(Send(NODE_COLLECT_PRODUCT, {
@@ -91,7 +78,7 @@ def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
             "_fanout_context": ctx,
         }))
     for it in tp.insight_tasks:
-        if not _should_dispatch("insight", it.product_name, latest):
+        if ("insight", it.product_name) in passed:
             continue
         ctx = _insight_mod.build_insight_context(state, it.product_name)
         sends.append(Send(NODE_INSIGHT_PRODUCT, {

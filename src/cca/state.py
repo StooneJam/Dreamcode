@@ -19,7 +19,12 @@ def _merge_profiles(left: dict[str, dict], right: dict[str, dict]) -> dict[str, 
     merged = dict(left)
     for name, profile in right.items():
         if name in merged:
-            merged[name] = {**merged[name], **profile}
+            # 右侧 None 不覆盖左侧已有值，防止 Collector 二轮清空 Insight 写入的 sentiment
+            base = dict(merged[name])
+            for k, v in profile.items():
+                if v is not None or k not in base or base[k] is None:
+                    base[k] = v
+            merged[name] = base
         else:
             merged[name] = profile
     return merged

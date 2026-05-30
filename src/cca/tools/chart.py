@@ -57,7 +57,8 @@ def _render_chart_impl(chart_type: str, title: str, data_json: str, filename: st
     _apply_style()
     data = json.loads(data_json)
     _CHART_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = _CHART_DIR / f"{filename}.png"
+    stem = filename.removesuffix(".png")
+    output_path = _CHART_DIR / f"{stem}.png"
 
     dispatch = {
         "bar": _bar,
