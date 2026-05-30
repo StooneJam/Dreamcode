@@ -517,14 +517,21 @@ def _run_manual(args: argparse.Namespace) -> None:
 
     # ── Insight ──
     if args.live_insight:
-        hr("INSIGHT · insight_node (live)")
-        from cca.agents.insight import insight_node
-        out = insight_node(state)
-        patch = out.get("profiles") or {}
-        rest = {k: v for k, v in out.items() if k != "profiles"}
-        state["profiles"] = mp(state.get("profiles", {}), patch)
-        _merge(state, rest)
-        print(f"  情感分析完成 × {len(patch)}：{list(patch.keys())}")
+        hr("INSIGHT · insight_one_product (live)")
+        from cca.schema import InsightTask
+        import cca.agents.insight as insight_mod
+        insight_raw = (state.get("task_plan") or {}).get("insight_tasks", [])
+        done: list[str] = []
+        for i, raw in enumerate(insight_raw, 1):
+            task = InsightTask(**raw) if isinstance(raw, dict) else raw
+            print(f"  [{i}/{len(insight_raw)}] {task.product_name} ...", flush=True)
+            ctx = insight_mod.build_insight_context(state, task.product_name)
+            partial = insight_mod.insight_one_product(task, ctx)
+            for n, p in (partial.get("profiles") or {}).items():
+                state["profiles"] = mp(state.get("profiles", {}), {n: p})
+                done.append(n)
+            _merge(state, {k: v for k, v in partial.items() if k != "profiles"})
+        print(f"  情感分析完成 × {len(done)}：{done}")
     else:
         from cca.schema import UserSentiment, ReviewSample
         for name in state.get("competitor_names", []):

@@ -6,7 +6,7 @@
 - 问卷缓存（mock SQLite 路径）
 - 问卷 fill_mode（real 模式返回空列表）
 - 问卷设计 / 格式化 / 匿名化（mock LLM）
-- insight_node 输出结构（mock agent）
+- insight_one_product 输出结构（mock agent）
 """
 from __future__ import annotations
 
@@ -122,10 +122,10 @@ class TestAnonymizeResponses:
 
 
 # ---------------------------------------------------------------------------
-# insight_node 集成（mock agent）
+# insight_one_product 集成（mock agent）—— Send fanout worker，主图与 demo 实际路径
 # ---------------------------------------------------------------------------
 
-class TestInsightNode:
+class TestInsightOneProduct:
     def _make_tool_message(self, name: str, content: str):
         from langchain_core.messages import ToolMessage
         return ToolMessage(content=content, name=name, tool_call_id="fake-id")
@@ -139,29 +139,29 @@ class TestInsightNode:
         )
         return json.dumps({"product_name": product_name, "sentiment": s.model_dump()})
 
-    def _invoke(self, mock_state):
-        msgs = [
-            self._make_tool_message("finalize_sentiment", self._fake_sentiment("钉钉")),
-            self._make_tool_message("finalize_sentiment", self._fake_sentiment("企业微信")),
-        ]
+    def _invoke(self, mock_state, product_name="钉钉", extra_msgs=None):
+        from cca.schema import InsightTask
+        msgs = [self._make_tool_message("finalize_sentiment", self._fake_sentiment(product_name))]
+        if extra_msgs:
+            msgs.extend(extra_msgs)
         mock_agent = MagicMock()
         mock_agent.invoke.return_value = {"messages": msgs}
+        context = {
+            "profiles": mock_state["profiles"],
+            "competitor_names": mock_state["competitor_names"],
+            "sentiment_model": "llm",
+            "target_product": mock_state["target_product"],
+        }
         with patch("cca.agents.insight.create_react_agent", return_value=mock_agent):
-            from cca.agents.insight import insight_node
-            return insight_node(mock_state)
-
-    def test_returns_required_keys(self, mock_state):
-        result = self._invoke(mock_state)
-        for key in ("profiles", "agent_signals", "audit_log"):
-            assert key in result
+            from cca.agents.insight import insight_one_product
+            return insight_one_product(InsightTask(product_name=product_name), context)
 
     def test_sentiment_written_to_profiles(self, mock_state):
         result = self._invoke(mock_state)
         assert result["profiles"]["钉钉"]["sentiment"] is not None
-        assert result["profiles"]["企业微信"]["sentiment"] is not None
 
     def test_collector_data_preserved(self, mock_state):
-        # insight_node 只返回增量 {"sentiment": ...}，由 _merge_profiles reducer 保留 Collector 字段。
+        # insight_one_product 只返回增量 {"sentiment": ...}，由 _merge_profiles reducer 保留 Collector 字段。
         # 这里模拟 LangGraph 的 reducer 合并行为，验证合并后 dimensions 不丢失。
         from cca.state import _merge_profiles
         result = self._invoke(mock_state)
@@ -169,15 +169,17 @@ class TestInsightNode:
         assert "dimensions" in merged["钉钉"]
         assert "sentiment" in merged["钉钉"]
 
-    def test_audit_log_records_products(self, mock_state):
+    def test_audit_log_records_product(self, mock_state):
         result = self._invoke(mock_state)
         log = result["audit_log"][0]
         assert log["agent"] == "insight"
-        assert "钉钉" in log["products"]
+        assert log["product"] == "钉钉"
+        assert log["sentiment_written"] is True
 
     def test_no_signals_by_default(self, mock_state):
+        # fanout worker 无 signal 时不带 agent_signals key（精简增量契约）
         result = self._invoke(mock_state)
-        assert result["agent_signals"] == []
+        assert "agent_signals" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -461,13 +463,3 @@ class TestEffectiveBertModel:
         assert model == str(ft_dir)
 
 
-# ---------------------------------------------------------------------------
-# insight_node：task_plan 为 None 时优雅跳过
-# ---------------------------------------------------------------------------
-
-class TestInsightNodeGuards:
-    def test_skips_when_task_plan_none(self, mock_state):
-        from cca.agents.insight import insight_node
-        state = {**mock_state, "task_plan": None}
-        result = insight_node(state)
-        assert result["audit_log"][0]["event"] == "skipped"
