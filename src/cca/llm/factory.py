@@ -64,14 +64,14 @@ if _DEV_OVERRIDE == "doubao":
     gpt = _make_doubao(temperature=0.2)
     deepseek = _make_doubao(temperature=0.3)
     doubao = _make_doubao(temperature=0.2)
-    report_llm = _make_doubao(temperature=0.2)
+    report_llm = _make_doubao(temperature=0.8)
 else:
-    # Report Agent 专用 GPT-5 客户端。
+    # Report Agent 专用 GPT-5 客户端。temperature=0.8 提升语言组织与表达质量。
     report_llm = ChatOpenAI(
         model=os.getenv("OPENAI_MODEL", "gpt-5"),
         api_key=os.getenv("OPENAI_API_KEY"),
         timeout=_GPT_TIMEOUT,
-        temperature=0.2,
+        temperature=0.8,
         max_retries=_MAX_RETRIES,
     )
     # GPT-5 —— PM Agent / Report Agent / debate 辩方
