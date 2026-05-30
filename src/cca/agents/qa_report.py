@@ -7,7 +7,6 @@ finalize_swot 工具产，由 Reporter ReAct 自主调度。
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -16,7 +15,7 @@ from langgraph.prebuilt import create_react_agent
 
 from cca.agents._streaming import stream_react
 from cca.llm.factory import report_llm
-from cca.schema import AgentSignal, ChallengePayload, QAResult, ReportTask, ReviewUnit
+from cca.schema import QAResult, ReportTask, ReviewUnit
 from cca.skills.call_report_reviewer import call_report_reviewer
 from cca.state import CCAState
 from cca.tools.chart import render_bar_chart, render_chart
@@ -220,10 +219,6 @@ def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
     return out
 
 
-def _extract_agent_signals(messages: list) -> list[dict]:
-    return _extract_tool_jsons(messages, "reject_report_task")
-
-
 def _extract_reviewer_result(messages: list) -> QAResult:
     """取 call_reviewer 最后一次返回的 QAResult；未调用时返默认 passed。"""
     for msg in messages:
@@ -258,33 +253,12 @@ def report_node(state: CCAState) -> dict:
                 note=f"豆包终审调用失败，已跳过：{exc}",
             ).model_dump_json()
 
-    @tool
-    def reject_report_task(
-        claim: str,
-        evidence: list[str],
-        suggested_fix: str | None = None,
-        requires_debate: bool = False,
-    ) -> str:
-        """发现 ReportTask 与档案数据矛盾时向 PM 发反驳信号。
-
-        事实性错误（产品缺失 / 章节超出数据范围）传 requires_debate=False；
-        主观分歧（定位 / 竞品选取异议）传 True 触发跨家族辩论。
-        调用后继续按现有数据尽力完成报告。
-        """
-        signal = AgentSignal(
-            from_agent="report", kind="pm_challenge", target="report_task",
-            payload=ChallengePayload(claim=claim, evidence=evidence, suggested_fix=suggested_fix),
-            requires_debate=requires_debate,
-            ts=datetime.now(timezone.utc).isoformat(),
-        )
-        return signal.model_dump_json()
-
     agent = create_react_agent(
         model=report_llm,
         tools=[
             submit_dimension_ranking, finalize_swot,
             render_chart, render_bar_chart, render_pdf,
-            call_reviewer, reject_report_task,
+            call_reviewer,
         ],
     )
     messages = stream_react(
@@ -303,7 +277,6 @@ def report_node(state: CCAState) -> dict:
     reviewer_result = _extract_reviewer_result(messages)
     pdf_path = _extract_pdf_path(messages)
     report_md = _extract_final_md(messages)
-    signals = _extract_agent_signals(messages)
 
     # LLM 未调 render_pdf（Doubao dev override 常见）时，Python 侧兜底渲染
     if report_md and not pdf_path:
@@ -322,10 +295,8 @@ def report_node(state: CCAState) -> dict:
         "report_pdf_path": pdf_path,
         "report_status": report_status,
         "qa_results": [reviewer_result.model_dump()],
-        "agent_signals": signals,
         "audit_log": [{
             "agent": "report", "event": "report_generated",
             "status": report_status, "pdf_path": pdf_path,
-            "signals_raised": len(signals),
         }],
     }

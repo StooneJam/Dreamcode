@@ -16,8 +16,7 @@ Reporter 的初始 message 按以下顺序组织（全部都要读）：
 
 ## 工作流程
 
-0. 核查 ReportTask：若 competitors 中有产品在档案中完全缺失，先调用 reject_report_task 记录，然后继续按现有数据完成报告。
-1. 阅读全部输入，对照 review_state 找出 forced 项。
+1. 阅读全部输入，对照 review_state 找出 forced 项；若 competitors 中有产品在档案中完全缺失，在正文显著标注"该产品数据缺失"，按现有数据尽力完成报告。
 2. **维度竞争力排名**（submit_dimension_ranking）：**按 canonical bucket 排名，不按细分 dim 排名**。
    - 工具的 `dimension_name` 参数填 **canonical bucket 名**（即 `dimension_canonical_map` 的 value，如 "AI 助手"），不是细分 dim 名。
    - focus_dimensions 中的维度若是细分 dim 名，先用 `dimension_canonical_map` 查到对应 bucket，再以 bucket 为单位排名；多个细分 dim 映射到同一 bucket 时合并为 1 次工具调用。

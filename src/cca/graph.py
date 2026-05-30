@@ -6,8 +6,7 @@ task_plan 之后 Collector phase 2 与 Insight 按产品 fanout 并行；
 信号路由：review 出口依 has_pending_signal 走 handle_signal，handle_signal 再依被
 清空/reject 字段回对应 PM 阶段（initial_brief / exploration / task_plan / report_task）。
 
-升级路径（后续）：
-- report 后加信号出口，让 Reporter 的 reject_report_task 也能触发 reroute / debate（见 §3.5）
+report 是终点：Reporter 不向 PM 发反驳信号（report → END），有意不设回路。
 """
 from __future__ import annotations
 
