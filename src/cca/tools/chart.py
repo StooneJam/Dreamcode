@@ -16,6 +16,13 @@ _CHART_DIR = Path("output/charts")
 _PALETTE = ["#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#44BBA4", "#E94F37", "#5C4B8A"]
 
 
+def _fmt_num(v: float) -> str:
+    """Format a number for chart labels without scientific notation."""
+    if v == int(v):
+        return str(int(v))
+    return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
 def _apply_style() -> None:
     import matplotlib
     matplotlib.use("Agg")
@@ -128,7 +135,7 @@ def _bar(title: str, data: dict) -> "plt.Figure":
     fig, ax = plt.subplots(figsize=(max(7, len(labels) * 1.4), 5))
     bars = ax.bar(labels, values, color=_PALETTE[:len(labels)],
                   edgecolor="white", linewidth=1.5, width=0.6)
-    ax.bar_label(bars, fmt="%.2g", padding=5, fontsize=10, fontweight="bold")
+    ax.bar_label(bars, labels=[_fmt_num(v) for v in values], padding=5, fontsize=10, fontweight="bold")
     ax.set_title(title)
     ax.set_ylim(0, max(values) * 1.28)
     if max(len(str(l)) for l in labels) > 4:
@@ -145,7 +152,7 @@ def _horizontal_bar(title: str, data: dict) -> "plt.Figure":
     fig, ax = plt.subplots(figsize=(9, max(4, len(labels) * 0.65)))
     bars = ax.barh(labels, values, color=_PALETTE[:len(labels)],
                    edgecolor="white", linewidth=1.5, height=0.6)
-    ax.bar_label(bars, fmt="%.2g", padding=5, fontsize=10, fontweight="bold")
+    ax.bar_label(bars, labels=[_fmt_num(v) for v in values], padding=5, fontsize=10, fontweight="bold")
     ax.set_title(title)
     ax.set_xlim(0, max(values) * 1.28)
     ax.invert_yaxis()
@@ -167,7 +174,7 @@ def _grouped_bar(title: str, data: dict) -> "plt.Figure":
         offset = (i - n_series / 2 + 0.5) * width
         bars = ax.bar(x + offset, vals, width * 0.9, label=name,
                       color=_PALETTE[i % len(_PALETTE)], edgecolor="white")
-        ax.bar_label(bars, fmt="%.2g", padding=3, fontsize=9)
+        ax.bar_label(bars, labels=[_fmt_num(v) for v in vals], padding=3, fontsize=9)
 
     ax.set_title(title)
     ax.set_xticks(x)
@@ -192,7 +199,7 @@ def _line(title: str, data: dict) -> "plt.Figure":
         values: list[float] = data["values"]
         ax.plot(labels, values, marker="o", linewidth=2.5, markersize=7, color=_PALETTE[0])
         for x, y in zip(labels, values):
-            ax.annotate(f"{y:.2g}", (x, y), textcoords="offset points",
+            ax.annotate(_fmt_num(y), (x, y), textcoords="offset points",
                         xytext=(0, 9), ha="center", fontsize=9, fontweight="bold")
     ax.set_title(title)
     plt.tight_layout()
@@ -274,7 +281,7 @@ def _dual_axis_bar(title: str, data: dict) -> "plt.Figure":
     ax2.plot(x, right_vals, color=_PALETTE[1], marker="o",
              linewidth=2.5, markersize=8, label=right["name"], zorder=5)
     for xi, yi in zip(x, right_vals):
-        ax2.annotate(f"{yi:.2g}", (xi, yi), textcoords="offset points",
+        ax2.annotate(_fmt_num(yi), (xi, yi), textcoords="offset points",
                      xytext=(0, 10), ha="center", fontsize=9, fontweight="bold",
                      color=_PALETTE[1])
     ax2.set_ylabel(right["name"], color=_PALETTE[1], fontsize=11)
@@ -323,7 +330,7 @@ def _radar(title: str, data: dict) -> "plt.Figure":
     ax.set_ylim(0, max_val)
     ticks = np.linspace(0, max_val, 6)[1:]
     ax.set_yticks(ticks)
-    ax.set_yticklabels([f"{v:.2g}" for v in ticks], fontsize=8)
+    ax.set_yticklabels([_fmt_num(v) for v in ticks], fontsize=8)
     ax.grid(color="white", linewidth=1.5)
     ax.set_title(title, pad=30)
     # Place legend below the chart (fig-level) to avoid overlapping the polar area
