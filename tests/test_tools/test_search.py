@@ -5,6 +5,7 @@
 from __future__ import annotations
 from unittest.mock import MagicMock
 import pytest
+import requests
 from cca.tools import search
 from cca.tools.search import web_search
 
@@ -52,6 +53,49 @@ def test_web_search_uses_env_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     web_search.invoke({"query": "anything"})
 
     assert captured["api_key"] == "tvly-test-key"
+
+
+def test_web_search_returns_error_string_on_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D-035：限流（运营类）必须返错误串而非 raise，否则一次外部失败打死整张图。"""
+    from tavily.errors import UsageLimitExceededError
+
+    mock_client = MagicMock()
+    mock_client.search.side_effect = UsageLimitExceededError("blocked: excessive requests")
+    monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
+
+    result = web_search.invoke({"query": "飞书 竞品"})
+
+    assert isinstance(result, str)
+    assert "web_search 暂不可用" in result
+    assert "excessive requests" in result
+
+
+def test_web_search_returns_error_string_on_network_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """瞬时网络失败（ConnectionError）同样降级为错误串。"""
+    mock_client = MagicMock()
+    mock_client.search.side_effect = requests.ConnectionError("connection reset")
+    monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
+
+    result = web_search.invoke({"query": "x"})
+
+    assert isinstance(result, str)
+    assert "web_search 暂不可用" in result
+
+
+def test_web_search_propagates_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """配置/认证类（InvalidAPIKeyError）故意不吞，响亮 raise（CLAUDE.md §1 失败要响亮）。"""
+    from tavily.errors import InvalidAPIKeyError
+
+    mock_client = MagicMock()
+    mock_client.search.side_effect = InvalidAPIKeyError("401 unauthorized")
+    monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
+
+    with pytest.raises(InvalidAPIKeyError):
+        web_search.invoke({"query": "x"})
 
 
 def test_web_search_is_a_langchain_tool() -> None:
