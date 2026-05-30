@@ -38,9 +38,17 @@ PM_FAMILY: AgentFamily = "gpt-5"
 CHALLENGER_FAMILY: AgentFamily = "deepseek"
 
 # signal.target → debate target
-_TARGET_TO_DEBATE = {"task_plan": "pm_taskplan", "report_task": "report"}
+_TARGET_TO_DEBATE = {
+    "initial_brief": "pm_initial_brief",
+    "task_plan": "pm_taskplan",
+    "report_task": "report",
+}
 # debate target → 对应的 state 任务字段
-_DEBATE_TARGET_TO_TASK_FIELD = {"pm_taskplan": "task_plan", "report": "report_task"}
+_DEBATE_TARGET_TO_TASK_FIELD = {
+    "pm_initial_brief": "initial_brief",
+    "pm_taskplan": "task_plan",
+    "report": "report_task",
+}
 
 # 单文档截断保护，防 prompt 爆
 _MAX_FILE_CHARS = 50_000

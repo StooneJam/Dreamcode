@@ -30,16 +30,18 @@ from cca.schema import (
     DebatePosition,
     DebateResult,
     DebateRound,
+    InitialBrief,
     ReportTask,
     TaskPlan,
 )
 
-DebateTarget = Literal["pm_taskplan", "report"]
+DebateTarget = Literal["pm_taskplan", "report", "pm_initial_brief"]
 
 # 收敛阶段产 revised_output 用的 schema 校验表
 _REVISED_OUTPUT_SCHEMA: dict[DebateTarget, type[BaseModel]] = {
     "pm_taskplan": TaskPlan,
     "report": ReportTask,
+    "pm_initial_brief": InitialBrief,
 }
 
 _VALID_PLATFORMS: frozenset[str] = frozenset({"appstore_cn", "appstore_us", "zhihu", "weibo", "other"})

@@ -568,7 +568,7 @@ class DebateRound(BaseModel):
 class DebateResult(BaseModel):
     """完整 debate 结果：N 轮 + 第三家族仲裁。"""
 
-    target: Literal["pm_taskplan", "report"] = Field(description="被审对象类型")
+    target: Literal["pm_taskplan", "report", "pm_initial_brief"] = Field(description="被审对象类型")
     rounds: list[DebateRound]
     final_verdict: Literal["accepted", "rejected", "accepted_with_revision"]
     judge_family: AgentFamily | None = Field(

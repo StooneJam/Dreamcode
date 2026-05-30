@@ -91,14 +91,50 @@ def test_graph_review_routes_to_handle_signal_and_report_task() -> None:
     assert (NODE_REVIEW, NODE_REPORT_TASK) in edges
 
 
-def test_graph_handle_signal_routes_to_three_phase_targets() -> None:
-    """handle_signal 条件边按 apply_reroute 清空字段回三个 PM 阶段或 END。"""
+def test_graph_handle_signal_routes_to_all_phase_targets() -> None:
+    """handle_signal 条件边按被清空/reject 字段回四个 PM 阶段或 END（含 initial_brief）。"""
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
+    assert (NODE_HANDLE_SIGNAL, NODE_INITIAL_BRIEF) in edges
     assert (NODE_HANDLE_SIGNAL, NODE_EXPLORATION) in edges
     assert (NODE_HANDLE_SIGNAL, NODE_TASK_PLAN) in edges
     assert (NODE_HANDLE_SIGNAL, NODE_REPORT_TASK) in edges
     assert (NODE_HANDLE_SIGNAL, "__end__") in edges
+
+
+def test_route_after_review_enters_handle_signal_for_debate_only_signal() -> None:
+    """纯主观（requires_debate=True）pending 也要进 handle_signal，不能因门只认 factual 被丢。"""
+    from cca.graph import NODE_HANDLE_SIGNAL as H, _route_after_review
+
+    state = {
+        "agent_signals": [{"signal_id": "s1", "requires_debate": True}],
+        "consumed_signal_ids": [],
+    }
+    assert _route_after_review(state) == H
+
+
+def test_route_after_review_skips_consumed_signal() -> None:
+    """已消费信号不再触发 handle_signal。"""
+    from cca.graph import _route_after_review
+
+    state = {
+        "agent_signals": [{"signal_id": "s1", "requires_debate": True}],
+        "consumed_signal_ids": ["s1"],
+    }
+    assert _route_after_review(state) == NODE_REPORT_TASK
+
+
+def test_route_after_signal_back_to_initial_brief_when_cleared() -> None:
+    """debate reject initial_brief 清空该字段后，路由必须回 initial_brief 节点而非落 END。"""
+    from cca.graph import _route_after_signal
+
+    state = {
+        "initial_brief": None,
+        "exploration_result": {"x": 1},
+        "task_plan": {"y": 1},
+        "report_task": {"z": 1},
+    }
+    assert _route_after_signal(state) == NODE_INITIAL_BRIEF
 
 
 def test_graph_no_report_edge_to_end() -> None:

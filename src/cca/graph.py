@@ -3,9 +3,11 @@
 task_plan 之后 Collector phase 2 与 Insight 按产品 fanout 并行；
 全部产品就绪后汇入 report_task。
 
+信号路由：review 出口依 has_pending_signal 走 handle_signal，handle_signal 再依被
+清空/reject 字段回对应 PM 阶段（initial_brief / exploration / task_plan / report_task）。
+
 升级路径（后续）：
-- 信号路由：task_plan / report_task 后加条件边，依 has_pending_signals 走 handle_signal
-- handle_signal 后路由：依被清空字段回到对应 PM 节点
+- report 后加信号出口，让 Reporter 的 reject_report_task 也能触发 reroute / debate（见 §3.5）
 """
 from __future__ import annotations
 
@@ -79,25 +81,27 @@ def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
 
 
 def _route_after_review(state: CCAState) -> str:
-    """review 出口：有未消费的事实性 signal → handle_signal；否则 → report_task。
+    """review 出口：有任何未消费 signal → handle_signal；否则 → report_task。
 
-    reroute_count 已达上限时 review_node 内部已经把 needs_retry 全升 forced 不再 raise signal，
-    所以此处只需简单判断 agent_signals 是否有 unconsumed pending。
+    判断口径与 handle_signal_node 内部一致——软（debate）/硬（reroute）信号都接，
+    避免纯主观信号因门只认 factual 而被卡在外面（含上游 exploration 阶段累加的
+    initial_brief 主观质疑）。reroute_count 达上限时 review_node 已把 needs_retry
+    全升 forced 不再 raise signal，所以此处只需判断是否有 unconsumed pending。
     """
     raw = state.get("agent_signals") or []
     consumed = set(state.get("consumed_signal_ids") or [])
-    pending_factual = [
-        s for s in raw
-        if s.get("signal_id") not in consumed and not s.get("requires_debate")
-    ]
-    return NODE_HANDLE_SIGNAL if pending_factual else NODE_REPORT_TASK
+    pending = [s for s in raw if s.get("signal_id") not in consumed]
+    return NODE_HANDLE_SIGNAL if pending else NODE_REPORT_TASK
 
 
 def _route_after_signal(state: CCAState) -> str:
-    """handle_signal 出口：按 apply_reroute 清空的字段决定回到哪个 PM 阶段。
+    """handle_signal 出口：按被清空（reroute）或被 reject（debate）的字段决定回到哪个 PM 阶段。
 
-    debate 路径不会清空字段时落到 END（避免回路；debate 应辩后由 PM 阶段重做）。
+    顺序按管线先后：initial_brief → exploration → task_plan → report_task。
+    accepted_with_revision 不清字段 → 落到 END（避免回路；修订已写回，下游沿用）。
     """
+    if state.get("initial_brief") is None:
+        return NODE_INITIAL_BRIEF
     if state.get("exploration_result") is None:
         return NODE_EXPLORATION
     if state.get("task_plan") is None:
@@ -111,7 +115,7 @@ def build_graph(*, include_report: bool = True):
     """编译主图。
 
     include_report=False 时 report 节点不接入（demo 时 `--skip-report` 省 token）。
-    handle_signal_node 节点保留供外部 caller 调用（不在主线边里）。
+    handle_signal_node 接在 review 出口的条件边上（见 _route_after_review）。
     """
     g = StateGraph(CCAState)
 
@@ -141,10 +145,10 @@ def build_graph(*, include_report: bool = True):
         NODE_REVIEW, _route_after_review,
         path_map=[NODE_HANDLE_SIGNAL, NODE_REPORT_TASK],
     )
-    # handle_signal 后按清空字段路由回 PM 阶段
+    # handle_signal 后按清空/reject 字段路由回 PM 阶段
     g.add_conditional_edges(
         NODE_HANDLE_SIGNAL, _route_after_signal,
-        path_map=[NODE_EXPLORATION, NODE_TASK_PLAN, NODE_REPORT_TASK, END],
+        path_map=[NODE_INITIAL_BRIEF, NODE_EXPLORATION, NODE_TASK_PLAN, NODE_REPORT_TASK, END],
     )
 
     if include_report:

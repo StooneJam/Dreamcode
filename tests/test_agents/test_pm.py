@@ -537,6 +537,28 @@ def test_apply_debate_result_report_target() -> None:
     assert updates["report_task"] == result.revised_output
 
 
+def test_apply_debate_result_initial_brief_revises_field() -> None:
+    """pm_initial_brief 主观质疑被采纳 → 修订写回 initial_brief 字段。"""
+    from cca.agents.pm import _apply_debate_result
+
+    result = _make_debate_result(
+        target="pm_initial_brief",
+        final_verdict="accepted_with_revision",
+        revised_output={"target_product": "飞书", "company_hint": "字节跳动"},
+    )
+    updates = _apply_debate_result(result)
+    assert updates["initial_brief"] == result.revised_output
+
+
+def test_apply_debate_result_initial_brief_rejected_clears_field() -> None:
+    """pm_initial_brief 被 reject → 清空 initial_brief，触发路由回阶段一重做。"""
+    from cca.agents.pm import _apply_debate_result
+
+    result = _make_debate_result(target="pm_initial_brief", final_verdict="rejected")
+    updates = _apply_debate_result(result)
+    assert updates["initial_brief"] is None
+
+
 # ── handle_signal_node ─────────────────────────────────────────────────
 
 
@@ -781,6 +803,35 @@ def test_handle_signal_node_returns_consumed_ids(
         task_plan={"product_type": "S"},
     )
     result = handle_signal_node(state)
+    assert result["consumed_signal_ids"] == [signal.signal_id]
+
+
+def test_handle_signal_node_initial_brief_debate_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """initial_brief 主观质疑须映射到 debate target 'pm_initial_brief'，而非默认 pm_taskplan。"""
+    from cca.agents.pm import handle_signal_node
+
+    called: dict = {}
+
+    def _fake_run_debate(**kwargs):  # noqa: ANN003
+        called["target"] = kwargs["target"]
+        return _make_debate_result(target="pm_initial_brief", final_verdict="accepted")
+
+    monkeypatch.setattr("cca.agents.pm.run_debate", _fake_run_debate, raising=False)
+
+    signal = AgentSignal(
+        from_agent="collector",
+        kind="pm_challenge",
+        target="initial_brief",
+        payload=_mk_payload("target_product 选得不合理"),
+        requires_debate=True,
+        ts="2026-05-23T00:00:00Z",
+    )
+    state = _make_minimal_state(
+        agent_signals=[signal.model_dump()],
+        initial_brief={"target_product": "飞书"},
+    )
+    result = handle_signal_node(state)
+    assert called["target"] == "pm_initial_brief"
     assert result["consumed_signal_ids"] == [signal.signal_id]
 
 
