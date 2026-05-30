@@ -59,7 +59,4 @@ nlp:
 
 # 路径
 paths:
-  checkpoints_db: data/checkpoints.db
-  store_db: data/memory/store.db
-  cache_dir: data/cache
-  logs_dir: logs
+  store_db: data/memory/store.db          # react_cache + 问卷缓存共用的 SQLite
