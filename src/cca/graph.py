@@ -53,6 +53,7 @@ def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
     """task_plan 后 fanout 出 collect_product + insight_product 并行。
 
     空 tasks 时直接路由到 review，避免空 fanout。
+    reroute 重跑时跳过已通过评审的产品，避免全量重采。
     """
     raw = state.get("task_plan") or {}
     try:
@@ -60,14 +61,25 @@ def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
     except Exception:
         return NODE_REVIEW
 
+    # 已通过评审的 (agent, product) 对不再重采
+    passed = {
+        (rs["agent"], rs["product_name"])
+        for rs in (state.get("review_state") or [])
+        if rs.get("status") in ("passed", "forced")
+    }
+
     sends: list[Send] = []
     for ct in tp.collect_tasks:
+        if ("collector", ct.product_name) in passed:
+            continue
         ctx = _collector_mod.build_collect_context(state, ct.product_name)
         sends.append(Send(NODE_COLLECT_PRODUCT, {
             "_fanout_task": ct.model_dump(),
             "_fanout_context": ctx,
         }))
     for it in tp.insight_tasks:
+        if ("insight", it.product_name) in passed:
+            continue
         ctx = _insight_mod.build_insight_context(state, it.product_name)
         sends.append(Send(NODE_INSIGHT_PRODUCT, {
             "_fanout_task": it.model_dump(),
