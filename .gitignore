@@ -11,6 +11,7 @@
 *.pem
 secrets/
 
+files/
 
 __pycache__/
 *.py[cod]

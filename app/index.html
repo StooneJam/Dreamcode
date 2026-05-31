@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -16,7 +16,6 @@
 ════════════════════════════════════════════ -->
 <nav class="navbar">
   <a class="logo" href="#">
-    <!-- Message circle icon (chat bubble) -->
     <div class="logo-icon">
       <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect width="36" height="36" rx="8" fill="#40c4d0"/>
@@ -35,13 +34,25 @@
   </div>
 
   <div class="navbar-right">
+    <!-- Theme toggle -->
+    <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="切换主题">
+      <!-- Sun icon: shown in dark mode -->
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+      <!-- Moon icon: shown in light mode -->
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+    </button>
+
     <div class="lang-switcher">
       <button class="lang-btn active" data-lang="zh" onclick="setLang('zh')">中</button>
       <button class="lang-btn"        data-lang="en" onclick="setLang('en')">EN</button>
     </div>
     <a class="nav-login-btn" onclick="handleLogin();return false;" id="t-nav-login">登录</a>
   </div>
-
 </nav>
 
 
@@ -49,7 +60,7 @@
      HERO
 ════════════════════════════════════════════ -->
 <section id="hero">
-  <div class="hero-left">
+    <div class="hero-left">
     <div class="eyebrow">
       <span class="eyebrow-dot"></span>
       <span id="t-eyebrow">AI 驱动的竞品分析平台</span>
@@ -58,7 +69,9 @@
     <p class="hero-sub"    id="t-hero-sub">多智能体协同分析 · 自动生成专业竞品报告</p>
     <p class="hero-sub-en" id="t-hero-sub-en">Start your exclusive competitive analysis</p>
     <div class="hero-btns">
-      <button class="btn-primary" onclick="jumpTo('analyze');return false;" id="t-hero-cta">立即开始分析</button>
+      <button class="btn-primary" onclick="jumpTo('analyze');return false;" id="t-hero-cta">
+        立即开始分析<span class="btn-arrow">→</span>
+      </button>
     </div>
   </div>
 
@@ -69,41 +82,9 @@
         <span class="pdf-badge">PDF</span>
       </div>
 
-      <div class="report-preview-area">
-        <div class="report-bar"></div>
-        <div class="chip-row">
-          <span class="chip chip-teal">飞书</span>
-          <span class="chip chip-green">DingTalk</span>
-          <span class="chip chip-orange">Slack</span>
-        </div>
-        <!-- Mini bar chart matching Figma exactly -->
-        <div class="mini-chart">
-          <div class="bar-grp">
-            <div class="bar" style="height:90px;background:#40c4d0"></div>
-            <div class="bar" style="height:65px;background:#49bf8a"></div>
-            <div class="bar" style="height:78px;background:#df7f37"></div>
-          </div>
-          <div class="bar-grp">
-            <div class="bar" style="height:70px;background:#40c4d0"></div>
-            <div class="bar" style="height:85px;background:#49bf8a"></div>
-            <div class="bar" style="height:60px;background:#df7f37"></div>
-          </div>
-          <div class="bar-grp">
-            <div class="bar" style="height:80px;background:#40c4d0"></div>
-            <div class="bar" style="height:72px;background:#49bf8a"></div>
-            <div class="bar" style="height:90px;background:#df7f37"></div>
-          </div>
-          <div class="bar-grp">
-            <div class="bar" style="height:60px;background:#40c4d0"></div>
-            <div class="bar" style="height:88px;background:#49bf8a"></div>
-            <div class="bar" style="height:50px;background:#df7f37"></div>
-          </div>
-        </div>
-        <div class="summary-lines">
-          <div class="summary-line" style="width:320px"></div>
-          <div class="summary-line" style="width:280px"></div>
-          <div class="summary-line" style="width:200px"></div>
-        </div>
+      <!-- GSAP scrolling report content (filled by JS) -->
+      <div class="report-preview-scroll">
+        <div class="report-scroll-track" id="report-scroll-track"></div>
       </div>
 
       <div class="report-footer">
@@ -119,7 +100,10 @@
      PRODUCT INTRO
 ════════════════════════════════════════════ -->
 <section id="product">
-  <p class="sec-label" id="t-p-label">我们产品干什么</p>
+  <div class="eyebrow sec-eyebrow">
+    <span class="eyebrow-dot"></span>
+    <span id="t-p-label">产品目标</span>
+  </div>
   <p class="sec-title" id="t-p-title">全自动 AI 竞品分析，一键生成专业报告</p>
   <p class="sec-sub"   id="t-p-sub">输入目标产品，上传参考文档，多智能体自动完成竞品采集、情感分析与报告撰写</p>
 
@@ -144,23 +128,53 @@
 
 
 <!-- ═══════════════════════════════════════════
+     GALLERY (report sample charts)
+════════════════════════════════════════════ -->
+<section id="gallery">
+  <div class="gallery-inner">
+    <div class="gallery-header">
+      <div class="eyebrow sec-eyebrow">
+        <span class="eyebrow-dot"></span>
+        <span id="t-gallery-label">报告样本展示</span>
+      </div>
+      <div class="gallery-nav-dots" id="gallery-nav-dots">
+        <div class="gallery-nav-dot active"></div>
+        <div class="gallery-nav-dot"></div>
+        <div class="gallery-nav-dot"></div>
+        <div class="gallery-nav-dot"></div>
+      </div>
+    </div>
+
+    <div class="gallery-viewport">
+      <div class="gallery-track" id="gallery-track">
+        <!-- Injected by JS -->
+      </div>
+    </div>
+
+    <p class="gallery-hint" id="gallery-hint">向下滚动查看更多图表 ↓</p>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════
      AGENT FEATURES
 ════════════════════════════════════════════ -->
 <section id="agents">
-  <p class="sec-label" id="t-a-label">智能体功能介绍</p>
+  <div class="eyebrow sec-eyebrow">
+    <span class="eyebrow-dot"></span>
+    <span id="t-a-label">智能体功能介绍</span>
+  </div>
   <p class="sec-title" id="t-a-title">多智能体协同工作流</p>
 
   <div class="agent-flow">
-    <!-- PM Agent -->
     <div class="agent-card">
       <div class="agent-dot" style="background:#40c4d0"></div>
       <div class="agent-name" id="t-ag1-name">PM Agent</div>
-      <div class="agent-role" style="background:rgba(59,130,246,.1);color:#40c4d0" id="t-ag1-role">制定计划</div>
+      <div class="agent-role" style="background:rgba(64,196,208,.1);color:#40c4d0" id="t-ag1-role">制定计划</div>
       <div class="agent-desc" id="t-ag1-desc">解析用户需求<br>制定任务简报<br>分配 Collect &amp; Insight 任务</div>
     </div>
     <div class="agent-sep"><div class="agent-sep-line"></div></div>
 
-    <!-- Collector -->
     <div class="agent-card">
       <div class="agent-dot" style="background:#1eab7a"></div>
       <div class="agent-name" id="t-ag2-name">Collector</div>
@@ -169,7 +183,6 @@
     </div>
     <div class="agent-sep"><div class="agent-sep-line"></div></div>
 
-    <!-- Insight -->
     <div class="agent-card">
       <div class="agent-dot" style="background:#df7f37"></div>
       <div class="agent-name" id="t-ag3-name">Insight</div>
@@ -178,7 +191,6 @@
     </div>
     <div class="agent-sep"><div class="agent-sep-line"></div></div>
 
-    <!-- Reporter -->
     <div class="agent-card">
       <div class="agent-dot" style="background:#9259f2"></div>
       <div class="agent-name" id="t-ag4-name">Reporter</div>
@@ -190,11 +202,9 @@
 
 
 <!-- ═══════════════════════════════════════════
-     ANALYZE SECTION (form + stream — same page)
+     ANALYZE SECTION
 ════════════════════════════════════════════ -->
 <section id="analyze">
-
-  <!-- Input form -->
   <div class="form-card">
     <h2 class="form-card-title" id="t-form-title">开始分析</h2>
 
@@ -235,7 +245,6 @@
     </form>
   </div>
 
-  <!-- Streaming log panel -->
   <div class="stream-panel">
     <div class="stream-hd">
       <div class="term-dots">
@@ -252,7 +261,6 @@
     </div>
 
     <div class="log-body" id="log-body">
-      <!-- Hint -->
       <div class="log-hint" id="log-hint">
         <div class="log-hint-icon">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
@@ -263,10 +271,8 @@
         <p id="t-log-hint-text">点击「开始分析」后，智能体实时日志将在此处显示<br>您可以看到每个 Agent 的思考过程和工具调用</p>
       </div>
 
-      <!-- Preview of expected streaming output -->
       <div class="log-preview" id="log-preview">
         <div class="log-preview-label">— 示例输出预览 —</div>
-
         <div class="log-line preview-line">
           <span class="log-agent" style="color:#40c4d0">[PM Agent]</span>
           <span class="log-msg log-bright">分析用户查询，制定竞品分析计划...</span>
@@ -300,14 +306,8 @@
           <span class="log-msg log-bright">生成 SWOT 分析报告，撰写竞品对比章节...</span>
         </div>
         <div class="log-line preview-line">
-          <span class="log-agent" style="color:#6870a0">[Reporter]</span>
-          <span class="log-msg log-dim">→ finalize_swot({ strengths: [...], weaknesses: [...] })</span>
-        </div>
-
-        <!-- Fake cursor blink -->
-        <div class="log-line preview-line">
           <span class="log-agent" style="color:#9259f2">[Reporter]</span>
-          <span class="log-msg log-bright">PDF 报告渲染完成 ✓<span class="cursor-blink">▌</span></span>
+          <span class="log-msg log-bright">PDF 报告渲染完成<span class="cursor-blink">▌</span></span>
         </div>
       </div>
     </div>
@@ -317,7 +317,6 @@
     </div>
     <p class="progress-text" id="progress-text"></p>
   </div>
-
 </section>
 
 
@@ -377,6 +376,8 @@
 
 
 <div id="page-veil"></div>
+<canvas id="bg-particles"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script src="static/js/app.js"></script>
 </body>
 </html>
