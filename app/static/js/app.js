@@ -32,7 +32,23 @@ const I18N = {
     footerCopy:'© 2026 Dreamcode · 保留所有权利',
     errNoProduct:'请输入目标产品名称', errFiletype:'仅支持 PDF、Word、TXT 格式',
     errFilesize:'文件不能超过 20MB', loginMsg:'登录功能即将上线',
-    galleryLabel:'报告样本展示', galleryHint:'向下滚动查看更多图表 ↓',
+    galleryLabel:'报告样本展示', galleryHint:'点击圆点或箭头切换图表',
+    // Modal
+    modalTitle:'选择接入方式', modalSub:'选择一种方式以启动本次分析', modalNext:'下一步 →',
+    optKeyTitle:'自行配置 API Key', optKeyDesc:'使用自己的 Key，数据更安全<br>支持跨模型协作，报告质量更优',
+    optPayTitle:'购买单次报告', optPayDesc:'无需配置，即买即用<br>我们代为调用，服务更稳定',
+    modalKeyTitle:'配置 API Key', aiKeysTitle:'AI 模型 API Keys',
+    aiKeysDesc:'支持 OpenAI / DeepSeek / Doubao 等兼容协议的模型。<br>多个来自不同厂商的 Key 可跨模型协作，显著提升报告客观性。',
+    tavilyTitle:'Tavily Search API Key', requiredTag:'必填',
+    tavilyDesc:'用于联网采集竞品信息、用户评论等数据。<br>申请地址：<a href="https://app.tavily.com" target="_blank">app.tavily.com</a>（免费额度足够基础使用）',
+    modalSubmitBtn:'开始分析', modalPayTitle:'购买报告',
+    payDesc:'单次竞品分析报告', payWechat:'微信支付', payAlipay:'支付宝支付',
+    payF1:'✓ 完整竞品分析报告 1 份，含 SWOT、定价对比、维度评分',
+    payF2:'✓ 多模型协作生成，减少单一模型自我偏好',
+    payF3:'✓ 支持 PDF 下载，分析周期约 3–5 分钟',
+    payNote:'实际 API 调用成本约 ¥10，定价 ¥15 含服务费',
+    addKeyBtn:(n)=>`+ 添加第 ${n} 个 Key（推荐）`,
+    keyWarn:'仅配置 1 个 Key 时，模型可能对自家产品存在自我偏好风险，建议至少填写 2 个来自不同厂商的 Key。',
   },
   en: {
     eyebrow:'AI-powered Competitive Analysis', heroTitle:'Your Exclusive<br>Competitor Analysis',
@@ -63,7 +79,23 @@ const I18N = {
     footerCopy:'© 2026 Dreamcode · All rights reserved',
     errNoProduct:'Please enter a target product name', errFiletype:'Only PDF, Word, TXT supported',
     errFilesize:'File must be under 20 MB', loginMsg:'Login coming soon',
-    galleryLabel:'Report Samples', galleryHint:'Scroll down for more charts ↓',
+    galleryLabel:'Report Samples', galleryHint:'Click dots or arrows to switch charts',
+    // Modal
+    modalTitle:'API Access Method', modalSub:'Choose how to power this analysis', modalNext:'Next →',
+    optKeyTitle:'Configure API Keys', optKeyDesc:'Use your own keys — data stays private<br>Multi-model collaboration improves report quality',
+    optPayTitle:'Buy Report', optPayDesc:'No setup needed, ready instantly<br>We handle the API calls for you',
+    modalKeyTitle:'Configure API Keys', aiKeysTitle:'AI Model API Keys',
+    aiKeysDesc:'Supports OpenAI / DeepSeek / Doubao and compatible providers.<br>Multiple keys from different providers reduce self-preference bias.',
+    tavilyTitle:'Tavily Search API Key', requiredTag:'Required',
+    tavilyDesc:'Used to fetch competitor info and user reviews from the web.<br>Get your key at: <a href="https://app.tavily.com" target="_blank">app.tavily.com</a>',
+    modalSubmitBtn:'Start Analysis', modalPayTitle:'Purchase Report',
+    payDesc:'One-time competitive analysis report', payWechat:'WeChat Pay', payAlipay:'Alipay',
+    payF1:'✓ Full report with SWOT, pricing comparison, scoring',
+    payF2:'✓ Multi-model collaboration reduces self-preference bias',
+    payF3:'✓ PDF download, analysis takes ~3–5 minutes',
+    payNote:'Estimated API cost ~¥10; ¥15 price includes service fee',
+    addKeyBtn:(n)=>`+ Add Key ${n} (Recommended)`,
+    keyWarn:'With only 1 key, the model may show self-preference bias. Using 2+ keys from different providers improves objectivity.',
   },
 };
 
@@ -127,10 +159,13 @@ let lang = 'zh';
 let uploadedFile = null;
 let pdfPath = null;
 let eventSource = null;
-let navJumping = false;
-let scrollLocked = false;
+let navJumping   = false;
+let lastWheelTime = 0;        // timestamp-based cooldown — replaces scrollLocked
+let currentSnapIdx = 0;       // authoritative section tracker
 let heroScrollTl = null;
 let galleryIdx = 0;
+let apiOption = 'key';
+let aiKeyCount = 1;
 const GALLERY_TOTAL = 4;
 let particleRafId = null;
 
@@ -157,7 +192,11 @@ function jumpTo(id){
   updateNavActive(id);
   navJumping = true;
   veil.classList.add('visible');
-  if(id==='gallery') galleryIdx = 0;
+  // Sync section index so wheel handler stays coherent
+  const els = getSnapElements();
+  const idx = els.findIndex(e=>e.id===id || e===el);
+  if(idx>=0) currentSnapIdx = idx;
+  if(id==='gallery'){ galleryIdx=0; _resetGalleryToFirst(); }
   setTimeout(()=>{
     html.style.setProperty('scroll-snap-type','none');
     el.scrollIntoView({block:'start',behavior:'instant'});
@@ -231,8 +270,30 @@ function applyLang(){
   set('t-footer-tagline',t.footerTagline);
   set('t-fc1-title',t.fc1Title); set('t-fc2-title',t.fc2Title);
   set('t-footer-copy',t.footerCopy);
+
+  // Modal translations
+  set('t-modal-title',t.modalTitle); set('t-modal-sub',t.modalSub); set('t-modal-next',t.modalNext);
+  set('t-opt-key-title',t.optKeyTitle); setH('t-opt-key-desc',t.optKeyDesc);
+  set('t-opt-pay-title',t.optPayTitle); setH('t-opt-pay-desc',t.optPayDesc);
+  set('t-modal-key-title',t.modalKeyTitle); set('t-ai-keys-title',t.aiKeysTitle);
+  setH('t-ai-keys-desc',t.aiKeysDesc); set('t-tavily-title',t.tavilyTitle);
+  set('t-required-tag',t.requiredTag); setH('t-tavily-desc',t.tavilyDesc);
+  set('t-modal-submit-btn',t.modalSubmitBtn); set('t-modal-pay-title',t.modalPayTitle);
+  set('t-pay-desc',t.payDesc); set('t-pay-wechat',t.payWechat); set('t-pay-alipay',t.payAlipay);
+  set('t-pay-f1',t.payF1); set('t-pay-f2',t.payF2); set('t-pay-f3',t.payF3);
+  set('t-pay-note',t.payNote);
+  // Update dynamic warn text
+  const warnEl=$('api-warn'); if(warnEl) warnEl.textContent=t.keyWarn;
+  // Update add-key button text
+  const addBtn=$('api-add-key-btn');
+  if(addBtn && t.addKeyBtn) addBtn.textContent=t.addKeyBtn(aiKeyCount+1);
 }
-function setLang(l){ lang=l; applyLang(); renderScrollTrack(); }
+function setLang(l){
+  lang=l; applyLang(); renderScrollTrack();
+  // Rebuild gallery charts in the new language
+  const vp=document.querySelector('.gallery-viewport');
+  if(vp) initGallery();
+}
 
 /* ══════════════════════════════════════
    File upload
@@ -302,29 +363,33 @@ function initParticles(){
 
   function buildParticles(){
     particles=[];
-    const N=720; // dense galaxy
+    const N=820;
     for(let i=0;i<N;i++){
       const t=Math.random();
       const [cx,cy]=bandCenter(t);
       const [nx,ny]=bandNormal(t);
-      const spread=gauss(H*0.085); // wider band than before
+      const spread=gauss(H*0.09);
       const z=Math.random();
       const r=Math.random();
-      // Star colors: white-blue stars dominate, teal & purple nebula accents
       let baseR,baseG,baseB;
-      if(r<0.52){       baseR=195+Math.floor(Math.random()*60); baseG=205+Math.floor(Math.random()*50); baseB=255; }
-      else if(r<0.80){  baseR=64;  baseG=196; baseB=208; } // teal
-      else if(r<0.92){  baseR=146; baseG=89;  baseB=242; } // purple
-      else{              baseR=255; baseG=160; baseB=80;  } // warm accent
+      if(r<0.50){       baseR=195+Math.floor(Math.random()*60); baseG=205+Math.floor(Math.random()*50); baseB=255; }
+      else if(r<0.78){  baseR=64;  baseG=196; baseB=208; }
+      else if(r<0.92){  baseR=146; baseG=89;  baseB=242; }
+      else{              baseR=255; baseG=168; baseB=80;  }
+
+      // 12% are "hyper-blink" — sharp, high-frequency flash
+      const hyperBlink = Math.random() < 0.12;
       particles.push({
         x:  cx + nx*spread,
         baseY: cy + ny*spread,
         yOffset: 0,
-        size: 0.4 + z*2.8,
-        opacity: 0.05 + z*0.82,
+        size: hyperBlink ? 0.8+z*1.8 : 0.4+z*2.8,
+        opacity: 0.12 + z*0.88,
         r:baseR, g:baseG, b:baseB,
         tp: Math.random()*Math.PI*2,
-        ts: 0.3 + Math.random()*1.8,
+        // hyper-blink particles (slightly slower than before)
+        ts: hyperBlink ? 2.2+Math.random()*2.5 : 0.5+Math.random()*1.6,
+        hyper: hyperBlink,
       });
     }
   }
@@ -338,8 +403,17 @@ function initParticles(){
   function render(time){
     requestAnimationFrame(render);
     ctx.clearRect(0,0,W,H);
+    const t = time * 0.0013; // base time — slightly slower than before
     particles.forEach(p=>{
-      const tw = 0.5 + 0.5*Math.sin(time*0.001*p.ts + p.tp);
+      let tw;
+      if(p.hyper){
+        // Sharp sawtooth-like blink: squares a sine to make bright peaks narrow, dark valleys wide
+        const raw = Math.sin(t * p.ts + p.tp);
+        tw = 0.05 + 0.95 * raw * raw;
+      } else {
+        // Normal gentle twinkle but faster and higher contrast than before
+        tw = 0.18 + 0.82 * Math.abs(Math.sin(t * p.ts + p.tp));
+      }
       const alpha = p.opacity * tw;
       ctx.beginPath();
       ctx.arc(p.x, p.baseY + p.yOffset, p.size, 0, Math.PI*2);
@@ -373,81 +447,123 @@ function initParticles(){
    GSAP — Gallery charts (redesigned)
 ══════════════════════════════════════ */
 
-/* ── Chart 1: Grouped Bar — 4 products × 4 dimensions ── */
-function buildBarChartSVG(){
-  const W=560,H=330, mx=56,my=20,mxr=12,myb=62;
-  const cw=W-mx-mxr, ch=H-my-myb;
-  const groups=['即时通讯','视频会议','文件协作','项目管理'];
-  const prods=['飞书','钉钉','Slack','Teams'];
-  const colors=['#40c4d0','#49bf8a','#df7f37','#9259f2'];
-  // Source: estimated 2026 Q1 product benchmark scores (0-100)
-  const data=[
-    [92,88,85,78],  // 飞书
-    [89,80,78,90],  // 钉钉
-    [85,82,90,72],  // Slack
-    [80,92,86,94],  // Teams
+/* ── Chart 1: Word Cloud — office-domain sentiment words ── */
+function buildWordCloudSVG(l='zh'){
+  const W=560, H=300;
+  const zh=l==='zh';
+
+  // Positive words
+  const pos= zh ? [
+    {x:196,y:102,s:44,t:'高效',   c:'#40c4d0'},
+    {x:95, y:86, s:32,t:'协作',   c:'#49bf8a'},
+    {x:322,y:82, s:30,t:'智能',   c:'#3dd68c'},
+    {x:160,y:146,s:24,t:'流畅',   c:'#40c4d0'},
+    {x:294,y:154,s:22,t:'便捷',   c:'#2ec4b6'},
+    {x:50, y:124,s:20,t:'稳定',   c:'#4ecdc4'},
+    {x:400,y:132,s:20,t:'安全',   c:'#40c4d0'},
+    {x:350,y:184,s:18,t:'创新',   c:'#49bf8a'},
+    {x:78, y:178,s:18,t:'专业',   c:'#3dd68c'},
+    {x:226,y:196,s:16,t:'快速',   c:'#40c4d0'},
+    {x:430,y:170,s:16,t:'清晰',   c:'#4ecdc4'},
+    {x:148,y:220,s:15,t:'实用',   c:'#49bf8a'},
+    {x:304,y:228,s:14,t:'易上手', c:'#3dd68c'},
+    {x:400,y:218,s:14,t:'跨平台', c:'#40c4d0'},
+    {x:40, y:216,s:14,t:'响应快', c:'#4ecdc4'},
+    {x:108,y:254,s:13,t:'界面优雅',c:'#2ec4b6'},
+    {x:270,y:260,s:12,t:'集成性强',c:'#40c4d0'},
+    {x:400,y:258,s:12,t:'生态完善',c:'#3dd68c'},
+    {x:200,y:254,s:12,t:'通话清晰',c:'#49bf8a'},
+  ] : [
+    // English positive words
+    {x:196,y:100,s:40,t:'Efficient',   c:'#40c4d0'},
+    {x:84, y:84, s:28,t:'Seamless',   c:'#49bf8a'},
+    {x:326,y:80, s:26,t:'Intelligent',c:'#3dd68c'},
+    {x:158,y:144,s:22,t:'Intuitive',  c:'#40c4d0'},
+    {x:298,y:152,s:20,t:'Reliable',   c:'#2ec4b6'},
+    {x:44, y:124,s:18,t:'Agile',      c:'#4ecdc4'},
+    {x:402,y:130,s:18,t:'Secure',     c:'#40c4d0'},
+    {x:354,y:182,s:16,t:'Innovative', c:'#49bf8a'},
+    {x:72, y:178,s:16,t:'Pro-grade',  c:'#3dd68c'},
+    {x:234,y:196,s:20,t:'Fast',       c:'#40c4d0'},
+    {x:432,y:166,s:16,t:'Crisp',      c:'#4ecdc4'},
+    {x:142,y:218,s:15,t:'Flexible',   c:'#49bf8a'},
+    {x:302,y:226,s:18,t:'Easy',       c:'#3dd68c'},
+    {x:402,y:214,s:14,t:'Robust',     c:'#40c4d0'},
+    {x:36, y:214,s:14,t:'Responsive', c:'#4ecdc4'},
+    {x:104,y:252,s:13,t:'Polished UI',c:'#2ec4b6'},
+    {x:274,y:258,s:12,t:'Integrated', c:'#40c4d0'},
+    {x:406,y:256,s:12,t:'Ecosystem',  c:'#3dd68c'},
+    {x:198,y:252,s:12,t:'HD calls',   c:'#49bf8a'},
   ];
-  const gW=cw/groups.length, bW=gW*0.17, bG=gW*0.03;
-  const gTot=4*bW+3*bG, gOff=(gW-gTot)/2;
 
-  let s=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"><defs>`;
-  colors.forEach((c,i)=>{
-    s+=`<linearGradient id="bg${i}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="${c}" stop-opacity=".95"/>
-      <stop offset="100%" stop-color="${c}" stop-opacity=".45"/>
-    </linearGradient>`;
-  });
-  s+='</defs>';
+  const neg= zh ? [
+    {x:466,y:86, s:22,t:'卡顿',   c:'#df7f37'},
+    {x:488,y:124,s:18,t:'收费高', c:'#e07050'},
+    {x:464,y:162,s:16,t:'崩溃',   c:'#df7f37'},
+    {x:452,y:200,s:15,t:'占内存', c:'#c8692a'},
+    {x:470,y:238,s:14,t:'广告多', c:'#df7f37'},
+    {x:372,y:266,s:13,t:'更新频繁',c:'#c8692a'},
+    {x:216,y:274,s:14,t:'隐私问题',c:'#e07050'},
+    {x:46, y:266,s:16,t:'难用',   c:'#df7f37'},
+    {x:136,y:274,s:15,t:'复杂',   c:'#c8692a'},
+    {x:22, y:244,s:18,t:'慢',     c:'#e07050'},
+  ] : [
+    // English negative words
+    {x:466,y:86, s:22,t:'Laggy',     c:'#df7f37'},
+    {x:488,y:124,s:18,t:'Pricey',    c:'#e07050'},
+    {x:464,y:162,s:16,t:'Buggy',     c:'#df7f37'},
+    {x:452,y:200,s:15,t:'Bloated',   c:'#c8692a'},
+    {x:470,y:238,s:14,t:'Ad-heavy',  c:'#df7f37'},
+    {x:366,y:268,s:13,t:'Frequent updates',c:'#c8692a'},
+    {x:210,y:274,s:13,t:'Privacy concerns',c:'#e07050'},
+    {x:40, y:266,s:16,t:'Hard',      c:'#df7f37'},
+    {x:134,y:272,s:15,t:'Confusing', c:'#c8692a'},
+    {x:20, y:244,s:18,t:'Slow',      c:'#e07050'},
+  ];
 
-  // Background grid
-  [20,40,60,80,100].forEach(v=>{
-    const y=(my+ch-(v/100)*ch).toFixed(1);
-    s+=`<line x1="${mx}" y1="${y}" x2="${W-mxr}" y2="${y}" stroke="rgba(255,255,255,.07)" stroke-width="1" stroke-dasharray="4,4"/>`;
-    s+=`<text x="${mx-7}" y="${y}" text-anchor="end" dominant-baseline="middle" font-size="10" fill="rgba(255,255,255,.38)" font-family="Inter">${v}</text>`;
-  });
+  let s=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"><defs>
+    <radialGradient id="wc-glow" cx="36%" cy="40%" r="52%">
+      <stop offset="0%" stop-color="rgba(64,196,208,.07)"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="196" cy="158" rx="210" ry="135" fill="url(#wc-glow)"/>`;
 
-  // X axis base line
-  s+=`<line x1="${mx}" y1="${my+ch}" x2="${W-mxr}" y2="${my+ch}" stroke="rgba(255,255,255,.15)" stroke-width="1"/>`;
+  // Subtle vertical divider
+  s+=`<line x1="442" y1="50" x2="442" y2="${H-38}" stroke="rgba(255,255,255,.06)" stroke-width="1" stroke-dasharray="3,5"/>`;
 
-  // Bars + value labels
-  groups.forEach((g,gi)=>{
-    const gx=mx+gi*gW+gOff;
-    prods.forEach((_,pi)=>{
-      const val=data[pi][gi], bH=(val/100)*ch;
-      const bx=(gx+pi*(bW+bG)).toFixed(1);
-      const by=(my+ch-bH).toFixed(1);
-      const bHs=bH.toFixed(1), bWs=bW.toFixed(1);
-      s+=`<rect class="gb" x="${bx}" y="${by}" width="${bWs}" height="${bHs}"
-            data-by="${by}" data-bh="${bHs}"
-            fill="url(#bg${pi})" rx="3"/>`;
-      // Value label on top
-      s+=`<text x="${(parseFloat(bx)+bW/2).toFixed(1)}" y="${(parseFloat(by)-4).toFixed(1)}"
-            text-anchor="middle" font-size="8.5" fill="rgba(255,255,255,.6)" font-family="Inter">${val}</text>`;
-    });
-    // Group label
-    s+=`<text x="${(gx+gTot/2).toFixed(1)}" y="${H-myb+18}" text-anchor="middle"
-          font-size="11" fill="rgba(255,255,255,.55)" font-family="Inter">${g}</text>`;
-  });
+  const word=(w,isPos)=>`<text class="wc-word"
+      x="${w.x}" y="${w.y}" text-anchor="middle"
+      font-size="${w.s}"
+      fill="${w.c}"
+      font-weight="${w.s>=30?700:w.s>=20?600:500}"
+      font-family="'PingFang SC','Microsoft YaHei',Inter,sans-serif"
+      opacity="${isPos?0.82:0.76}">${w.t}</text>`;
+
+  pos.forEach(w=>{ s+=word(w,true);  });
+  neg.forEach(w=>{ s+=word(w,false); });
 
   // Legend
-  prods.forEach((p,i)=>{
-    const lx=mx+i*(cw/4+2);
-    s+=`<rect x="${lx}" y="${H-18}" width="10" height="10" fill="${colors[i]}" rx="2"/>`;
-    s+=`<text x="${lx+13}" y="${H-8}" font-size="11" fill="rgba(255,255,255,.72)" font-family="Inter">${p}</text>`;
-  });
+  const posLabel=zh?'正面词汇':'Positive', negLabel=zh?'负面词汇':'Negative';
+  s+=`<circle cx="18" cy="15" r="5" fill="#40c4d0"/>
+  <text x="28" y="20" font-size="11" fill="rgba(255,255,255,.58)" font-family="Inter">${posLabel}</text>
+  <circle cx="${zh?106:112}" cy="15" r="5" fill="#df7f37"/>
+  <text x="${zh?116:122}" y="20" font-size="11" fill="rgba(255,255,255,.58)" font-family="Inter">${negLabel}</text>`;
+
   return s+'</svg>';
 }
 
 /* ── Chart 2: Smoothed Area + Line — MAU 增长指数 ── */
-function buildLineChartSVG(){
+function buildLineChartSVG(l='zh'){
+  const zh=l==='zh';
   const W=560,H=330, mx=54,my=18,mxr=12,myb=52;
   const cw=W-mx-mxr, ch=H-my-myb;
-  // Index base=100, Jan–Dec 2025, three products
-  const raw={
-    '飞书': [100,106,112,119,127,135,143,152,161,170,181,192],
-    '钉钉': [100,101,102,103,104,104,105,106,106,107,108,108],
-    'Slack': [100,103,101,106,110,113,116,118,122,120,125,128],
-  };
+  // Index base=100, Jan–Dec 2025
+  const prodNames = zh ? ['飞书','钉钉','Slack'] : ['Feishu','DingTalk','Slack'];
+  const raw={};
+  raw[prodNames[0]]=[100,106,112,119,127,135,143,152,161,170,181,192];
+  raw[prodNames[1]]=[100,101,102,103,104,104,105,106,106,107,108,108];
+  raw[prodNames[2]]=[100,103,101,106,110,113,116,118,122,120,125,128];
   const colors=['#40c4d0','#49bf8a','#df7f37'];
   const prods=Object.keys(raw);
   const allVals=Object.values(raw).flat();
@@ -490,7 +606,7 @@ function buildLineChartSVG(){
     s+=`<text x="${mx-7}" y="${y}" text-anchor="end" dominant-baseline="middle" font-size="9.5" fill="rgba(255,255,255,.35)" font-family="Inter">${v}</text>`;
   });
   // Unit label
-  s+=`<text x="${mx}" y="${my-6}" font-size="9" fill="rgba(255,255,255,.3)" font-family="Inter">指数 (1月=100)</text>`;
+  s+=`<text x="${mx}" y="${my-6}" font-size="9" fill="rgba(255,255,255,.3)" font-family="Inter">${zh?'指数 (1月=100)':'Index (Jan=100)'}</text>`;
 
   // X axis
   s+=`<line x1="${mx}" y1="${my+ch}" x2="${W-mxr}" y2="${my+ch}" stroke="rgba(255,255,255,.12)" stroke-width="1"/>`;
@@ -521,11 +637,12 @@ function buildLineChartSVG(){
 }
 
 /* ── Chart 3: Radar — 5 维综合竞争力 ── */
-function buildRadarGallerySVG(){
+function buildRadarGallerySVG(l='zh'){
+  const zh=l==='zh';
   const W=560,H=330;
   const cx=W/2-20, cy=H/2+8, r=118;
   const n=5;
-  const labels=['即时通讯','视频会议','文件协作','企业生态','移动端'];
+  const labels=zh?['即时通讯','视频会议','文件协作','企业生态','移动端']:['Messaging','Video','Files','Enterprise','Mobile'];
   // Estimated benchmark: each product has a characteristic strength
   const data=[
     [92,88,85,90,88],   // 飞书: strong across all
@@ -533,7 +650,7 @@ function buildRadarGallerySVG(){
     [85,82,90,70,80],   // Slack: file collab king
   ];
   const colors=['#40c4d0','#49bf8a','#df7f37'];
-  const prods=['飞书','钉钉','Slack'];
+  const prods=zh?['飞书','钉钉','Slack']:['Feishu','DingTalk','Slack'];
 
   function pt(i,v){ const a=(i/n)*Math.PI*2-Math.PI/2; return [cx+v*Math.cos(a),cy+v*Math.sin(a)]; }
   function ring(rv){ return Array.from({length:n},(_,i)=>pt(i,rv).map(v=>v.toFixed(1)).join(',')).join(' '); }
@@ -588,15 +705,21 @@ function buildRadarGallerySVG(){
 }
 
 /* ── Chart 4: Donut — 2026 Q1 国内市场份额 ── */
-function buildDonutSVG(){
+function buildDonutSVG(l='zh'){
+  const zh=l==='zh';
   const W=560, H=330;
   const cx=210, cy=162, Ro=120, Ri=70;
   // Source: estimated 2026 Q1 China enterprise messaging market
-  const segs=[
-    {label:'钉钉',  sub:'Alibaba', v:41, c:'#49bf8a'},
-    {label:'飞书',  sub:'ByteDance',v:28, c:'#40c4d0'},
-    {label:'企业微信',sub:'Tencent', v:22, c:'#9259f2'},
-    {label:'Slack/Teams',sub:'海外',v:9,  c:'#df7f37'},
+  const segs= zh ? [
+    {label:'钉钉',   sub:'Alibaba',  v:41,c:'#49bf8a'},
+    {label:'飞书',   sub:'ByteDance',v:28,c:'#40c4d0'},
+    {label:'企业微信',sub:'Tencent',  v:22,c:'#9259f2'},
+    {label:'Slack/Teams',sub:'海外',  v:9, c:'#df7f37'},
+  ] : [
+    {label:'DingTalk',sub:'Alibaba',  v:41,c:'#49bf8a'},
+    {label:'Feishu',  sub:'ByteDance',v:28,c:'#40c4d0'},
+    {label:'WeCom',   sub:'Tencent',  v:22,c:'#9259f2'},
+    {label:'Slack/Teams',sub:'Intl.',  v:9,c:'#df7f37'},
   ];
   let s=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
 
@@ -630,8 +753,8 @@ function buildDonutSVG(){
   });
 
   // Center text
-  s+=`<text x="${cx}" y="${cy-14}" text-anchor="middle" font-size="28" font-weight="800" fill="white" font-family="Inter" letter-spacing="-1">市场</text>`;
-  s+=`<text x="${cx}" y="${cy+10}" text-anchor="middle" font-size="13" fill="rgba(255,255,255,.45)" font-family="Inter">份额 2026</text>`;
+  s+=`<text x="${cx}" y="${cy-14}" text-anchor="middle" font-size="28" font-weight="800" fill="white" font-family="Inter" letter-spacing="-1">${zh?'市场':'Market'}</text>`;
+  s+=`<text x="${cx}" y="${cy+10}" text-anchor="middle" font-size="13" fill="rgba(255,255,255,.45)" font-family="Inter">${zh?'份额 2026':'Share 2026'}</text>`;
 
   // Right legend table
   const lx0=W-130;
@@ -653,16 +776,18 @@ function initGallery(){
   if(!vp || typeof gsap==='undefined') return;
 
   const cardW = vp.clientWidth || 1000;
+  const l = lang;
+  const zh = l==='zh';
   const cards = [
-    {title:'竞品功能评分对比',tag:'Bar Chart',svg:buildBarChartSVG()},
-    {title:'用户增长趋势',tag:'Line Chart',svg:buildLineChartSVG()},
-    {title:'综合竞争力雷达',tag:'Radar Chart',svg:buildRadarGallerySVG()},
-    {title:'市场份额分布',tag:'Donut Chart',svg:buildDonutSVG()},
+    {title: zh?'用户情感词云':'User Sentiment Cloud', tag:'Word Cloud', svg:buildWordCloudSVG(l)},
+    {title: zh?'用户增长趋势':'MAU Growth Index',    tag:'Line Chart', svg:buildLineChartSVG(l)},
+    {title: zh?'综合竞争力雷达':'Capability Radar',   tag:'Radar Chart',svg:buildRadarGallerySVG(l)},
+    {title: zh?'市场份额分布':'Market Share 2026',   tag:'Donut Chart',svg:buildDonutSVG(l)},
   ];
 
   const track = $('gallery-track');
   track.innerHTML = cards.map(c=>`
-    <div class="gallery-card" style="width:${cardW}px;height:380px">
+    <div class="gallery-card" style="width:${cardW}px;height:420px">
       <div class="gallery-card-hd">
         <span class="gallery-card-title">${c.title}</span>
         <span class="gallery-card-tag">${c.tag}</span>
@@ -670,20 +795,50 @@ function initGallery(){
       <div class="gallery-card-body">${c.svg}</div>
     </div>`).join('');
 
-  // Initial position
-  gsap.set(track, {x:0});
+  gsap.set(track,{x:0});
+  galleryIdx=0;
+
+  // Click handlers for nav dots
+  document.querySelectorAll('.gallery-nav-dot').forEach((dot,i)=>{
+    dot.onclick=()=>showGalleryCard(i);
+    dot.classList.toggle('active',i===0);
+  });
+
+  // Arrow buttons state
+  const pBtn=$('gallery-prev'), nBtn=$('gallery-next');
+  if(pBtn){ pBtn.disabled=true; }
+  if(nBtn){ nBtn.disabled=GALLERY_TOTAL<=1; }
+
+  // Touch / swipe support
+  let tx0=0;
+  vp.addEventListener('touchstart',e=>{tx0=e.touches[0].clientX;},{passive:true});
+  vp.addEventListener('touchend',e=>{
+    const dx=e.changedTouches[0].clientX-tx0;
+    if(Math.abs(dx)>50) galleryNav(dx<0?1:-1);
+  },{passive:true});
+
+  // Animate first card
+  animateGalleryChart(0);
+}
+
+function galleryNav(dir){
+  const next=Math.max(0,Math.min(GALLERY_TOTAL-1,galleryIdx+dir));
+  if(next!==galleryIdx) showGalleryCard(next);
 }
 
 function showGalleryCard(idx){
   const vp = document.querySelector('.gallery-viewport');
   if(!vp || typeof gsap==='undefined') return;
   const cardW = vp.clientWidth || 1000;
-  gsap.to($('gallery-track'),{x:-idx*cardW, duration:0.7, ease:'power3.inOut'});
+  gsap.to($('gallery-track'),{x:-idx*cardW, duration:0.65, ease:'power3.inOut'});
+  galleryIdx=idx;
 
-  // Update nav dots
   document.querySelectorAll('.gallery-nav-dot').forEach((d,i)=>d.classList.toggle('active',i===idx));
 
-  // Animate chart for this card
+  const pBtn=$('gallery-prev'), nBtn=$('gallery-next');
+  if(pBtn) pBtn.disabled=idx===0;
+  if(nBtn) nBtn.disabled=idx===GALLERY_TOTAL-1;
+
   animateGalleryChart(idx);
 }
 
@@ -696,13 +851,9 @@ function animateGalleryChart(idx){
   const card = $('gallery-track').children[idx];
   if(!card) return;
 
-  if(idx===0){ // Bar chart — grow bars from baseline
-    card.querySelectorAll('.gb').forEach((bar,i)=>{
-      const by=parseFloat(bar.dataset.by), bh=parseFloat(bar.dataset.bh);
-      gsap.fromTo(bar,
-        {attr:{y:by+bh, height:0}},
-        {attr:{y:by, height:bh}, duration:0.65, ease:'power3.out', delay:i*0.035}
-      );
+  if(idx===0){ // Word cloud — stagger fade-in words
+    card.querySelectorAll('.wc-word').forEach((w,i)=>{
+      gsap.from(w,{opacity:0, scale:0.25, duration:0.45, ease:'back.out(1.6)', delay:i*0.038});
     });
 
   } else if(idx===1){ // Line chart — draw lines left-to-right via clip-rect
@@ -826,18 +977,85 @@ function setProgress(pct,s){
 }
 
 /* ══════════════════════════════════════
+   API Config Modal
+══════════════════════════════════════ */
+function openApiModal(){
+  $('api-modal').classList.add('show');
+  showModalStep('api-step-1');
+  selectOption(apiOption);
+  updateKeyWarning();
+}
+function closeApiModal(){ $('api-modal').classList.remove('show'); }
+function showModalStep(id){
+  ['api-step-1','api-step-key','api-step-pay'].forEach(s=>{ const el=$(s); if(el) el.style.display='none'; });
+  const el=$(id); if(el) el.style.display='block';
+}
+function selectOption(type){
+  apiOption=type;
+  ['key','pay'].forEach(t=>{ const el=$('opt-'+t); if(el) el.classList.toggle('selected',t===type); });
+}
+function goToModalStep2(){
+  showModalStep(apiOption==='key'?'api-step-key':'api-step-pay');
+  updateKeyWarning();
+}
+function goModalBack(){ showModalStep('api-step-1'); }
+
+function addAiKey(){
+  if(aiKeyCount>=3) return;
+  aiKeyCount++;
+  const container=$('ai-keys-container');
+  const row=document.createElement('div');
+  row.className='api-key-row'; row.id=`key-row-${aiKeyCount}`;
+  row.innerHTML=`<span class="api-key-label">Key ${aiKeyCount}</span>
+    <input class="api-key-input" id="ai-key-${aiKeyCount}" type="password" placeholder="sk-..." oninput="updateKeyWarning()"/>
+    <button class="api-key-remove" onclick="removeAiKey(${aiKeyCount})">✕</button>`;
+  container.appendChild(row);
+  const btn=$('api-add-key-btn');
+  if(aiKeyCount>=3) btn.style.display='none';
+  else btn.textContent=`+ 添加第 ${aiKeyCount+1} 个 Key`;
+  updateKeyWarning();
+}
+function removeAiKey(n){
+  const row=$(`key-row-${n}`); if(row) row.remove();
+  aiKeyCount--;
+  const btn=$('api-add-key-btn');
+  btn.style.display=''; btn.textContent=`+ 添加第 ${aiKeyCount+1} 个 Key`;
+  updateKeyWarning();
+}
+function updateKeyWarning(){
+  const filled=[1,2,3].filter(i=>{ const el=$(`ai-key-${i}`); return el&&el.value.trim(); }).length;
+  const w=$('api-warn'); if(w) w.style.display=filled<=1?'':'none';
+}
+async function submitWithKeys(){
+  const k1=$('ai-key-1')?.value.trim();
+  const tv=$('tavily-key')?.value.trim();
+  if(!k1){ alert('请至少填写 1 个 AI 模型 API Key'); return; }
+  if(!tv){ alert('请填写 Tavily Search API Key'); return; }
+  closeApiModal();
+  startAnalysis();
+}
+function handlePayment(){ alert('支付功能即将上线，敬请期待。'); }
+
+/* ══════════════════════════════════════
    Submit
 ══════════════════════════════════════ */
-async function handleSubmit(e){
+function handleSubmit(e){
   e.preventDefault();
   const product=$('input-product').value.trim();
   if(!product){ $('input-product').focus(); alert(T('errNoProduct')); return; }
+  openApiModal();
+}
+
+async function startAnalysis(){
+  const product=$('input-product').value.trim();
   const btn=$('submit-btn'); btn.disabled=true;
   $('log-body').innerHTML=''; setThink(false); setProgress(0,0);
   const fd=new FormData();
   fd.append('target_product',product);
   fd.append('user_query',$('input-query').value.trim()||product);
   if(uploadedFile) fd.append('file',uploadedFile);
+  [1,2,3].forEach(i=>{ const k=$(`ai-key-${i}`)?.value.trim(); if(k) fd.append(`ai_key_${i}`,k); });
+  const tv=$('tavily-key')?.value.trim(); if(tv) fd.append('tavily_key',tv);
   try{
     const res=await fetch('/api/analyze',{method:'POST',body:fd});
     if(!res.ok) throw new Error('HTTP '+res.status);
@@ -965,70 +1183,63 @@ function simulate(btn,product){
 }
 
 /* ══════════════════════════════════════
-   Wheel scroll — section snap + gallery
+   Wheel scroll — section snap (no gallery intercept)
 ══════════════════════════════════════ */
 function easeInOutCubic(t){ return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2; }
 
 function getSnapElements(){
   return [...document.querySelectorAll('#hero,#product,#gallery,#agents,#analyze,#pdf-section'),document.querySelector('footer')].filter(Boolean);
 }
-function getCurrentSnapIndex(els){
-  const navH=document.querySelector('.navbar').offsetHeight;
-  let idx=0;
-  for(let i=els.length-1;i>=0;i--){ if(els[i].offsetTop-navH<=window.scrollY+5){ idx=i; break; } }
-  return idx;
-}
+
 function scrollToEl(el){
   const html=document.documentElement;
   const navH=document.querySelector('.navbar').offsetHeight;
   const startY=window.scrollY, endY=Math.max(0,el.offsetTop-navH), dist=endY-startY;
-  if(Math.abs(dist)<5){ scrollLocked=false; return; }
+  if(Math.abs(dist)<4) return;
   html.style.setProperty('scroll-snap-type','none');
   html.style.setProperty('scroll-behavior','auto');
   const t0=performance.now();
   (function tick(now){
-    const t=Math.min((now-t0)/1700,1);
+    const t=Math.min((now-t0)/1400,1);
     window.scrollTo(0,startY+dist*easeInOutCubic(t));
     if(t<1){ requestAnimationFrame(tick); }
     else{
       html.style.removeProperty('scroll-snap-type');
       html.style.removeProperty('scroll-behavior');
-      updateNavActive(el.id);
-      setTimeout(()=>{ scrollLocked=false; },100);
+      updateNavActive(el.id||'');
     }
   })(performance.now());
 }
 
+/* Timestamp cooldown replaces scrollLocked — no race condition,
+   no gallery wheel intercept needed (gallery uses click/swipe).   */
 function handleWheel(e){
-  if(navJumping||scrollLocked){ e.preventDefault(); return; }
-  if(Math.abs(e.deltaY)<20) return;
+  if(navJumping){ e.preventDefault(); return; }
+  if(Math.abs(e.deltaY)<25) return;
   e.preventDefault();
+  const now=performance.now();
+  if(now-lastWheelTime<700) return;
+
   const els=getSnapElements();
-  const cur=getCurrentSnapIndex(els);
-  const curEl=els[cur];
   const down=e.deltaY>0;
+  const next=Math.max(0,Math.min(els.length-1,currentSnapIdx+(down?1:-1)));
+  if(next===currentSnapIdx) return;
 
-  // Gallery intercept: when on gallery, move between cards first
-  if(curEl && curEl.id==='gallery'){
-    if(down){
-      if(galleryIdx<GALLERY_TOTAL-1){ galleryIdx++; showGalleryCard(galleryIdx); return; }
-      // Last card → go to agents
-    } else {
-      if(galleryIdx>0){ galleryIdx--; showGalleryCard(galleryIdx); return; }
-      // First card → go back to product
-    }
-  }
+  if(els[currentSnapIdx]?.id==='gallery') _resetGalleryToFirst();
 
-  const next=Math.max(0,Math.min(els.length-1,cur+(down?1:-1)));
-  if(next===cur) return;
-  scrollLocked=true;
-  // Reset gallery when leaving it
-  if(curEl && curEl.id==='gallery' && next!==cur){
-    galleryIdx=0;
-    gsap.set($('gallery-track'),{x:0});
-    document.querySelectorAll('.gallery-nav-dot').forEach((d,i)=>d.classList.toggle('active',i===0));
-  }
+  lastWheelTime=now;
+  currentSnapIdx=next;
   scrollToEl(els[next]);
+}
+
+function _resetGalleryToFirst(){
+  galleryIdx=0;
+  const track=$('gallery-track');
+  if(track&&typeof gsap!=='undefined') gsap.set(track,{x:0});
+  document.querySelectorAll('.gallery-nav-dot').forEach((d,i)=>d.classList.toggle('active',i===0));
+  const p=$('gallery-prev'),n=$('gallery-next');
+  if(p) p.disabled=true;
+  if(n) n.disabled=GALLERY_TOTAL<=1;
 }
 
 function initSectionObserver(){
