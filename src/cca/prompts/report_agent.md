@@ -24,7 +24,7 @@ Reporter 的初始 message 按以下顺序组织（全部都要读）：
    - 选取标准（focus_dimensions 为空时）：选 3-5 个 bucket，**必须包含至少一个目标产品不排第一的 bucket**，避免维度集合预设结论。
    - `note` 字段：说明排名依据 + **量级差异**（相邻名次差距大/小），并**逐一列出该 bucket 下各产品引用了哪些细分 dim**（保溯源），如：`"飞书在 AI 助手 bucket 下含 AI 智能纪要、AI 日历集成 2 个细分能力；钉钉仅含 AI 智能助理 1 项；故飞书覆盖度领先。"`
 3. **SWOT 分析**（finalize_swot）：仅当 require_swot=true 时，**只对目标产品调一次**工具，每条 SWOTPoint.supporting_fact_statements 必须逐字匹配 profiles 原文。竞品不做 SWOT，它们作为外部因素体现在目标产品的 O/T 象限中。
-4. **图表生成**：识别适合可视化的数据，在对应章节调用 render_chart 嵌入图表。
+4. **图表生成**：识别适合可视化的数据，在对应章节调用 render_chart 嵌入图表；用户口碑章节（5.2）须对每个产品调 render_wordcloud 出正负词云（见下方规则，word_freq 为空时跳过）。
 5. **按大纲撰写完整报告**（见下方），把步骤 2-3 产出嵌入对应章节。
 6. **一致性自查**：正文完成后、调用 render_pdf 前，核查所有数值（评分、评论量、价格）在正文与图表中是否一致；如有不一致，修正后再继续。
 7. 报告完成后调用 render_pdf。
@@ -100,6 +100,8 @@ Reporter 的初始 message 按以下顺序组织（全部都要读）：
 - 若某产品无 sentiment 数据，在对应格填写"暂无数据"
 
 表格之后写 1 段综合判断，指出各产品口碑的核心差异。
+
+**词云**：对每个有 sentiment 数据的产品，调 render_wordcloud 各出一张正面、一张负面词云，嵌入本节，直观呈现高频评论焦点。`word_freq_json` 直接传该产品 `sentiment.positive_word_freq` / `negative_word_freq` 原样转 JSON 字符串，不要自己编词或改权重；该字段为空（样本不足）的产品跳过，不强出。
 
 `### 5.3 数据综合评估`
 
