@@ -328,8 +328,8 @@ class ReportTask(BaseModel):
         description="报告应含章节；为空则由 Reporter 自主组织",
     )
     invoke_call_report_reviewer: bool = Field(
-        False,
-        description="是否调用 call_report_reviewer skill（Doubao 终审）；默认关闭，仅 demo 或正式输出时由 PM 开启",
+        True,
+        description="是否调用 call_report_reviewer skill（Doubao 终审）；默认开启，始终执行且只执行一次",
     )
     dimension_canonical_map: dict[str, str] = Field(
         default_factory=dict,
