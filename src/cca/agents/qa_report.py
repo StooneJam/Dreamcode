@@ -240,18 +240,23 @@ def report_node(state: CCAState) -> dict:
     forced = _collect_forced_keys(review_state)
     profiles_json = _serialize_profiles(state.get("profiles", {}), forced)
 
+    _reviewer_cache: list[str] = []  # 一次性防护：ReAct 重复调用时返回缓存结果
+
     @tool
     def call_reviewer(report_md: str) -> str:
-        """报告全部完成后调用豆包跨模型终审，检查图文一致性与事实可溯源性。"""
+        """报告全部完成后调用豆包跨模型终审，检查图文一致性与事实可溯源性。只调用一次。"""
+        if _reviewer_cache:
+            return _reviewer_cache[0]
         try:
             result = call_report_reviewer(report_md, json.loads(profiles_json))
-            return result.model_dump_json()
+            _reviewer_cache.append(result.model_dump_json())
         except Exception as exc:
-            return QAResult(
+            _reviewer_cache.append(QAResult(
                 product_name="__report__",
                 passed=True,
                 note=f"豆包终审调用失败，已跳过：{exc}",
-            ).model_dump_json()
+            ).model_dump_json())
+        return _reviewer_cache[0]
 
     agent = create_react_agent(
         model=report_llm,

@@ -28,7 +28,7 @@ Reporter 的初始 message 按以下顺序组织（全部都要读）：
 5. **按大纲撰写完整报告**（见下方），把步骤 2-3 产出嵌入对应章节。
 6. **一致性自查**：正文完成后、调用 render_pdf 前，核查所有数值（评分、评论量、价格）在正文与图表中是否一致；如有不一致，修正后再继续。
 7. 报告完成后调用 render_pdf。
-8. 若 invoke_call_report_reviewer=true，调用 call_reviewer 终审。
+8. 若 invoke_call_report_reviewer=true，调用 call_reviewer 终审；**call_reviewer 整个报告生命周期只允许调用一次，不得因结果不满意而重复调用。**
 
 ## 报告大纲（固定结构，必须按此顺序输出）
 

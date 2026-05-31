@@ -167,7 +167,7 @@
 - **sections**：根据数据高亮项指定报告章节；为空则由 Reporter 自主组织
 - **target_audience**：读者类型，如 `"产品负责人"`、`"技术评审"`，影响 Reporter 语气
 - **output_formats**：默认 `["markdown", "pdf"]`
-- **invoke_call_report_reviewer**：默认 `true`
+- **invoke_call_report_reviewer**：默认 `false`；仅当分析产品数 ≥ 4 个或 require_swot=true 时设为 `true`（正式 demo 输出场景）
 - **dimension_canonical_map**：`{dim_name → canonical_bucket}` 字典。**扫 `profiles[*].dimensions[*].name` 的全部唯一值**，为每个 dim 名指派一个 canonical bucket（通常是 `task_plan.tentative_buckets` 的成员，必要时可新增桶）。
   - 必须 **100% 覆盖** 所有出现过的 dim 名；缺漏由代码层自动归 `"其他"` 桶并写 audit_log，但你应尽量自己映射完整。
   - 同一 bucket 可挂多个细分 dim（如 "AI 助手" bucket 下 "AI 智能纪要"、"AI 日历助手"、"AI 会议预订" 三个 dim 名）。

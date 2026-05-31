@@ -59,7 +59,7 @@ PMPhase = Literal["initial_brief", "task_plan", "review", "report_task"]
 # review_node 配置
 _REROUTE_HARD_LIMIT = 2          # state.reroute_count 达此值后 needs_retry → forced
 _PER_UNIT_RETRY_LIMIT = 2        # 单 (agent, product) 历史返工次数达此值后 needs_retry → forced
-_SENTIMENT_MIN_REVIEWS = 3       # Insight sentiment 评论样本下限
+_SENTIMENT_MIN_REVIEWS = 1       # Insight sentiment 评论样本下限（1 条即可，不足时报告标注 forced）
 _REVIEW_INVOKE_ATTEMPTS = 2      # review 有代码层兜底，LLM 不死磕：1 首次 + 1 retry，失败即降级
 
 
@@ -428,6 +428,43 @@ def review_node(state: CCAState) -> dict:
         f"{agent}:{product}": _compute_retry_count(review_state, agent, product)
         for agent, product in expected
     }
+
+    # 短路：pre_flags 全部为空时所有 unit 直接 passed，跳过 LLM 调用
+    if not pre_flags:
+        coerced = [
+            ReviewUnit(
+                agent=cast(Literal["collector", "insight"], ag),
+                product_name=pn,
+                status="passed",
+                retry_count=retry_counts.get(f"{ag}:{pn}", 0),
+                qa_flags=[],
+                pm_note="pre_check 全通过，跳过 LLM review",
+                reviewed_at=_now_iso(),
+            )
+            for ag, pn in expected
+        ]
+        decision_records = [DecisionRecord(
+            decision_type="other",
+            chosen={"review_mode": "pre_check_short_circuit"},
+            rationale="pre_flags 全空，代码层预检通过，无需 LLM 复审。",
+            inputs_used=["pre_flags"],
+        )]
+        signals: list[AgentSignal] = []
+        return {
+            "review_state": [u.model_dump() for u in coerced],
+            "agent_signals": signals,
+            "decision_log": _stamp_decisions(decision_records, "review"),
+            "audit_log": [{
+                "agent": "pm", "event": "review_done",
+                "passed": len(coerced),
+                "needs_retry": 0,
+                "forced": 0,
+                "signals_raised": 0,
+                "reroute_count": reroute_count,
+                "llm_degraded": False,
+                "short_circuit": True,
+            }],
+        }
 
     payload = {
         "expected_units": [f"{a}:{p}" for a, p in expected],
