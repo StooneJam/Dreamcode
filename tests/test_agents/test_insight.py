@@ -92,6 +92,82 @@ class TestNmfTopics:
         assert _nmf_topics(["的 了 是 我们", "the and is"], n_topics=3) == []
 
 
+class TestTopicWordFreq:
+    def _run(self, texts, top_n=30):
+        from cca.utils.nlp_utils import _topic_word_freq
+        return _topic_word_freq(texts, top_n)
+
+    def test_returns_word_weight_dict(self):
+        texts = ["协同办公 消息 通知", "视频会议 稳定 卡顿", "定价 免费 套餐"]
+        freq = self._run(texts)
+        assert isinstance(freq, dict)
+        assert all(isinstance(w, str) and isinstance(v, float) for w, v in freq.items())
+
+    def test_yields_more_words_than_nmf_topics(self):
+        """同一组评论，词云词数应远多于 NMF 的 3 主题 top-3。"""
+        from cca.utils.nlp_utils import _nmf_topics
+        texts = [
+            "协同编辑很顺手 消息通知及时",
+            "视频会议经常卡顿掉线 稳定性差",
+            "定价偏贵 套餐性价比一般 免费额度少",
+            "移动端响应慢 界面还算清爽",
+            "客服响应慢 工单处理拖沓",
+        ]
+        nmf_words = {kw for t in _nmf_topics(texts, n_topics=3) for kw in t.split(" / ")}
+        freq = self._run(texts, top_n=30)
+        assert len(freq) > len(nmf_words)
+
+    def test_no_duplicate_words(self):
+        """列和去重，词云不应出现重复词（NMF 跨主题会重复）。"""
+        texts = ["视频 卡顿 视频 掉线", "视频 会议 稳定", "定价 套餐 定价"]
+        freq = self._run(texts)
+        assert len(freq) == len(set(freq))
+
+    def test_respects_top_n(self):
+        texts = ["协同 消息 通知 视频 会议 定价 套餐 移动 客服 稳定"]
+        freq = self._run(texts, top_n=3)
+        assert len(freq) <= 3
+
+    def test_filters_stopwords(self):
+        freq = self._run(["这个 产品 的 功能 很 好用", "the app is buggy"])
+        for stop in ("的", "这个", "产品", "功能", "the", "is", "app"):
+            assert stop not in freq, f"停用词 {stop} 未被过滤: {freq}"
+
+    def test_empty_texts_returns_empty(self):
+        assert self._run([]) == {}
+
+    def test_all_stopwords_returns_empty(self):
+        assert self._run(["的 了 是 我们", "the and is"]) == {}
+
+
+class TestWordFreqFromBert:
+    def _msgs(self, groups: dict):
+        """伪造一条 analyze_sentiment_bert ToolMessage。"""
+        from langchain_core.messages import ToolMessage
+        return [ToolMessage(
+            content=json.dumps(groups, ensure_ascii=False),
+            name="analyze_sentiment_bert", tool_call_id="t1",
+        )]
+
+    def test_splits_positive_and_negative(self):
+        from cca.agents.insight import _word_freq_from_bert
+        msgs = self._msgs({
+            "positive": ["协同编辑顺手 通知及时", "界面清爽 响应快"],
+            "negative": ["视频会议卡顿掉线 稳定性差", "定价偏贵 套餐性价比低"],
+            "neutral": [],
+        })
+        freq = _word_freq_from_bert(msgs)
+        assert freq["positive_word_freq"] and freq["negative_word_freq"]
+        # 正负词频互不混淆
+        assert "卡顿" not in freq["positive_word_freq"]
+        assert "卡顿" in freq["negative_word_freq"]
+
+    def test_no_bert_call_returns_empty_freqs(self):
+        from cca.agents.insight import _word_freq_from_bert
+        freq = _word_freq_from_bert([])
+        assert freq == {"positive_word_freq": {}, "negative_word_freq": {}}
+
+
 # ---------------------------------------------------------------------------
 # 问卷格式化
 # ---------------------------------------------------------------------------

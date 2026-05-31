@@ -52,18 +52,8 @@ def _tokenize(text: str) -> list[str]:
     return out
 
 
-def _nmf_topics(texts: list[str], n_topics: int = 5) -> list[str]:
-    """NMF 主题提取，短文本（评论 / 问卷）场景优于 LDA。
-
-    预处理：jieba 中文分词 + 停用词过滤（见 _tokenize / _STOPWORDS）。
-    返回每个主题的 top-3 关键词，格式如 "协同 / 消息 / 通知"（少而精，给报告正文 themes 用；
-    词云的 20+ 词另由 TF-IDF top-N 负责）。
-    全是停用词导致空词表时返 []，不抛。
-    """
-    if not texts:
-        return []
-
-    from sklearn.decomposition import NMF
+def _build_tfidf(texts: list[str]):
+    """jieba 分词 + 停用词过滤构 TF-IDF 矩阵。空词表（全被过滤）返回 (None, None)。"""
     from sklearn.feature_extraction.text import TfidfVectorizer
 
     vectorizer = TfidfVectorizer(
@@ -71,14 +61,30 @@ def _nmf_topics(texts: list[str], n_topics: int = 5) -> list[str]:
         lowercase=True, max_features=300, min_df=1,
     )
     try:
-        tfidf = vectorizer.fit_transform(texts)
+        matrix = vectorizer.fit_transform(texts)
     except ValueError:
-        return []  # 空词表（全被过滤）
+        return None, None
+    if matrix.shape[1] == 0:
+        return None, None
+    return vectorizer, matrix
 
-    n_features = tfidf.shape[1]
-    if n_features == 0:
+
+def _nmf_topics(texts: list[str], n_topics: int = 5) -> list[str]:
+    """NMF 主题提取，短文本（评论 / 问卷）场景优于 LDA。
+
+    预处理见 _build_tfidf。返回每个主题的 top-3 关键词，格式如 "协同 / 消息 / 通知"
+    （少而精，给报告正文 themes 用；词云的多词另由 _topic_word_freq 取 TF-IDF top-N）。
+    全是停用词导致空词表时返 []，不抛。
+    """
+    if not texts:
         return []
-    n_components = min(n_topics, len(texts), n_features)
+
+    from sklearn.decomposition import NMF
+
+    vectorizer, tfidf = _build_tfidf(texts)
+    if tfidf is None:
+        return []
+    n_components = min(n_topics, len(texts), tfidf.shape[1])
     model = NMF(n_components=n_components, random_state=42, max_iter=300)
     model.fit(tfidf)
     names = vectorizer.get_feature_names_out()
@@ -86,6 +92,26 @@ def _nmf_topics(texts: list[str], n_topics: int = 5) -> list[str]:
         " / ".join(names[i] for i in topic.argsort()[-3:][::-1])
         for topic in model.components_
     ]
+
+
+def _topic_word_freq(texts: list[str], top_n: int = 30) -> dict[str, float]:
+    """按全局 TF-IDF 权重取 top_n 词，供词云用。
+
+    与 _nmf_topics 共用 _build_tfidf 预处理，但不做矩阵分解：词云要的是全局词重要度
+    （矩阵列和），而非 NMF 的主题内载荷。返回 {词: 权重}，空词表返 {}。
+    """
+    if not texts:
+        return {}
+
+    import numpy as np
+
+    vectorizer, tfidf = _build_tfidf(texts)
+    if tfidf is None:
+        return {}
+    names = vectorizer.get_feature_names_out()
+    weights = np.asarray(tfidf.sum(axis=0)).ravel()
+    top = weights.argsort()[::-1][:top_n]
+    return {names[i]: float(weights[i]) for i in top}
 
 
 def _bert_sentiment(texts: list[str], model_name: str) -> dict[str, list[str]]:

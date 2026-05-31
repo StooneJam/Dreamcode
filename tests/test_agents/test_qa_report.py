@@ -106,6 +106,28 @@ class TestRenderBarChart:
         assert (tmp_path / "test_price.png").exists()
 
 
+class TestRenderWordcloud:
+    def test_returns_markdown_embed(self, tmp_path):
+        with patch("cca.tools.chart._CHART_DIR", tmp_path):
+            from cca.tools.chart import render_wordcloud
+            result = render_wordcloud.invoke({
+                "title": "钉钉好评词云",
+                "word_freq_json": json.dumps({"协同": 0.8, "稳定": 0.6, "通知": 0.5}),
+                "filename": "test_wc",
+            })
+        assert result.startswith("![钉钉好评词云]")
+        assert (tmp_path / "test_wc.png").exists()
+
+    def test_empty_freq_skips_render(self, tmp_path):
+        with patch("cca.tools.chart._CHART_DIR", tmp_path):
+            from cca.tools.chart import render_wordcloud
+            result = render_wordcloud.invoke({
+                "title": "空词云", "word_freq_json": "{}", "filename": "test_empty",
+            })
+        assert "词频为空" in result
+        assert not (tmp_path / "test_empty.png").exists()
+
+
 class TestRenderChart:
     def test_bar_returns_markdown_embed(self, tmp_path):
         with patch("cca.tools.chart._CHART_DIR", tmp_path):

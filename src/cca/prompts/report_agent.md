@@ -163,8 +163,12 @@ Reporter 的初始 message 按以下顺序组织（全部都要读）：
 | 评分与评论量同框（量级悬殊） | dual_axis_bar（必选） |
 | 市场份额/占比 | pie |
 | 时间序列变化 | line / area |
+| 用户口碑高频词 | render_wordcloud（独立工具，非 chart_type） |
 
 图表只在能强化论点时使用，不重复出图，不强制每节出图。
+
+**词云（render_wordcloud）**：用户口碑章节，对正面 / 负面口碑各出一张词云，直观呈现评论焦点。
+`word_freq_json` 直接传 profile 里 `sentiment.positive_word_freq` / `negative_word_freq`，原样转 JSON 字符串，**不要自己编词或改权重**。该字段为空（样本不足）时跳过，不强出。
 
 ## 写作规范
 

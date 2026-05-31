@@ -117,6 +117,14 @@ class UserSentiment(BaseModel):
         default_factory=list,
         description="用户槽点的主题归纳，来自 BERT negative 分组后 NMF 提取",
     )
+    positive_word_freq: dict[str, float] = Field(
+        default_factory=dict,
+        description="正面评论 TF-IDF top-N 词频，供词云渲染；由 Insight 节点确定性计算，非 LLM 填写",
+    )
+    negative_word_freq: dict[str, float] = Field(
+        default_factory=dict,
+        description="负面评论 TF-IDF top-N 词频，供词云渲染；由 Insight 节点确定性计算，非 LLM 填写",
+    )
     representative_reviews: list[ReviewSample] = Field(default_factory=list)
     sources: list[Evidence] = Field(default_factory=list)
 

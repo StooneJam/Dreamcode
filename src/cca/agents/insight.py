@@ -58,6 +58,25 @@ def _extract_signals(messages: list) -> list[dict]:
     return _extract_tool_jsons(messages, "challenge_pm")
 
 
+def _word_freq_from_bert(messages: list) -> dict[str, dict[str, float]]:
+    """从 analyze_sentiment_bert 分组文本确定性算正负词频，供词云。
+
+    不走 LLM 复制：词频是 30+ 条的 dict，让 LLM 手抄进 finalize_sentiment 既费 token 又易错。
+    无 BERT 分组（LLM 情感路径）时返空，词云字段留空即可。
+    """
+    from cca.utils.nlp_utils import _topic_word_freq
+
+    positive: list[str] = []
+    negative: list[str] = []
+    for group in _extract_tool_jsons(messages, "analyze_sentiment_bert"):
+        positive.extend(t for t in group.get("positive", []) if isinstance(t, str))
+        negative.extend(t for t in group.get("negative", []) if isinstance(t, str))
+    return {
+        "positive_word_freq": _topic_word_freq(positive),
+        "negative_word_freq": _topic_word_freq(negative),
+    }
+
+
 def build_insight_context(state: CCAState, product_name: str) -> dict:
     """抽出单产品 insight 所需的最小 state 切片。"""
     task_plan = state.get("task_plan") or {}
@@ -133,7 +152,9 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
     # 所以**不能用 `name in profiles` 守卫** —— _merge_profiles reducer (D-031) 会自动按 key 合并字段，
     # Insight 写 {sentiment: ...} 不论 Collector 是否已写过该产品都安全。
     if name in sentiments:
-        result["profiles"] = {name: {"sentiment": sentiments[name]}}
+        sentiment = sentiments[name]
+        sentiment.update(_word_freq_from_bert(messages))  # 词云词频，节点确定性补
+        result["profiles"] = {name: {"sentiment": sentiment}}
     if signals:
         result["agent_signals"] = signals
     result["audit_log"] = [{

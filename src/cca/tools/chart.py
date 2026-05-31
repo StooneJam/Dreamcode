@@ -109,6 +109,55 @@ def render_chart(chart_type: str, title: str, data_json: str, filename: str) -> 
     return _render_chart_impl(chart_type, title, data_json, filename)
 
 
+def _cjk_font_path() -> str | None:
+    """词云渲染中文必须显式给字体；按优先级找系统 CJK 字体。"""
+    candidates = ["msyh.ttc", "simhei.ttf", "simsun.ttc"]
+    fonts_dir = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+    for name in candidates:
+        path = fonts_dir / name
+        if path.exists():
+            return str(path)
+    return None
+
+
+@tool
+def render_wordcloud(title: str, word_freq_json: str, filename: str) -> str:
+    """生成词云 PNG，返回 Markdown 图片引用字符串。
+
+    用于可视化用户评论高频词，比柱状图更直观地呈现口碑焦点。
+
+    Args:
+        title: 词云标题，如 "钉钉用户好评词云"。
+        word_freq_json: JSON 对象字符串 {"词": 权重}，直接取自 profile 的
+            sentiment.positive_word_freq 或 negative_word_freq，不要自己编词频。
+        filename: 输出文件名，不含扩展名。
+
+    Returns:
+        Markdown 图片嵌入字符串；词频为空时返回提示文本（不出图）。
+    """
+    freq = json.loads(word_freq_json)
+    if not freq:
+        return "词频为空（样本不足或未跑 BERT 分组），跳过词云渲染。"
+
+    font_path = _cjk_font_path()
+    if font_path is None:
+        return "系统缺少中文字体，无法渲染词云；请改用柱状图呈现高频词。"
+
+    from wordcloud import WordCloud
+
+    _CHART_DIR.mkdir(parents=True, exist_ok=True)
+    stem = filename.removesuffix(".png")
+    output_path = _CHART_DIR / f"{stem}.png"
+
+    wc = WordCloud(
+        font_path=font_path, width=900, height=500,
+        background_color="white", colormap="viridis",
+        max_words=60, prefer_horizontal=0.9,
+    ).generate_from_frequencies(freq)
+    wc.to_file(str(output_path))
+    return f"![{title}]({output_path.as_posix()})"
+
+
 @tool
 def render_bar_chart(title: str, categories: str, values: str, filename: str) -> str:
     """生成柱状图，返回可直接嵌入 Markdown 的图片引用字符串。
