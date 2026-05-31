@@ -18,7 +18,7 @@ from cca.llm.factory import report_llm
 from cca.schema import QAResult, ReportTask, ReviewUnit
 from cca.skills.call_report_reviewer import call_report_reviewer
 from cca.state import CCAState
-from cca.tools.chart import render_bar_chart, render_chart, render_wordcloud
+from cca.tools.chart import render_bar_chart, render_chart
 from cca.tools.pdf_renderer import render_pdf
 from cca.tools.report_tools import finalize_swot, submit_dimension_ranking
 
@@ -262,7 +262,7 @@ def report_node(state: CCAState) -> dict:
         model=report_llm,
         tools=[
             submit_dimension_ranking, finalize_swot,
-            render_chart, render_bar_chart, render_wordcloud, render_pdf,
+            render_chart, render_bar_chart, render_pdf,
             call_reviewer,
         ],
     )
