@@ -40,7 +40,6 @@ questionnaire:
 
 # NLP 配置
 nlp:
-  sentiment_model: bert   # bert | llm
   bert_model: lxyuan/distilbert-base-multilingual-cased-sentiments-student
   fine_tune:
     enabled: true                        # true = 若 model_output_dir 存在则使用微调模型；微调本身需手动运行 scripts/finetune_bert.py

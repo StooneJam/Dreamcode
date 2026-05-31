@@ -1,6 +1,6 @@
 """Insight Agent —— 问卷 + 评论采集 + NLP 情感分析，写 profiles.sentiment。
 
-与 Collector phase 2 并发。NMF 主题 + BERT/LLM 情感二选一（config.nlp.sentiment_model）。
+与 Collector phase 2 并发。BERT 三分类 + NMF 主题；BERT 不可用时工具层降级到 LLM 归纳（D-035）。
 若 fine_tune.enabled 且本地有微调模型，BERT 工具自动切换；微调脚本离线跑。
 """
 from __future__ import annotations
@@ -14,7 +14,6 @@ from langgraph.prebuilt import create_react_agent
 from cca.agents._streaming import stream_react
 from cca.llm.factory import deepseek
 from cca.schema import InsightTask
-from cca.settings import load_config
 from cca.state import CCAState
 from cca.tools.appstore import scrape_app_store
 from cca.tools.insight_tools import (
@@ -83,7 +82,6 @@ def build_insight_context(state: CCAState, product_name: str) -> dict:
     return {
         "profiles": state.get("profiles", {}),
         "competitor_names": state.get("competitor_names", []),
-        "sentiment_model": load_config().get("nlp", {}).get("sentiment_model", "llm"),
         "target_product": state["target_product"],
         # 软引导：让 Insight 知道 PM 预设的 bucket，themes 尽量覆盖；非强制
         "tentative_buckets": task_plan.get("tentative_buckets") or [],
@@ -91,7 +89,7 @@ def build_insight_context(state: CCAState, product_name: str) -> dict:
 
 
 def _build_insight_product_message(
-    task: InsightTask, profiles: dict, competitor_names: list[str], sentiment_model: str,
+    task: InsightTask, profiles: dict, competitor_names: list[str],
 ) -> str:
     task_json = json.dumps(task.model_dump(), ensure_ascii=False)
     profiles_hint = json.dumps(
@@ -102,8 +100,6 @@ def _build_insight_product_message(
     sentiment_hint = (
         "情感分析请优先使用 analyze_sentiment_bert（BERT 三分类），"
         "再对各情感组调 extract_topics 提取主题。"
-        if sentiment_model == "bert"
-        else "情感分析请综合问卷回答和网络评论，直接用 LLM 判断正负面主题。"
     )
     return (
         f"## InsightTask · {task.product_name}\n```json\n{task_json}\n```\n\n"
@@ -118,11 +114,10 @@ def _build_insight_product_message(
 def insight_one_product(task: InsightTask, context: dict) -> dict:
     """单产品 ReAct insight 分析。与 collect_one_product 签名一致，供 Send fanout 调用。
 
-    context 需含 profiles / competitor_names / sentiment_model / target_product。
+    context 需含 profiles / competitor_names / target_product。
     """
     profiles = context.get("profiles", {})
     competitor_names = context.get("competitor_names", [])
-    sentiment_model = context.get("sentiment_model", "llm")
 
     agent = create_react_agent(
         model=deepseek,
@@ -134,7 +129,7 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
         [
             SystemMessage(content=_load_prompt()),
             HumanMessage(content=_build_insight_product_message(
-                task, profiles, competitor_names, sentiment_model,
+                task, profiles, competitor_names,
             )),
         ],
         label=f"Insight·{task.product_name}",

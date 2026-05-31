@@ -266,7 +266,6 @@ class TestInsightOneProduct:
         context = {
             "profiles": mock_state["profiles"],
             "competitor_names": mock_state["competitor_names"],
-            "sentiment_model": "llm",
             "target_product": mock_state["target_product"],
         }
         with patch("cca.agents.insight.create_react_agent", return_value=mock_agent):

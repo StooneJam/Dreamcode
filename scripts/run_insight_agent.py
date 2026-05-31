@@ -83,7 +83,6 @@ def run_real_pipeline() -> None:
 
     cfg = load_config()
     nlp_cfg = cfg.get("nlp", {})
-    sentiment_model = nlp_cfg.get("sentiment_model", "llm")
     bert_model = nlp_cfg.get(
         "bert_model",
         "lxyuan/distilbert-base-multilingual-cased-sentiments-student",
@@ -91,7 +90,7 @@ def run_real_pipeline() -> None:
     fill_mode = cfg.get("questionnaire", {}).get("fill_mode", "llm")
     n_responses = cfg.get("questionnaire", {}).get("n_llm_responses", 5)
 
-    print(f"\n配置：fill_mode={fill_mode}  sentiment_model={sentiment_model}  n_responses={n_responses}")
+    print(f"\n配置：fill_mode={fill_mode}  sentiment_model=bert  n_responses={n_responses}")
 
     all_results: dict[str, dict] = {}
 
@@ -200,7 +199,7 @@ def run_real_pipeline() -> None:
         positive_themes: list[str] = []
         negative_themes: list[str] = []
 
-        if sentiment_model == "bert" and all_texts:
+        if all_texts:
             _step(6, f"BERT 情感分类（{bert_model}）")
             print("  首次运行会下载模型约 250 MB，请等待...")
             try:
