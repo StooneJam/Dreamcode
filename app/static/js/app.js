@@ -1180,6 +1180,10 @@ async function startAnalysis(){
   const _rsb=$('report-status-badge'); if(_rsb) _rsb.style.display='none';
   startTimer();
   jumpTo('pdf-section');
+  // 立即更新报告标题为本次分析的产品名
+  const _fname=$('pdf-fname'); if(_fname) _fname.textContent=`${product} 竞品分析报告`;
+  const _pcontent=$('pdf-content');
+  if(_pcontent) _pcontent.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted)">分析运行中，完成后 PDF 将在此处显示...</p></div>`;
   const fd=new FormData();
   fd.append('target_product',product);
   fd.append('user_query',$('input-query').value.trim()||product);
@@ -1234,8 +1238,16 @@ function openSSE(jobId,btn){
 
 function showPdf(path,filename){
   pdfPath=path;
-  $('pdf-content').innerHTML=`<iframe src="/api/report/pdf?path=${encodeURIComponent(path)}" title="PDF Report"></iframe>`;
+  $('pdf-content').innerHTML=`<iframe src="/api/report/pdf?path=${encodeURIComponent(path)}" title="PDF Report" style="width:100%;height:100%;border:none;display:block;"></iframe>`;
   if(filename) $('pdf-fname').textContent=filename;
+}
+
+function downloadPdf(){
+  if(!pdfPath){ alert(lang==='zh'?'报告尚未生成':'Report not ready yet'); return; }
+  const a=document.createElement('a');
+  a.href=`/api/report/pdf?path=${encodeURIComponent(pdfPath)}&download=1`;
+  a.download=$('pdf-fname')?.textContent||'report.pdf';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
 /* ══════════════════════════════════════

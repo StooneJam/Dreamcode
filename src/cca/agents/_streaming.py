@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.load.dump import dumps as lc_dumps
@@ -33,6 +35,28 @@ _THINKING_PREVIEW = 120
 _TOOL_ARG_PREVIEW = 180
 _TOOL_RESP_PREVIEW = 80
 
+# 服务器层在 graph.invoke 外层设置此 contextvar，让每条日志同时推到 SSE 队列。
+_sse_emit: ContextVar[Callable[[dict], None] | None] = ContextVar("cca_sse_emit", default=None)
+
+
+@contextmanager
+def set_sse_emitter(fn: Callable[[dict], None]):
+    """在 with 块内把所有流式日志也发往 SSE 队列。fn 必须是线程安全的。"""
+    token = _sse_emit.set(fn)
+    try:
+        yield
+    finally:
+        _sse_emit.reset(token)
+
+
+def _emit(event: dict) -> None:
+    fn = _sse_emit.get()
+    if fn is not None:
+        try:
+            fn(event)
+        except Exception:
+            pass
+
 
 def _short(text: str, n: int) -> str:
     text = text.replace("\n", " ").strip()
@@ -41,20 +65,29 @@ def _short(text: str, n: int) -> str:
 
 def _print(label: str, line: str) -> None:
     print(f"  [{label}] {line}", flush=True)
+    # thinking / call / ret 由 _print_message 发结构化事件，这里只发通用 log
+    if not (line.startswith("thinking:") or line.startswith("call ") or line.startswith("ret ")):
+        _emit({"type": "log", "agent": label, "text": line})
 
 
 def _print_message(msg: Any, label: str) -> None:
-    """AIMessage / ToolMessage → 简短摘要。其他类型忽略。"""
+    """AIMessage / ToolMessage → 简短摘要 + SSE 结构化事件。"""
     if isinstance(msg, AIMessage):
         if tool_calls := getattr(msg, "tool_calls", None):
             for tc in tool_calls:
                 args_str = json.dumps(tc.get("args", {}), ensure_ascii=False)
-                _print(label, f"call {tc['name']}({_short(args_str, _TOOL_ARG_PREVIEW)})")
+                short_args = _short(args_str, _TOOL_ARG_PREVIEW)
+                _print(label, f"call {tc['name']}({short_args})")
+                _emit({"type": "tool_call", "agent": label, "tool": tc["name"], "args": short_args})
         elif content := (msg.content or "").strip():
             _print(label, f"thinking: {_short(content, _THINKING_PREVIEW)}")
+            _emit({"type": "thinking"})
     elif isinstance(msg, ToolMessage):
         size = len(msg.content or "")
-        _print(label, f"ret {msg.name} ({size}B) {_short(msg.content or '', _TOOL_RESP_PREVIEW)}")
+        preview = _short(msg.content or "", _TOOL_RESP_PREVIEW)
+        _print(label, f"ret {msg.name} ({size}B) {preview}")
+        _emit({"type": "tool_result", "agent": label, "tool": msg.name,
+               "size": f"{size}B", "preview": preview})
 
 
 def _stream_iter(agent: Any, messages: list, recursion_limit: int):
