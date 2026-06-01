@@ -40,8 +40,11 @@ dependencies = [
     # NLP 推理（Insight BERT 情感分类；CPU 即可）
     "transformers>=4.40.0",
     "torch>=2.1.0",
-    # 前端
+    # 前端 / 服务器
     "streamlit>=1.36.0",
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
     # 报告渲染
     "markdown-it-py>=3.0.0",         # pdf_renderer
     "weasyprint>=62.0",              # Linux/Mac
