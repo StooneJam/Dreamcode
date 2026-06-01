@@ -28,26 +28,84 @@ def _format_decode_error(json_str: str, e: json.JSONDecodeError) -> str:
     )
 
 
+def _unclosed_brackets(s: str) -> list[str]:
+    """返回 s 中未闭合的括号/大括号的补全序列（倒序），不进入字符串内部。"""
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for c in s:
+        if esc:
+            esc = False
+            continue
+        if c == "\\" and in_str:
+            esc = True
+            continue
+        if c == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if c in ("{", "["):
+            stack.append("}" if c == "{" else "]")
+        elif c in ("}", "]") and stack:
+            stack.pop()
+    return list(reversed(stack))
+
+
+def _try_recover_truncated(json_str: str) -> tuple[dict | list | None, None]:
+    """截断恢复：从错误位置倒退，找到上一个合法分隔边界后补全括号。
+
+    Doubao 在输出 token 上限时会在 JSON 中间截断；该函数丢弃截断后的残片，
+    补上缺失的 `}` / `]` 使其成为合法 JSON，代价是最后几条 fact 可能丢失。
+    最多回退 500 字符；无法恢复则返 (None, None)。
+    """
+    s = json_str.rstrip()
+    # 先尝试从末尾直接补括号
+    for trim in range(0, min(500, len(s))):
+        candidate = s[: len(s) - trim] if trim else s
+        closing = _unclosed_brackets(candidate)
+        if closing:
+            completed = candidate + "".join(closing)
+        else:
+            completed = candidate
+        try:
+            return json.loads(completed), None
+        except json.JSONDecodeError:
+            pass
+    return None, None
+
+
 def _try_parse_lenient(json_str: str) -> tuple[dict | list | None, str | None]:
-    """两阶段 JSON parse：
+    """三阶段 JSON parse：
     1. 严格 json.loads
-    2. 失败且原因是 'Extra data' → 用 JSONDecoder().raw_decode 救一下，
-       只取第一个完整 JSON 对象，丢弃尾部杂质（LLM 偶尔在 JSON 后追加解释 / 多余 `}`）
+    2. 'Extra data' → raw_decode 取第一个完整对象，丢弃尾部杂质
+    3. 其他错误（含中途截断）→ 倒退补全括号后再试；仍失败才返回错误
 
     返回 (parsed_obj, None) 或 (None, llm_friendly_error)。
     """
     try:
         return json.loads(json_str), None
-    except json.JSONDecodeError as e:
-        if e.msg != "Extra data":
-            return None, _format_decode_error(json_str, e)
+    except json.JSONDecodeError as first_err:
+        pass
 
     # 尾部杂质 → 救
     try:
         obj, _end = json.JSONDecoder().raw_decode(json_str.lstrip())
         return obj, None
+    except json.JSONDecodeError:
+        pass
+
+    # 中途截断（Doubao token 上限）→ 倒退补全
+    recovered, _ = _try_recover_truncated(json_str)
+    if recovered is not None:
+        return recovered, None
+
+    # 所有救援均失败，返回原始错误供 LLM 修复
+    try:
+        json.loads(json_str)
     except json.JSONDecodeError as e:
         return None, _format_decode_error(json_str, e)
+    return None, "JSON 解析失败（未知原因）"
 
 
 def safe_load_validate(
