@@ -317,6 +317,7 @@ def report_node(state: CCAState) -> dict:
             )),
         ],
         label="Reporter",
+        recursion_limit=80,
     )
     reviewer_result = _extract_reviewer_result(messages)
     pdf_path = _extract_pdf_path(messages)

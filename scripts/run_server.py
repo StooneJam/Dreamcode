@@ -19,7 +19,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--reload", action="store_true", default=True)
+    parser.add_argument("--reload", action="store_true", default=False)
     args = parser.parse_args()
 
     uvicorn.run(
