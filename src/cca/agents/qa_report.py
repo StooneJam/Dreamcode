@@ -250,6 +250,51 @@ def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
     return out
 
 
+def _fallback_generate_report(
+    messages: list, task: ReportTask, profiles_json: str
+) -> str:
+    """ReAct 未产出报告正文时（Doubao 长上下文截断），一次性 LLM 调用生成 Markdown。"""
+    from langchain_core.messages import HumanMessage
+
+    # 收集已完成的排名和 SWOT 工具产出
+    ranking_results, swot_result, chart_refs = [], "", []
+    for msg in messages:
+        if not isinstance(msg, ToolMessage) or not msg.content:
+            continue
+        if msg.name == "submit_dimension_ranking":
+            try:
+                ranking_results.append(json.loads(msg.content))
+            except json.JSONDecodeError:
+                pass
+        elif msg.name == "finalize_swot":
+            swot_result = msg.content[:1200]
+        elif msg.name in ("render_chart", "render_bar_chart"):
+            chart_refs.append(msg.content.strip())
+
+    ranking_text = json.dumps(ranking_results, ensure_ascii=False, indent=2)[:2000]
+    charts_text = "\n".join(chart_refs)
+
+    prompt = (
+        f"你是竞品分析专家。分析工具已全部完成，请直接输出完整竞品分析报告正文。\n\n"
+        f"目标产品：{task.target_product}　竞品：{', '.join(task.competitors)}\n\n"
+        f"## 维度竞争力排名结果\n```json\n{ranking_text}\n```\n\n"
+        f"## SWOT 分析结果\n{swot_result}\n\n"
+        f"## 已生成图表（直接插入对应章节）\n{charts_text}\n\n"
+        f"## 产品档案（精简）\n{profiles_json[:3000]}\n\n"
+        f"报告第一行必须是：# {task.target_product}竞品分析报告\n"
+        f"按以下章节顺序输出（每章至少2段）：\n"
+        f"一、背景与目标　二、产品定位　三、商业策略　四、产品设计（含图表）　"
+        f"五、用户数据分析　六、用户反馈　七、SWOT综合（含表格）　八、结论与建议　数据来源\n"
+        f"用中文，段落横向对比所有产品，不按产品逐个分段。"
+    )
+    try:
+        result = get_report_llm().invoke([HumanMessage(content=prompt)])
+        text = (result.content or "").strip()
+        return text if text.startswith("#") else f"# {task.target_product}竞品分析报告\n\n{text}"
+    except Exception:
+        return ""
+
+
 def _extract_reviewer_result(messages: list) -> QAResult:
     """取 call_reviewer 最后一次返回的 QAResult；未调用时返默认 passed。"""
     for msg in reversed(messages):
@@ -323,7 +368,11 @@ def report_node(state: CCAState) -> dict:
     pdf_path = _extract_pdf_path(messages)
     report_md = _extract_final_md(messages)
 
-    # LLM 未调 render_pdf（Doubao dev override 常见）时，Python 侧兜底渲染
+    # Doubao 等长上下文下可能截断、未输出报告正文：Python 侧一次性 LLM 补救
+    if not report_md:
+        report_md = _fallback_generate_report(messages, report_task, profiles_json)
+
+    # LLM 未调 render_pdf 时，Python 侧兜底渲染
     if report_md and not pdf_path:
         pdf_path = render_pdf.invoke({
             "markdown_content": report_md,
