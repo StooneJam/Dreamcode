@@ -22,11 +22,15 @@ const I18N = {
     formTitle:'开始分析', lblProduct:'目标产品名称', phProduct:'例如：飞书、DingTalk、Slack',
     lblQuery:'分析需求描述', phQuery:'请描述您的分析需求，例如：分析飞书与钉钉、Slack 的视频会议功能差异...',
     upMain:'点击上传或拖拽文件至此处', upSub:'支持 PDF、Word、TXT，仅限 1 个文件，最大 20MB',
-    submitBtn:'开始分析', navDlBtn:'报告下载', optionalTag:'可选',
+    submitBtn:'开始分析', navDlBtn:'报告生成与下载', optionalTag:'可选',
     lblFileText:'上传参考文档（最多 1 个文件）', streamTitle:'智能体运行日志', thinkText:'思考中...',
     logHintText:'点击「开始分析」后，智能体实时日志将在此处显示<br>您可以看到每个 Agent 的思考过程和工具调用',
-    pdfTitle:'竞品分析报告已生成', pdfFname:'竞品分析报告_飞书_2026.pdf', pdfDl:'↓  下载到本地',
+    pdfTitle:'运行日志与报告下载', pdfFname:'竞品分析报告_飞书_2026.pdf', pdfDl:'↓  下载到本地',
     pdfEmpty:'完成分析后，PDF 报告将在此处预览',
+    phase1Title:'第一阶段分析完成', phase1Skip:'跳过，继续生成', phase1Submit:'提交修改建议',
+    phase1InputPh:'请输入您对分析结果的修改建议（可选）...',
+    qaTitle:'向 Agent 提问', qaHint:'报告生成完成，您可以向 Agent 提问关于报告中的任何问题',
+    qaInputPh:'输入您的问题...', qaSend:'发送',
     pdfPageInfo:(c,t)=>`第 ${c} / ${t} 页`, progress:(p,s)=>`分析进度 ${p}% · 预计剩余 ${s} 秒`,
     footerTagline:'AI 驱动的竞品分析平台', fc1Title:'产品', fc2Title:'支持',
     footerCopy:'© 2026 Dreamcode · 保留所有权利',
@@ -69,11 +73,15 @@ const I18N = {
     formTitle:'Start Analysis', lblProduct:'Target Product', phProduct:'e.g. Feishu, DingTalk, Slack',
     lblQuery:'Analysis Request', phQuery:'Describe needs, e.g. Compare video conferencing between Feishu and DingTalk...',
     upMain:'Click to upload or drag file here', upSub:'PDF, Word, TXT · 1 file max · 20 MB limit',
-    submitBtn:'Start Analysis', navDlBtn:'Download Report', optionalTag:'Optional',
+    submitBtn:'Start Analysis', navDlBtn:'Report Generation', optionalTag:'Optional',
     lblFileText:'Upload Reference Document (max 1 file)', streamTitle:'Agent Run Log', thinkText:'Thinking...',
     logHintText:'Agent logs will stream here after you click Start Analysis.',
-    pdfTitle:'Report Ready', pdfFname:'competitive_analysis_2026.pdf', pdfDl:'↓  Download',
+    pdfTitle:'Logs & Report Download', pdfFname:'competitive_analysis_2026.pdf', pdfDl:'↓  Download',
     pdfEmpty:'PDF report will appear here after analysis.',
+    phase1Title:'Phase 1 Analysis Done', phase1Skip:'Skip, continue generation', phase1Submit:'Submit feedback',
+    phase1InputPh:'Enter your feedback on the analysis (optional)...',
+    qaTitle:'Ask the Agent', qaHint:'Report ready. Ask the Agent any question about the report.',
+    qaInputPh:'Ask a question...', qaSend:'Send',
     pdfPageInfo:(c,t)=>`Page ${c} of ${t}`, progress:(p,s)=>`Progress ${p}% · ~${s}s`,
     footerTagline:'AI-powered Competitive Analysis', fc1Title:'Product', fc2Title:'Support',
     footerCopy:'© 2026 Dreamcode · All rights reserved',
@@ -168,6 +176,10 @@ let apiOption = 'key';
 let aiKeyCount = 1;
 const GALLERY_TOTAL = 4;
 let particleRafId = null;
+let currentJobId = null;
+let isSimulateMode = false;
+let simBtn = null;
+let simProduct = '';
 
 /* ══════════════════════════════════════
    Helpers
@@ -267,6 +279,10 @@ function applyLang(){
   set('t-lbl-file-text',t.lblFileText);
   set('t-pdf-title',t.pdfTitle); set('pdf-fname',t.pdfFname);
   set('pdf-dl-btn',t.pdfDl); set('t-pdf-empty',t.pdfEmpty);
+  set('t-phase1-title',t.phase1Title); set('t-phase1-skip',t.phase1Skip);
+  set('t-phase1-submit',t.phase1Submit); setA('phase1-input','placeholder',t.phase1InputPh);
+  set('t-qa-title',t.qaTitle); set('t-qa-hint',t.qaHint);
+  setA('qa-input','placeholder',t.qaInputPh); set('t-qa-send',t.qaSend);
   set('t-footer-tagline',t.footerTagline);
   set('t-fc1-title',t.fc1Title); set('t-fc2-title',t.fc2Title);
   set('t-footer-copy',t.footerCopy);
@@ -1050,6 +1066,9 @@ async function startAnalysis(){
   const product=$('input-product').value.trim();
   const btn=$('submit-btn'); btn.disabled=true;
   $('log-body').innerHTML=''; setThink(false); setProgress(0,0);
+  $('phase1-box').classList.remove('show');
+  $('qa-box').classList.remove('show');
+  jumpTo('pdf-section');
   const fd=new FormData();
   fd.append('target_product',product);
   fd.append('user_query',$('input-query').value.trim()||product);
@@ -1060,8 +1079,9 @@ async function startAnalysis(){
     const res=await fetch('/api/analyze',{method:'POST',body:fd});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const {job_id}=await res.json();
+    currentJobId=job_id; isSimulateMode=false;
     openSSE(job_id,btn);
-  } catch(_){ simulate(btn,product); }
+  } catch(_){ isSimulateMode=true; simulate(btn,product); }
 }
 
 function openSSE(jobId,btn){
@@ -1075,10 +1095,13 @@ function openSSE(jobId,btn){
       case 'tool_result': appendLog(msg.agent,`← ${msg.tool} (${msg.size}) ${msg.preview}`,true); break;
       case 'log': appendLog(msg.agent,msg.text,false); break;
       case 'progress': setProgress(msg.pct,msg.sec_left); break;
+      case 'phase1_checkpoint':
+        setThink(false); showPhase1Box(msg.summary); break;
       case 'done':
         eventSource.close(); setThink(false); setProgress(100,0); btn.disabled=false;
         if(msg.pdf_path) showPdf(msg.pdf_path,msg.filename);
-        else { showChartDashboard(DEMO_DATA); jumpTo('pdf-section'); }
+        else showChartDashboard(DEMO_DATA);
+        showQaBox();
         break;
       case 'error':
         eventSource.close(); setThink(false); btn.disabled=false; appendLog('Error',msg.message,false); break;
@@ -1091,7 +1114,75 @@ function showPdf(path,filename){
   pdfPath=path;
   $('pdf-content').innerHTML=`<iframe src="/api/report/pdf?path=${encodeURIComponent(path)}" title="PDF Report"></iframe>`;
   if(filename) $('pdf-fname').textContent=filename;
-  jumpTo('pdf-section');
+}
+
+/* ══════════════════════════════════════
+   Phase 1 interaction & Q&A
+══════════════════════════════════════ */
+function showPhase1Box(summary){
+  const box=$('phase1-box'), el=$('phase1-summary');
+  if(el) el.innerHTML=summary||'';
+  if(box) box.classList.add('show');
+}
+
+function showQaBox(){
+  const box=$('qa-box');
+  if(box) box.classList.add('show');
+}
+
+async function sendPhase1Feedback(skip){
+  const input=$('phase1-input');
+  const feedback=skip?'':(input?.value.trim()||'');
+  const box=$('phase1-box');
+  if(box) box.classList.remove('show');
+  const label=skip
+    ?(lang==='zh'?'继续生成报告...':'Continuing report generation...')
+    :(lang==='zh'?`已提交修改建议：${feedback}`:`Feedback submitted: ${feedback}`);
+  appendLog('System',label,false);
+  if(isSimulateMode){ continueSimulateAfterPhase1(); return; }
+  try{
+    await fetch(`/api/jobs/${currentJobId}/feedback`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({feedback,skip}),
+    });
+  } catch(_){}
+}
+
+async function sendReportQuestion(){
+  const input=$('qa-input');
+  const text=input?.value.trim();
+  if(!text) return;
+  appendQaMessage('user',text);
+  if(input) input.value='';
+  if(isSimulateMode){
+    const reply=lang==='zh'
+      ?'这是模拟回答。实际运行中，Agent 会根据报告内容回答您的具体问题。'
+      :'This is a simulated answer. In production, the Agent answers based on the actual report content.';
+    setTimeout(()=>appendQaMessage('agent',reply),1200);
+    return;
+  }
+  try{
+    const res=await fetch(`/api/jobs/${currentJobId}/question`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({question:text}),
+    });
+    const {answer}=await res.json();
+    appendQaMessage('agent',answer);
+  } catch(_){
+    appendQaMessage('agent',lang==='zh'?'回答失败，请重试':'Failed to get answer, please retry');
+  }
+}
+
+function appendQaMessage(role,text){
+  const msgs=$('qa-messages');
+  if(!msgs) return;
+  const el=document.createElement('div');
+  el.className=`qa-msg ${role}`;
+  el.textContent=text;
+  msgs.appendChild(el);
+  msgs.scrollTop=msgs.scrollHeight;
 }
 
 /* ══════════════════════════════════════
@@ -1155,6 +1246,7 @@ function animateSentimentArcs(){
    Simulate (no backend)
 ══════════════════════════════════════ */
 function simulate(btn,product){
+  simBtn=btn; simProduct=product;
   const zh=lang==='zh';
   const steps=[
     [300,()=>setThink(true)],
@@ -1169,13 +1261,31 @@ function simulate(btn,product){
     [600,()=>appendLog('Insight','→ appstore_search({ product: "...", region: "cn" })',true)],
     [900,()=>{ appendLog('Insight','← appstore_search (3.2KB) 320 reviews',true); setProgress(68,26); }],
     [600,()=>appendLog('Insight',zh?'BERT 情感分类完成...':'BERT classification done...')],
-    [700,()=>{ appendLog('Reporter',zh?'开始生成报告...':'Generating report...'); setProgress(78,18); }],
+    [700,()=>{
+      setProgress(75,22);
+      const summary=zh
+        ?'<strong>发现竞品：</strong> 钉钉、Slack、企业微信<br><strong>分析维度：</strong> 功能对比 · 定价策略 · 用户情感 · 市场份额<br><strong>主要发现：</strong> 飞书在视频会议和文档协作上领先，钉钉移动端体验更优'
+        :'<strong>Competitors found:</strong> DingTalk, Slack, WeCom<br><strong>Dimensions:</strong> Features · Pricing · Sentiment · Market Share<br><strong>Key finding:</strong> Feishu leads in video & docs; DingTalk excels on mobile';
+      appendLog('System',zh?'第一阶段分析完成，等待用户确认...':'Phase 1 complete, awaiting your feedback...',false);
+      showPhase1Box(summary);
+    }],
+  ];
+  let delay=0;
+  steps.forEach(([d,fn])=>{ delay+=d; setTimeout(fn,delay); });
+}
+
+function continueSimulateAfterPhase1(){
+  const zh=lang==='zh';
+  const btn=simBtn, product=simProduct;
+  const steps=[
+    [500,()=>{ appendLog('Reporter',zh?'开始生成报告...':'Generating report...'); setProgress(78,18); }],
     [800,()=>{ appendLog('Reporter','→ finalize_swot({...})',true); setProgress(88,8); }],
     [1200,()=>{
       setProgress(100,0); setThink(false); btn.disabled=false;
       const d=Object.assign({},DEMO_DATA);
       if(product) d.products=[product,zh?'钉钉':'DingTalk','Slack'];
-      showChartDashboard(d); jumpTo('pdf-section');
+      showChartDashboard(d);
+      showQaBox();
     }],
   ];
   let delay=0;
@@ -1263,4 +1373,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   initAgentAnimations();
   $('analyze-form').addEventListener('submit',handleSubmit);
   window.addEventListener('wheel',handleWheel,{passive:false});
+  // Enter to send Q&A (Shift+Enter for newline)
+  $('qa-input')?.addEventListener('keydown',e=>{
+    if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendReportQuestion(); }
+  });
 });
