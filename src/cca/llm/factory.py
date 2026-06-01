@@ -66,12 +66,20 @@ class LLMCredential(BaseModel):
     model: str
 
 
+# 三个槽位的固定默认值，服务器层按槽位名 + 用户 api_key 构造 LLMCredential 时使用。
+SLOT_DEFAULTS: dict[AgentFamily, dict] = {
+    "gpt-5":    {"model": "gpt-5",                      "base_url": None},
+    "deepseek": {"model": "deepseek-v4-pro",             "base_url": "https://api.deepseek.com"},
+    "doubao":   {"model": "ep-20260514111325-xjmj7",     "base_url": "https://ark.cn-beijing.volces.com/api/v3"},
+}
+
+
 def _make_doubao(temperature: float) -> ChatOpenAI:
     """构造一个 Doubao 客户端。dev override 时三个家族都用它。"""
     return ChatOpenAI(
-        model=os.getenv("DOUBAO_MODEL", ""),
+        model=os.getenv("DOUBAO_MODEL", SLOT_DEFAULTS["doubao"]["model"]),
         api_key=os.getenv("DOUBAO_API_KEY"),
-        base_url=os.getenv("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
+        base_url=os.getenv("DOUBAO_BASE_URL", SLOT_DEFAULTS["doubao"]["base_url"]),
         timeout=_DOUBAO_TIMEOUT,
         temperature=temperature,
         max_retries=_MAX_RETRIES,

@@ -463,22 +463,49 @@
 
       <div class="api-section" style="border-top:none;margin-top:16px">
         <div class="api-section-title">
-          <span id="t-ai-keys-title">AI 模型 API Keys</span>
-          <span class="api-section-tag">1 – 3 个</span>
+          <span id="t-ai-keys-title">AI 模型槽位配置</span>
+          <span class="api-section-tag">至少填 1 个槽位</span>
         </div>
         <p class="api-section-desc" id="t-ai-keys-desc">
-          支持 OpenAI / DeepSeek / Doubao 等兼容协议的模型。<br>
-          多个来自不同厂商的 Key 可跨模型协作，显著提升报告客观性。
+          三个槽位对应不同 Agent 角色，填不同厂商的 Key 可启用跨模型协作、减少单一模型偏见。<br>
+          未填写的槽位自动借用已填槽位的 Key。
         </p>
-        <div id="ai-keys-container">
-          <div class="api-key-row" id="key-row-1">
-            <span class="api-key-label">Key 1</span>
-            <input class="api-key-input" id="ai-key-1" type="password" placeholder="sk-..." oninput="updateKeyWarning()"/>
+
+        <!-- GPT-5 slot -->
+        <div class="api-family-slot">
+          <div class="api-family-hd">
+            <span class="api-family-label">GPT-5 槽位</span>
+            <span class="api-family-agents">PM Agent · Reporter</span>
+            <span class="api-family-model">gpt-5</span>
           </div>
+          <input class="api-key-input" id="gpt5-key" type="password"
+                 placeholder="API Key（sk-...）" oninput="updateKeyWarning()"/>
         </div>
-        <button class="api-add-key" id="api-add-key-btn" onclick="addAiKey()">+ 添加第 2 个 Key（推荐）</button>
-        <div class="api-warn" id="api-warn">
-          ⚠ 仅配置 1 个 Key 时，模型对自家产品存在自我偏好风险，建议至少填写 2 个来自不同厂商的 Key。
+
+        <!-- DeepSeek slot -->
+        <div class="api-family-slot">
+          <div class="api-family-hd">
+            <span class="api-family-label">DeepSeek 槽位</span>
+            <span class="api-family-agents">Collector · Insight</span>
+            <span class="api-family-model">deepseek-v4-pro</span>
+          </div>
+          <input class="api-key-input" id="deepseek-key" type="password"
+                 placeholder="API Key（sk-...）" oninput="updateKeyWarning()"/>
+        </div>
+
+        <!-- Doubao slot -->
+        <div class="api-family-slot">
+          <div class="api-family-hd">
+            <span class="api-family-label">Doubao 槽位</span>
+            <span class="api-family-agents">Debate Judge · 报告终审</span>
+            <span class="api-family-model">ep-20260514111325-xjmj7</span>
+          </div>
+          <input class="api-key-input" id="doubao-key" type="password"
+                 placeholder="API Key" oninput="updateKeyWarning()"/>
+        </div>
+
+        <div class="api-warn" id="api-warn" style="display:none">
+          ⚠ 仅配置 1 个槽位时，模型对自家产品存在自我偏好风险，建议至少填写 2 个来自不同厂商的 Key。
         </div>
       </div>
 

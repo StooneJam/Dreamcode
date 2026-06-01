@@ -51,8 +51,7 @@ const I18N = {
     payF2:'✓ 多模型协作生成，减少单一模型自我偏好',
     payF3:'✓ 支持 PDF 下载，分析周期约 3–5 分钟',
     payNote:'实际 API 调用成本约 ¥10，定价 ¥15 含服务费',
-    addKeyBtn:(n)=>`+ 添加第 ${n} 个 Key（推荐）`,
-    keyWarn:'仅配置 1 个 Key 时，模型可能对自家产品存在自我偏好风险，建议至少填写 2 个来自不同厂商的 Key。',
+    keyWarn:'仅配置 1 个槽位时，模型可能对自家产品存在自我偏好风险，建议至少填写 2 个来自不同厂商的 Key。',
   },
   en: {
     eyebrow:'AI-powered Competitive Analysis', heroTitle:'Your Exclusive<br>Competitor Analysis',
@@ -102,8 +101,7 @@ const I18N = {
     payF2:'✓ Multi-model collaboration reduces self-preference bias',
     payF3:'✓ PDF download, analysis takes ~3–5 minutes',
     payNote:'Estimated API cost ~¥10; ¥15 price includes service fee',
-    addKeyBtn:(n)=>`+ Add Key ${n} (Recommended)`,
-    keyWarn:'With only 1 key, the model may show self-preference bias. Using 2+ keys from different providers improves objectivity.',
+    keyWarn:'With only 1 slot configured, the model may show self-preference bias. Using 2+ keys from different providers improves objectivity.',
   },
 };
 
@@ -173,7 +171,6 @@ let currentSnapIdx = 0;       // authoritative section tracker
 let heroScrollTl = null;
 let galleryIdx = 0;
 let apiOption = 'key';
-let aiKeyCount = 1;
 const GALLERY_TOTAL = 4;
 let particleRafId = null;
 let currentJobId = null;
@@ -302,9 +299,6 @@ function applyLang(){
   set('t-pay-note',t.payNote);
   // Update dynamic warn text
   const warnEl=$('api-warn'); if(warnEl) warnEl.textContent=t.keyWarn;
-  // Update add-key button text
-  const addBtn=$('api-add-key-btn');
-  if(addBtn && t.addKeyBtn) addBtn.textContent=t.addKeyBtn(aiKeyCount+1);
 }
 function setLang(l){
   lang=l; applyLang(); renderScrollTrack();
@@ -1153,36 +1147,14 @@ function goToModalStep2(){
 }
 function goModalBack(){ showModalStep('api-step-1'); }
 
-function addAiKey(){
-  if(aiKeyCount>=3) return;
-  aiKeyCount++;
-  const container=$('ai-keys-container');
-  const row=document.createElement('div');
-  row.className='api-key-row'; row.id=`key-row-${aiKeyCount}`;
-  row.innerHTML=`<span class="api-key-label">Key ${aiKeyCount}</span>
-    <input class="api-key-input" id="ai-key-${aiKeyCount}" type="password" placeholder="sk-..." oninput="updateKeyWarning()"/>
-    <button class="api-key-remove" onclick="removeAiKey(${aiKeyCount})">✕</button>`;
-  container.appendChild(row);
-  const btn=$('api-add-key-btn');
-  if(aiKeyCount>=3) btn.style.display='none';
-  else btn.textContent=`+ 添加第 ${aiKeyCount+1} 个 Key`;
-  updateKeyWarning();
-}
-function removeAiKey(n){
-  const row=$(`key-row-${n}`); if(row) row.remove();
-  aiKeyCount--;
-  const btn=$('api-add-key-btn');
-  btn.style.display=''; btn.textContent=`+ 添加第 ${aiKeyCount+1} 个 Key`;
-  updateKeyWarning();
-}
 function updateKeyWarning(){
-  const filled=[1,2,3].filter(i=>{ const el=$(`ai-key-${i}`); return el&&el.value.trim(); }).length;
+  const filled=['gpt5','deepseek','doubao'].filter(s=>$(`${s}-key`)?.value.trim()).length;
   const w=$('api-warn'); if(w) w.style.display=filled<=1?'':'none';
 }
 async function submitWithKeys(){
-  const k1=$('ai-key-1')?.value.trim();
+  const anyFilled=['gpt5','deepseek','doubao'].some(s=>$(`${s}-key`)?.value.trim());
+  if(!anyFilled){ alert('请至少为 1 个槽位填写 API Key'); return; }
   const tv=$('tavily-key')?.value.trim();
-  if(!k1){ alert('请至少填写 1 个 AI 模型 API Key'); return; }
   if(!tv){ alert('请填写 Tavily Search API Key'); return; }
   closeApiModal();
   startAnalysis();
@@ -1212,7 +1184,10 @@ async function startAnalysis(){
   fd.append('target_product',product);
   fd.append('user_query',$('input-query').value.trim()||product);
   if(uploadedFile) fd.append('file',uploadedFile);
-  [1,2,3].forEach(i=>{ const k=$(`ai-key-${i}`)?.value.trim(); if(k) fd.append(`ai_key_${i}`,k); });
+  ['gpt5','deepseek','doubao'].forEach(fam=>{
+    const key=$(`${fam}-key`)?.value.trim();
+    if(key) fd.append(`${fam}_key`,key);
+  });
   const tv=$('tavily-key')?.value.trim(); if(tv) fd.append('tavily_key',tv);
   try{
     const res=await fetch('/api/analyze',{method:'POST',body:fd});
