@@ -7,7 +7,7 @@ from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from cca.llm.factory import deepseek
+from cca.llm.factory import get_llm
 from cca.llm.structured import invoke_structured
 
 _SYS = (
@@ -42,7 +42,7 @@ def design_questionnaire(
         ensure_ascii=False,
     )
     return invoke_structured(
-        deepseek,
+        get_llm("deepseek"),
         [SystemMessage(content=_SYS), HumanMessage(content=user)],
         Questionnaire,
     )

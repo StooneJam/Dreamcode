@@ -15,7 +15,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 
 from cca.agents._streaming import stream_react
-from cca.llm.factory import deepseek
+from cca.llm.factory import get_llm
 from cca.schema import CollectTask
 from cca.state import CCAState
 from cca.tools.collector_tools import (
@@ -105,7 +105,7 @@ def _build_exploration_message(state: CCAState) -> str:
 def exploration_node(state: CCAState) -> dict:
     """Phase 1：粗探索竞品 + 维度，产 CollectorExplorationResult + 可选 challenge 信号。"""
     agent = create_react_agent(
-        model=deepseek,
+        model=get_llm("deepseek"),
         tools=[web_search, fetch_url, finalize_exploration, challenge_pm],
     )
     messages = stream_react(
@@ -191,7 +191,7 @@ def collect_one_product(task: CollectTask, context: dict) -> dict:
     便于 LangGraph Send fanout 时按产品 dispatch。
     """
     agent = create_react_agent(
-        model=deepseek,
+        model=get_llm("deepseek"),
         tools=[web_search, fetch_url, finalize_profile, request_product_replacement],
     )
     messages = stream_react(

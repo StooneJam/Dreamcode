@@ -7,7 +7,7 @@ from typing import cast
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from cca.llm.factory import doubao
+from cca.llm.factory import get_llm
 from cca.schema import QAResult
 
 
@@ -42,7 +42,7 @@ def call_report_reviewer(report_md: str, profiles: dict[str, dict]) -> QAResult:
         f"## 原始档案数据（Ground Truth）\n\n```json\n{profiles_json}\n```\n\n"
         f"## 待审查报告\n\n{report_md}"
     )
-    llm = doubao.with_structured_output(_ReviewOutput, method="function_calling")
+    llm = get_llm("doubao").with_structured_output(_ReviewOutput, method="function_calling")
     out = cast(
         _ReviewOutput,
         llm.invoke([SystemMessage(content=_SYSTEM), HumanMessage(content=user)]),

@@ -14,7 +14,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from cca.agents._streaming import stream_react
-from cca.llm.factory import report_llm
+from cca.llm.factory import cross_family_enabled, get_report_llm
 from cca.schema import QAResult, ReportTask, ReviewUnit
 from cca.skills.call_report_reviewer import call_report_reviewer
 from cca.state import CCAState
@@ -240,9 +240,17 @@ def report_node(state: CCAState) -> dict:
     forced = _collect_forced_keys(review_state)
     profiles_json = _serialize_profiles(state.get("profiles", {}), forced)
 
+    reviewer_active = report_task.invoke_call_report_reviewer and cross_family_enabled()
+
     @tool
     def call_reviewer(report_md: str) -> str:
         """报告全部完成后调用豆包跨模型终审，检查图文一致性与事实可溯源性。"""
+        if not cross_family_enabled():
+            return QAResult(
+                product_name="__report__",
+                passed=True,
+                note="单 key 模式，跨家族终审已关闭",
+            ).model_dump_json()
         try:
             result = call_report_reviewer(report_md, json.loads(profiles_json))
             return result.model_dump_json()
@@ -254,7 +262,7 @@ def report_node(state: CCAState) -> dict:
             ).model_dump_json()
 
     agent = create_react_agent(
-        model=report_llm,
+        model=get_report_llm(),
         tools=[
             submit_dimension_ranking, finalize_swot,
             render_chart, render_bar_chart, render_wordcloud, render_pdf,
@@ -285,7 +293,7 @@ def report_node(state: CCAState) -> dict:
             "target_product": report_task.target_product,
         })
 
-    if not report_task.invoke_call_report_reviewer:
+    if not reviewer_active:
         report_status = "unreviewed"
     else:
         report_status = "passed" if reviewer_result.passed else "failed"

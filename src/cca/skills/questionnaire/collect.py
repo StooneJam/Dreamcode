@@ -11,7 +11,7 @@ from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from cca.llm.factory import deepseek
+from cca.llm.factory import get_llm
 from cca.llm.structured import invoke_structured
 from cca.settings import load_config
 from cca.skills.questionnaire.design import Questionnaire, design_questionnaire
@@ -131,7 +131,7 @@ def _autofill(q: Questionnaire, persona: str) -> SurveyResponse:
     )
     user = json.dumps(q.model_dump(), ensure_ascii=False)
     return invoke_structured(
-        deepseek,
+        get_llm("deepseek"),
         [SystemMessage(content=sys), HumanMessage(content=user)],
         SurveyResponse,
     )

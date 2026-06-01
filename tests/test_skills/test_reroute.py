@@ -22,7 +22,7 @@ def _patch_reroute_gpt(monkeypatch: pytest.MonkeyPatch, response):
         def with_structured_output(self, target_type, **_kwargs):  # noqa: ARG002
             return fake
 
-    monkeypatch.setattr("cca.skills.reroute.gpt", _FakeGPT(), raising=False)
+    monkeypatch.setattr("cca.skills.reroute.get_llm", lambda _family: _FakeGPT())
 
 
 def _mk_payload(text: str, **extra) -> dict:

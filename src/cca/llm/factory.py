@@ -1,19 +1,30 @@
 """三个模型家族的客户端统一入口。
 
-Agent 直接 import 模块常量；Debate skill 用 get_llm(family) 按家族动态派发。
-所有 agent / skill 必须通过这里取 LLM，不允许节点内 ChatOpenAI(...)。
+Agent / skill 一律在节点内调 get_llm(family) / get_report_llm() 取 LLM，
+不允许 import 模块常量抓死引用——否则前端注入的 per-run 凭证无法生效。
 
-dev override（`CCA_DEV_MODEL_OVERRIDE=doubao`）：
-    开发期豆包 API 可报销时，把全部客户端（含 report_llm）指向豆包。
-    业务代码零改动；副作用：跨家族 debate 退化为同家族自审（bias 隔离失效，开发期可忍）。
-    流程稳定后 unset 即可切回 GPT-5 + DeepSeek + Doubao 三家族原配置。
+凭证两条路径：
+    无 run creds（离线 demo / 测试）：走 .env 单例，行为与历史完全一致。
+    有 run creds（前端注入）：按用户上传的 endpoint 现建客户端（带缓存）。
+
+family 是“角色槽位”而非 provider：gpt-5/deepseek/doubao 分别是规划 / 执行 / 仲裁角色。
+用户上传时每个槽位可放任意 provider（OpenAI / Qwen / GLM ...）；三槽填不同 provider
+即满足跨家族 bias 隔离。distinct endpoint < 2 时 cross_family_enabled() 返回 False，
+上层跳过 debate / call_report_reviewer。
+
+dev override（`CCA_DEV_MODEL_OVERRIDE=doubao`）：仅作用于 .env 路径，把全部客户端指向豆包。
 """
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator
 
 from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 
 from cca.schema import AgentFamily
 
@@ -37,8 +48,22 @@ _DEV_OVERRIDE = (os.getenv("CCA_DEV_MODEL_OVERRIDE") or "").lower()
 # 三家族原路径下保留 json_mode / response_format=json_object（DeepSeek/GPT-5 容错更好）。
 DEV_DOUBAO_OVERRIDE: bool = _DEV_OVERRIDE == "doubao"
 
-
 _DOUBAO_MAX_TOKENS = int(os.getenv("DOUBAO_MAX_TOKENS", "16384"))
+
+# 各角色槽位的默认 temperature。creds 路径建客户端时复用，保持与 .env 单例一致。
+_FAMILY_TEMP: dict[AgentFamily, float] = {"gpt-5": 0.2, "deepseek": 0.3, "doubao": 0.2}
+_REPORT_TEMP = 0.8
+
+# 缺失家族的 fallback 优先级（用户只填 1-2 槽时，空槽借这个顺序里已填的）
+_FALLBACK_ORDER: tuple[AgentFamily, ...] = ("gpt-5", "deepseek", "doubao")
+
+
+class LLMCredential(BaseModel):
+    """用户为单个角色槽位上传的 endpoint。base_url=None 用 provider 默认。"""
+
+    api_key: str
+    base_url: str | None = None
+    model: str
 
 
 def _make_doubao(temperature: float) -> ChatOpenAI:
@@ -100,16 +125,120 @@ else:
     doubao = _make_doubao(temperature=0.2)
 
 
-def get_llm(family: AgentFamily) -> ChatOpenAI:
-    """按家族名返回客户端。Debate skill 用这个动态派发。
+# 离线 .env 路径的角色 → 单例映射。creds 缺省时返回这些。
+_ENV_CLIENTS: dict[AgentFamily, ChatOpenAI] = {
+    "gpt-5": gpt,
+    "deepseek": deepseek,
+    "doubao": doubao,
+}
 
-    dev override 模式下三个 family 返回的都是 Doubao 客户端（同一三个实例，
-    不是同一引用——保留各自 temperature 配置）。
+
+# ── per-run 凭证注入 ────────────────────────────────────────────────────
+
+_run_creds: ContextVar[dict[AgentFamily, LLMCredential] | None] = ContextVar(
+    "cca_run_creds", default=None
+)
+
+# 同一组 endpoint 在一次运行里复用客户端，避免每次 get_llm 都新建 httpx 连接池。
+_creds_client_cache: dict[tuple[str, str | None, str, float], ChatOpenAI] = {}
+
+
+@contextmanager
+def use_credentials(creds: dict[AgentFamily, LLMCredential] | None) -> Iterator[None]:
+    """前端在 graph.invoke 外层用这个包住一次运行，注入用户上传的 endpoint。
+
+    creds 为空 / None → 回落 .env 路径（离线 demo）。
     """
-    if family == "gpt-5":
-        return gpt
-    if family == "deepseek":
-        return deepseek
-    if family == "doubao":
-        return doubao
-    raise ValueError(f"未知 family: {family!r}")
+    token = _run_creds.set(creds or None)
+    try:
+        yield
+    finally:
+        _run_creds.reset(token)
+
+
+def _resolve_cred(
+    creds: dict[AgentFamily, LLMCredential], family: AgentFamily
+) -> LLMCredential:
+    """空槽按 _FALLBACK_ORDER 借已填的 endpoint。"""
+    if family in creds:
+        return creds[family]
+    for candidate in _FALLBACK_ORDER:
+        if candidate in creds:
+            return creds[candidate]
+    raise ValueError("run creds 为空，不应走到 _resolve_cred")
+
+
+def _build_from_cred(cred: LLMCredential, temperature: float) -> ChatOpenAI:
+    """按用户 endpoint 现建客户端（缓存）。不加 provider 专属 quirk——模型由用户决定。"""
+    key = (cred.api_key, cred.base_url, cred.model, temperature)
+    client = _creds_client_cache.get(key)
+    if client is None:
+        client = ChatOpenAI(
+            model=cred.model,
+            api_key=cred.api_key,
+            base_url=cred.base_url,
+            timeout=_GPT_TIMEOUT,
+            temperature=temperature,
+            max_retries=_MAX_RETRIES,
+        )
+        _creds_client_cache[key] = client
+    return client
+
+
+def get_llm(family: AgentFamily) -> ChatOpenAI:
+    """按角色槽位返回客户端。有 run creds 走用户 endpoint，否则 .env 单例。"""
+    if family not in _ENV_CLIENTS:
+        raise ValueError(f"未知 family: {family!r}")
+    creds = _run_creds.get()
+    if creds is None:
+        return _ENV_CLIENTS[family]
+    return _build_from_cred(_resolve_cred(creds, family), _FAMILY_TEMP[family])
+
+
+def get_report_llm() -> ChatOpenAI:
+    """Reporter 专用客户端（gpt-5 槽位，temperature=0.8）。"""
+    creds = _run_creds.get()
+    if creds is None:
+        return report_llm
+    return _build_from_cred(_resolve_cred(creds, "gpt-5"), _REPORT_TEMP)
+
+
+def cross_family_enabled() -> bool:
+    """跨家族审核是否启用：用户填 >=2 个不同 endpoint 才开。
+
+    离线 .env 路径恒为 True（三家族齐全，行为不变）。
+    """
+    creds = _run_creds.get()
+    if creds is None:
+        return True
+    distinct = {(c.api_key, c.base_url, c.model) for c in creds.values()}
+    return len(distinct) >= 2
+
+
+# ── 凭证校验（供前端上传时调用）────────────────────────────────────────
+
+
+class CredentialCheck(BaseModel):
+    family: AgentFamily
+    ok: bool
+    error: str | None = None
+
+
+def validate_credentials(creds: dict[AgentFamily, LLMCredential]) -> list[CredentialCheck]:
+    """对每个上传的 endpoint 真打一次最小 ping，返回逐槽结果。永不 raise。"""
+    results: list[CredentialCheck] = []
+    for family, cred in creds.items():
+        client = ChatOpenAI(
+            model=cred.model,
+            api_key=cred.api_key,
+            base_url=cred.base_url,
+            timeout=30,
+            max_retries=0,
+            temperature=0,
+        )
+        try:
+            client.invoke([HumanMessage(content="ping")])
+            results.append(CredentialCheck(family=family, ok=True))
+        except Exception as exc:
+            results.append(CredentialCheck(family=family, ok=False, error=str(exc)))
+    return results

@@ -52,14 +52,14 @@ class _FakeStructuredLLM:
 
 
 def _patch_pm_gpt(monkeypatch: pytest.MonkeyPatch, response):
-    """替换 pm.gpt.with_structured_output 为 fake。"""
+    """替换 pm.get_llm 返回的客户端的 with_structured_output 为 fake。"""
     fake = _FakeStructuredLLM(response)
 
     class _FakeGPT:
         def with_structured_output(self, target_type, method=None):  # noqa: ARG002
             return fake
 
-    monkeypatch.setattr("cca.agents.pm.gpt", _FakeGPT(), raising=False)
+    monkeypatch.setattr("cca.agents.pm.get_llm", lambda _family: _FakeGPT())
 
 
 def _make_minimal_state(**overrides) -> CCAState:

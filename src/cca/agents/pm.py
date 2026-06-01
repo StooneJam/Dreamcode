@@ -13,7 +13,7 @@ from typing import Literal, cast
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
 
-from cca.llm.factory import gpt
+from cca.llm.factory import cross_family_enabled, get_llm
 from cca.schema import (
     AgentFamily,
     AgentSignal,
@@ -127,7 +127,7 @@ def _invoke_pm(output_type, phase_label: str, payload: dict, *, max_attempts: in
     不接 cache —— 保留 LLM 在 schema 约束内的判断灵活度。
     """
     attempts = max_attempts or _PM_INVOKE_MAX_RETRIES
-    llm = gpt.with_structured_output(output_type, method="function_calling")
+    llm = get_llm(PM_FAMILY).with_structured_output(output_type, method="function_calling")
     user = _phase_prefix(phase_label) + json.dumps(payload, ensure_ascii=False)
     messages = [SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]
 
@@ -559,7 +559,12 @@ def _apply_debate_result(result: DebateResult) -> dict:
 
 
 def _handle_debate_signal(signal: AgentSignal, state: CCAState) -> dict:
-    """主观信号 → 跨家族 debate。"""
+    """主观信号 → 跨家族 debate。单 key 模式（cross_family 关闭）跳过，保留原输出。"""
+    if not cross_family_enabled():
+        return {"audit_log": [{
+            "agent": "pm", "event": "cross_family_review_skipped",
+            "target": signal.target, "reason": "single_key_mode",
+        }]}
     challenge = DebatePosition(
         agent_family=CHALLENGER_FAMILY,
         claim=signal.payload.claim,

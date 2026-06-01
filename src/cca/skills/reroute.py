@@ -10,7 +10,7 @@ from typing import cast
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from cca.llm.factory import gpt
+from cca.llm.factory import get_llm
 from cca.schema import AgentSignal
 
 RerouteTarget = str  # "phase_1" | "phase_2" | "phase_3"
@@ -62,7 +62,7 @@ def reroute(signal: AgentSignal, state_json: str) -> RerouteDecision:
     # method="function_calling" 显式指定，绕开 langchain-openai 0.3+ 默认 json_schema strict mode。
     # strict mode 要求 dict 字段显式 additionalProperties=false，RerouteDecision.fix_summary 是裸 dict，
     # 会被 strict mode 拒（400 BadRequest）。与 pm._invoke_pm 同样模式。
-    llm = gpt.with_structured_output(RerouteDecision, method="function_calling")
+    llm = get_llm("gpt-5").with_structured_output(RerouteDecision, method="function_calling")
     user = json.dumps({"signal": signal.model_dump(), "state": state_json}, ensure_ascii=False)
     return cast(
         RerouteDecision,

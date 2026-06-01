@@ -12,7 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 
 from cca.agents._streaming import stream_react
-from cca.llm.factory import deepseek
+from cca.llm.factory import get_llm
 from cca.schema import InsightTask
 from cca.state import CCAState
 from cca.tools.appstore import scrape_app_store
@@ -120,7 +120,7 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
     competitor_names = context.get("competitor_names", [])
 
     agent = create_react_agent(
-        model=deepseek,
+        model=get_llm("deepseek"),
         tools=[scrape_app_store, web_search, run_questionnaire, extract_topics,
                analyze_sentiment_bert, finalize_sentiment, challenge_pm],
     )
