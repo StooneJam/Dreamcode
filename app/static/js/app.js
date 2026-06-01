@@ -986,6 +986,114 @@ function appendLog(agent,msg,dim){
   body.appendChild(line); body.scrollTop=body.scrollHeight;
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ── Log block helpers ── */
+function appendLogBlock(html){
+  const body=$('log-body'); clearPreview();
+  const wrap=document.createElement('div');
+  wrap.innerHTML=html;
+  body.appendChild(wrap.firstChild);
+  body.scrollTop=body.scrollHeight;
+}
+
+function renderDomainSeed(msg){
+  const zh=lang==='zh';
+  const dims=(msg.dimension_candidates||[]).join('、');
+  const comps=(msg.competitor_mentions||[]).join('、');
+  const hint=msg.product_type_hint||'';
+  let h=`<div class="log-block log-block-seed"><div class="log-block-title">${zh?'文档解析完成':'Document Parsed'}</div>`;
+  if(hint) h+=`<div class="log-block-row"><span class="log-block-label">${zh?'产品赛道':'Type'}</span><span class="log-bright">${esc(hint)}</span></div>`;
+  if(dims) h+=`<div class="log-block-row"><span class="log-block-label">${zh?'维度候选':'Dimensions'}</span><span class="log-dim">${esc(dims)}</span></div>`;
+  if(comps) h+=`<div class="log-block-row"><span class="log-block-label">${zh?'竞品提及':'Competitors'}</span><span class="log-dim">${esc(comps)}</span></div>`;
+  h+=`</div>`;
+  appendLogBlock(h);
+}
+
+function renderReviewUpdate(units){
+  const zh=lang==='zh';
+  const STATUS={
+    passed:{label:zh?'通过':'Passed',cls:'rs-passed'},
+    needs_retry:{label:zh?'返工':'Retry',cls:'rs-retry'},
+    forced:{label:zh?'强制通过':'Forced',cls:'rs-forced'},
+  };
+  const CLRS={collector:'#1eab7a',insight:'#df7f37'};
+  let h=`<div class="log-block log-block-review"><div class="log-block-title">${zh?'PM 评审结果':'PM Review'}</div>`;
+  (units||[]).forEach(u=>{
+    const s=STATUS[u.status]||{label:u.status,cls:''};
+    const c=CLRS[u.agent]||'#9999b2';
+    h+=`<div class="log-block-review-row"><span class="log-block-agent" style="color:${c}">${esc(u.agent)}</span><span class="log-block-product">${esc(u.product_name)}</span><span class="review-status-badge ${s.cls}">${s.label}</span>`;
+    if(u.pm_note) h+=`<span class="log-block-note">${esc(u.pm_note)}</span>`;
+    h+=`</div>`;
+    if(u.qa_flags&&u.qa_flags.length) h+=`<div class="log-block-flags">${u.qa_flags.map(esc).join(' · ')}</div>`;
+  });
+  h+=`</div>`;
+  appendLogBlock(h);
+}
+
+function renderReroute(msg){
+  const zh=lang==='zh';
+  const PH={'phase_1':zh?'阶段一':'Phase 1','phase_2':zh?'阶段二':'Phase 2','phase_3':zh?'阶段三':'Phase 3'};
+  const ph=PH[msg.phase]||msg.phase||'';
+  const text=zh
+    ?`触发返工（第 ${msg.count} 次），回溯至 ${ph}${msg.reason?' · '+msg.reason:''}`
+    :`Reroute ×${msg.count} → ${ph}${msg.reason?' · '+msg.reason:''}`;
+  appendLog('PM Agent',text,false);
+}
+
+function renderDebateResult(msg){
+  const zh=lang==='zh';
+  const VERDICT={
+    accepted:{label:zh?'接受':'Accepted',cls:'verdict-accepted'},
+    rejected:{label:zh?'拒绝':'Rejected',cls:'verdict-rejected'},
+    accepted_with_revision:{label:zh?'修订后接受':'Revised',cls:'verdict-revised'},
+  };
+  const v=VERDICT[msg.verdict]||{label:msg.verdict,cls:''};
+  const TGT={pm_taskplan:'TaskPlan',report:'Report',pm_initial_brief:'InitialBrief'};
+  const tgt=TGT[msg.target]||msg.target||'';
+  let h=`<div class="log-block log-block-debate"><div class="log-block-title">Debate · ${esc(tgt)} <span class="verdict-badge ${v.cls}">${v.label}</span></div>`;
+  if(msg.judge_rationale) h+=`<div class="log-block-rationale">${esc(msg.judge_rationale)}</div>`;
+  h+=`</div>`;
+  appendLogBlock(h);
+}
+
+function renderQaResult(results){
+  const zh=lang==='zh';
+  let h=`<div class="log-block log-block-qa-result"><div class="log-block-title">${zh?'报告终审':'Report QA'}</div>`;
+  (results||[]).forEach(r=>{
+    const cls=r.passed?'qa-passed':'qa-failed';
+    const lbl=r.passed?(zh?'通过':'Pass'):(zh?'未通过':'Fail');
+    h+=`<div class="log-block-review-row"><span class="log-block-product">${esc(r.product_name)}</span><span class="review-status-badge ${cls}">${lbl}</span>`;
+    if(r.note) h+=`<span class="log-block-note">${esc(r.note)}</span>`;
+    h+=`</div>`;
+    if(r.failed_checks&&r.failed_checks.length) h+=`<div class="log-block-flags qa-failed-checks">${r.failed_checks.map(esc).join(' · ')}</div>`;
+  });
+  h+=`</div>`;
+  appendLogBlock(h);
+}
+
+function renderSignal(msg){
+  const KIND_ZH={data_gap:'数据缺口',pm_challenge:'PM 挑战',insight_lead:'Insight 线索',other:'信号'};
+  const KIND_EN={data_gap:'Data Gap',pm_challenge:'PM Challenge',insight_lead:'Insight Lead',other:'Signal'};
+  const k=(lang==='zh'?KIND_ZH:KIND_EN)[msg.kind]||msg.kind||'Signal';
+  appendLog(msg.from_agent||'Agent',`[${k}] ${msg.claim||''}`,true);
+}
+
+function showReportStatus(status){
+  const zh=lang==='zh';
+  const badge=$('report-status-badge');
+  if(!badge) return;
+  const M={
+    passed:{label:zh?'QA 通过':'QA Passed',cls:'status-passed'},
+    failed:{label:zh?'QA 未通过':'QA Failed',cls:'status-failed'},
+    unreviewed:{label:zh?'未审核':'Unreviewed',cls:'status-unreviewed'},
+    pending:{label:zh?'审核中':'Reviewing',cls:'status-pending'},
+  };
+  const s=M[status]||{label:status,cls:'status-unreviewed'};
+  badge.textContent=s.label;
+  badge.className=`report-status-badge ${s.cls}`;
+  badge.style.display='';
+}
+
 function setThink(show){ $('think-badge').classList.toggle('show',show); }
 function setProgress(pct,s){
   $('progress-fill').style.width=pct+'%';
@@ -1068,6 +1176,7 @@ async function startAnalysis(){
   $('log-body').innerHTML=''; setThink(false); setProgress(0,0);
   $('phase1-box').classList.remove('show');
   $('qa-box').classList.remove('show');
+  const _rsb=$('report-status-badge'); if(_rsb) _rsb.style.display='none';
   jumpTo('pdf-section');
   const fd=new FormData();
   fd.append('target_product',product);
@@ -1103,6 +1212,13 @@ function openSSE(jobId,btn){
         else showChartDashboard(DEMO_DATA);
         showQaBox();
         break;
+      case 'domain_seed':   renderDomainSeed(msg); break;
+      case 'review_update': renderReviewUpdate(msg.units); break;
+      case 'reroute':       renderReroute(msg); break;
+      case 'debate_result': renderDebateResult(msg); break;
+      case 'report_status': showReportStatus(msg.status); break;
+      case 'qa_result':     renderQaResult(msg.results); break;
+      case 'signal':        renderSignal(msg); break;
       case 'error':
         eventSource.close(); setThink(false); btn.disabled=false; appendLog('Error',msg.message,false); break;
     }
@@ -1251,7 +1367,19 @@ function simulate(btn,product){
   const steps=[
     [300,()=>setThink(true)],
     [1000,()=>{ appendLog('PM Agent',zh?'分析用户查询，制定竞品分析计划...':'Parsing query, creating plan...'); setThink(false); }],
-    [600,()=>{ appendLog('PM Agent','→ initial_brief({...})',true); setProgress(8,90); }],
+    [600,()=>{
+      appendLog('PM Agent','→ initial_brief({...})',true); setProgress(8,90);
+      // 若用户上传了参考文档，模拟 domain_seed 事件
+      if(uploadedFile){
+        renderDomainSeed({
+          product_type_hint: zh?'企业协作与通讯软件':'Enterprise collaboration & communication',
+          dimension_candidates: zh
+            ?['视频会议','文档协作','即时通讯','定价策略','移动端体验']
+            :['Video conferencing','Doc collaboration','Messaging','Pricing','Mobile UX'],
+          competitor_mentions: zh?['钉钉','企业微信','Slack']:['DingTalk','WeCom','Slack'],
+        });
+      }
+    }],
     [900,()=>setThink(true)],
     [800,()=>{ setThink(false); appendLog('Collector',zh?'联网搜索竞品官网...':'Searching competitor websites...'); setProgress(20,75); }],
     [600,()=>appendLog('Collector','→ web_search({ query: "target pricing 2026" })',true)],
@@ -1263,6 +1391,24 @@ function simulate(btn,product){
     [600,()=>appendLog('Insight',zh?'BERT 情感分类完成...':'BERT classification done...')],
     [700,()=>{
       setProgress(75,22);
+      // PM 评审结果
+      const mockUnits=[
+        {agent:'collector',product_name:zh?'钉钉':'DingTalk',status:'passed',qa_flags:[],pm_note:null},
+        {agent:'collector',product_name:'Slack',status:'passed',qa_flags:[],pm_note:null},
+        {agent:'insight',product_name:zh?'钉钉':'DingTalk',status:'passed',qa_flags:[],pm_note:null},
+        {agent:'insight',product_name:'Slack',status:'passed',qa_flags:[],pm_note:null},
+      ];
+      renderReviewUpdate(mockUnits);
+    }],
+    [400,()=>{
+      // Debate 结果（TaskPlan 被接受）
+      renderDebateResult({
+        target:'pm_taskplan',
+        verdict:'accepted',
+        judge_rationale:zh
+          ?'竞品列表合理，维度覆盖充分，采纳 PM 原始方案。'
+          :'Competitor list and dimension coverage are sound. PM plan accepted as-is.',
+      });
       const summary=zh
         ?'<strong>发现竞品：</strong> 钉钉、Slack、企业微信<br><strong>分析维度：</strong> 功能对比 · 定价策略 · 用户情感 · 市场份额<br><strong>主要发现：</strong> 飞书在视频会议和文档协作上领先，钉钉移动端体验更优'
         :'<strong>Competitors found:</strong> DingTalk, Slack, WeCom<br><strong>Dimensions:</strong> Features · Pricing · Sentiment · Market Share<br><strong>Key finding:</strong> Feishu leads in video & docs; DingTalk excels on mobile';
@@ -1280,8 +1426,30 @@ function continueSimulateAfterPhase1(){
   const steps=[
     [500,()=>{ appendLog('Reporter',zh?'开始生成报告...':'Generating report...'); setProgress(78,18); }],
     [800,()=>{ appendLog('Reporter','→ finalize_swot({...})',true); setProgress(88,8); }],
-    [1200,()=>{
-      setProgress(100,0); setThink(false); btn.disabled=false;
+    [900,()=>{
+      // 报告终审 debate（call_report_reviewer）
+      renderDebateResult({
+        target:'report',
+        verdict:'accepted_with_revision',
+        judge_rationale:zh
+          ?'报告结构合理，部分定价数据需补充来源引用，其余内容已采纳。'
+          :'Report structure is sound; minor pricing citations added. Accepted with revision.',
+      });
+    }],
+    [500,()=>{
+      // qa_results 终审汇总
+      const prods=product?[product,zh?'钉钉':'DingTalk','Slack']:[zh?'飞书':'Feishu',zh?'钉钉':'DingTalk','Slack'];
+      renderQaResult(prods.map((n,i)=>({
+        product_name:n,
+        passed:i<2,
+        failed_checks:i<2?[]:[zh?'情感数据来源不足':'Insufficient sentiment sources'],
+        note:i===0?(zh?'数据完整，评分可信':'Complete data, high confidence'):null,
+      })));
+      showReportStatus('passed');
+      setProgress(100,0);
+    }],
+    [400,()=>{
+      setThink(false); btn.disabled=false;
       const d=Object.assign({},DEMO_DATA);
       if(product) d.products=[product,zh?'钉钉':'DingTalk','Slack'];
       showChartDashboard(d);

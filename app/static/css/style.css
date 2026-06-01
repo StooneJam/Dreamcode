@@ -1230,3 +1230,80 @@ footer {
 .pay-btn:hover { opacity: .88; transform: translateY(-1px); }
 .pay-wechat  { background: #07C160; color: #fff; }
 .pay-alipay  { background: #1677FF; color: #fff; }
+
+/* ══════════════════════════════════
+   LOG BLOCKS — structured event panels
+══════════════════════════════════ */
+.log-block {
+  background: #0c0e1f;
+  border: 1px solid #1a1e30;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 5px;
+  font-family: 'Inter', sans-serif;
+}
+.log-block-title {
+  font-size: 10px; font-weight: 700;
+  color: #9999b2; letter-spacing: .6px; text-transform: uppercase;
+  display: flex; align-items: center; gap: 6px; margin-bottom: 2px;
+}
+.log-block-row {
+  display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; line-height: 1.5;
+}
+.log-block-label {
+  font-size: 10px; font-weight: 600; color: #4a506e; width: 56px; flex-shrink: 0;
+}
+.log-block-review-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px;
+}
+.log-block-agent {
+  font-size: 10px; font-weight: 600;
+  font-family: 'Roboto Mono', monospace; width: 60px; flex-shrink: 0;
+}
+.log-block-product { font-size: 11px; font-weight: 600; color: #dbdbeb; }
+.log-block-flags {
+  font-size: 10px; color: #6e748e; line-height: 1.5; width: 100%; margin-top: 1px;
+}
+.log-block-rationale { font-size: 11px; color: #8890b0; line-height: 1.6; }
+.log-block-note { font-size: 10px; color: #6e748e; font-style: italic; }
+
+/* Review status badges */
+.review-status-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 7px;
+  border-radius: 4px; flex-shrink: 0; letter-spacing: .3px;
+}
+.rs-passed  { background: rgba(30,171,122,.15); color: #1eab7a; }
+.rs-retry   { background: rgba(245,158,11,.15);  color: #f59e0b; }
+.rs-forced  { background: rgba(146,89,242,.15);  color: #9259f2; }
+.qa-passed  { background: rgba(30,171,122,.15);  color: #1eab7a; }
+.qa-failed  { background: rgba(239,68,68,.15);   color: #ef4444; }
+
+/* Debate verdict badge */
+.verdict-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 7px;
+  border-radius: 4px; flex-shrink: 0; letter-spacing: .3px;
+}
+.verdict-accepted  { background: rgba(30,171,122,.15); color: #1eab7a; }
+.verdict-rejected  { background: rgba(239,68,68,.15);  color: #ef4444; }
+.verdict-revised   { background: rgba(64,196,208,.15);  color: #40c4d0; }
+
+/* Report status badge (PDF toolbar) */
+.report-status-badge {
+  font-size: 11px; font-weight: 700; padding: 3px 9px;
+  border-radius: 5px; letter-spacing: .3px; flex-shrink: 0;
+}
+.status-passed     { background: rgba(30,171,122,.15); color: #1eab7a; }
+.status-failed     { background: rgba(239,68,68,.15);  color: #ef4444; }
+.status-unreviewed { background: rgba(127,127,127,.12);color: #888; }
+.status-pending    { background: rgba(64,196,208,.12); color: #40c4d0; }
+
+/* Block accent colours */
+.log-block-seed   { border-color: rgba(64,196,208,.25); }
+.log-block-seed   .log-block-title { color: #40c4d0; }
+.log-block-review { border-color: rgba(30,171,122,.2); }
+.log-block-review .log-block-title { color: #49bf8a; }
+.log-block-debate { border-color: rgba(146,89,242,.25); }
+.log-block-debate .log-block-title { color: #9259f2; }
+.log-block-qa-result { border-color: rgba(64,196,208,.18); }
+.log-block-qa-result .log-block-title { color: #40c4d0; }
+.qa-failed-checks { color: #ef4444; font-size: 10px; width: 100%; margin-top: 1px; }

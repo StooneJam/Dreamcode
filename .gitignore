@@ -13,6 +13,8 @@
 secrets/
 
 files/
+业务价值与产品体验维度如何做.md
+前后端不一致问题.md
 
 __pycache__/
 *.py[cod]
