@@ -583,6 +583,15 @@ section.snap-in { animation: sec-enter 1.1s ease forwards; }
 .term-dots { display: flex; gap: 8px; }
 .term-dot  { width: 12px; height: 12px; border-radius: 50%; }
 .stream-title { font-size: 13px; font-weight: 500; color: #9999b2; }
+.stream-timer {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 12px; font-weight: 500;
+  color: var(--teal);
+  letter-spacing: 0.5px;
+  background: rgba(64,196,208,.1);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
 
 .think-badge {
   display: none; align-items: center; gap: 8px;
@@ -603,6 +612,7 @@ section.snap-in { animation: sec-enter 1.1s ease forwards; }
 .log-body::-webkit-scrollbar { width: 4px; }
 .log-body::-webkit-scrollbar-thumb { background: #1e2235; border-radius: 2px; }
 .log-line { display: flex; gap: 8px; margin-bottom: 5px; }
+.log-ts    { color: #4a4e6a; font-size: 10px; min-width: 38px; flex-shrink: 0; line-height: 1.5; padding-top: 1px; }
 .log-agent { width: 100px; flex-shrink: 0; }
 .log-msg   { word-break: break-all; line-height: 1.5; }
 .log-bright { color: #dbdbeb; }

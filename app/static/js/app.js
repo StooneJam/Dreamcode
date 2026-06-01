@@ -180,6 +180,8 @@ let currentJobId = null;
 let isSimulateMode = false;
 let simBtn = null;
 let simProduct = '';
+let analysisStartTime = 0;
+let timerInterval = null;
 
 /* ══════════════════════════════════════
    Helpers
@@ -973,6 +975,30 @@ function initAgentAnimations(){
 }
 
 /* ══════════════════════════════════════
+   Analysis timer
+══════════════════════════════════════ */
+function elapsedStr(ms){
+  const s=Math.floor(ms/1000), m=Math.floor(s/60);
+  return `${String(m).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+}
+
+function startTimer(){
+  analysisStartTime=Date.now();
+  const el=$('stream-timer');
+  if(el){ el.textContent='00:00'; el.style.display=''; }
+  clearInterval(timerInterval);
+  timerInterval=setInterval(()=>{
+    const el=$('stream-timer');
+    if(el) el.textContent=elapsedStr(Date.now()-analysisStartTime);
+  },1000);
+}
+
+function stopTimer(){
+  clearInterval(timerInterval);
+  timerInterval=null;
+}
+
+/* ══════════════════════════════════════
    Log helpers
 ══════════════════════════════════════ */
 const AGENT_COLORS={'PM Agent':'#40c4d0','Collector':'#1eab7a','Insight':'#df7f37','Reporter':'#9259f2'};
@@ -982,7 +1008,8 @@ function appendLog(agent,msg,dim){
   const body=$('log-body'); clearPreview();
   const line=document.createElement('div'); line.className='log-line';
   const color=AGENT_COLORS[agent]||'#9999b2';
-  line.innerHTML=`<span class="log-agent" style="color:${color}">[${esc(agent)}]</span><span class="log-msg ${dim?'log-dim':'log-bright'}">${esc(msg)}</span>`;
+  const ts=analysisStartTime?`<span class="log-ts">+${elapsedStr(Date.now()-analysisStartTime)}</span>`:'';
+  line.innerHTML=`${ts}<span class="log-agent" style="color:${color}">[${esc(agent)}]</span><span class="log-msg ${dim?'log-dim':'log-bright'}">${esc(msg)}</span>`;
   body.appendChild(line); body.scrollTop=body.scrollHeight;
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -1005,6 +1032,8 @@ function renderDomainSeed(msg){
   if(hint) h+=`<div class="log-block-row"><span class="log-block-label">${zh?'产品赛道':'Type'}</span><span class="log-bright">${esc(hint)}</span></div>`;
   if(dims) h+=`<div class="log-block-row"><span class="log-block-label">${zh?'维度候选':'Dimensions'}</span><span class="log-dim">${esc(dims)}</span></div>`;
   if(comps) h+=`<div class="log-block-row"><span class="log-block-label">${zh?'竞品提及':'Competitors'}</span><span class="log-dim">${esc(comps)}</span></div>`;
+  const terms=msg.terminology&&Object.keys(msg.terminology).length?Object.entries(msg.terminology).map(([k,v])=>`${k}：${v}`).join('、'):'';
+  if(terms) h+=`<div class="log-block-row"><span class="log-block-label">${zh?'术语表':'Terms'}</span><span class="log-dim">${esc(terms)}</span></div>`;
   h+=`</div>`;
   appendLogBlock(h);
 }
@@ -1047,7 +1076,7 @@ function renderDebateResult(msg){
     rejected:{label:zh?'拒绝':'Rejected',cls:'verdict-rejected'},
     accepted_with_revision:{label:zh?'修订后接受':'Revised',cls:'verdict-revised'},
   };
-  const v=VERDICT[msg.verdict]||{label:msg.verdict,cls:''};
+  const v=VERDICT[msg.final_verdict]||{label:msg.final_verdict,cls:''};
   const TGT={pm_taskplan:'TaskPlan',report:'Report',pm_initial_brief:'InitialBrief'};
   const tgt=TGT[msg.target]||msg.target||'';
   let h=`<div class="log-block log-block-debate"><div class="log-block-title">Debate · ${esc(tgt)} <span class="verdict-badge ${v.cls}">${v.label}</span></div>`;
@@ -1075,7 +1104,7 @@ function renderSignal(msg){
   const KIND_ZH={data_gap:'数据缺口',pm_challenge:'PM 挑战',insight_lead:'Insight 线索',other:'信号'};
   const KIND_EN={data_gap:'Data Gap',pm_challenge:'PM Challenge',insight_lead:'Insight Lead',other:'Signal'};
   const k=(lang==='zh'?KIND_ZH:KIND_EN)[msg.kind]||msg.kind||'Signal';
-  appendLog(msg.from_agent||'Agent',`[${k}] ${msg.claim||''}`,true);
+  appendLog(msg.from_agent||'Agent',`[${k}] ${(msg.payload&&msg.payload.claim)||''}`,true);
 }
 
 function showReportStatus(status){
@@ -1177,6 +1206,7 @@ async function startAnalysis(){
   $('phase1-box').classList.remove('show');
   $('qa-box').classList.remove('show');
   const _rsb=$('report-status-badge'); if(_rsb) _rsb.style.display='none';
+  startTimer();
   jumpTo('pdf-section');
   const fd=new FormData();
   fd.append('target_product',product);
@@ -1208,6 +1238,7 @@ function openSSE(jobId,btn){
         setThink(false); showPhase1Box(msg.summary); break;
       case 'done':
         eventSource.close(); setThink(false); setProgress(100,0); btn.disabled=false;
+        stopTimer();
         if(msg.pdf_path) showPdf(msg.pdf_path,msg.filename);
         else showChartDashboard(DEMO_DATA);
         showQaBox();
@@ -1220,7 +1251,7 @@ function openSSE(jobId,btn){
       case 'qa_result':     renderQaResult(msg.results); break;
       case 'signal':        renderSignal(msg); break;
       case 'error':
-        eventSource.close(); setThink(false); btn.disabled=false; appendLog('Error',msg.message,false); break;
+        eventSource.close(); setThink(false); stopTimer(); btn.disabled=false; appendLog('Error',msg.message,false); break;
     }
   };
   eventSource.onerror=()=>{ eventSource.close(); btn.disabled=false; };
@@ -1260,7 +1291,7 @@ async function sendPhase1Feedback(skip){
     await fetch(`/api/jobs/${currentJobId}/feedback`,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({feedback,skip}),
+      body:JSON.stringify({raw_feedback:feedback||null,approved:skip}),
     });
   } catch(_){}
 }
@@ -1449,7 +1480,7 @@ function continueSimulateAfterPhase1(){
       setProgress(100,0);
     }],
     [400,()=>{
-      setThink(false); btn.disabled=false;
+      setThink(false); stopTimer(); btn.disabled=false;
       const d=Object.assign({},DEMO_DATA);
       if(product) d.products=[product,zh?'钉钉':'DingTalk','Slack'];
       showChartDashboard(d);
