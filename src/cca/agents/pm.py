@@ -59,7 +59,7 @@ PMPhase = Literal["initial_brief", "task_plan", "review", "report_task"]
 # review_node 配置
 _REROUTE_HARD_LIMIT = 2          # state.reroute_count 达此值后 needs_retry → forced
 _PER_UNIT_RETRY_LIMIT = 2        # 单 (agent, product) 历史返工次数达此值后 needs_retry → forced
-_SENTIMENT_MIN_REVIEWS = 3       # Insight sentiment 评论样本下限
+_SENTIMENT_MIN_REVIEWS = 1       # Insight sentiment 评论样本下限（1 条即可，不足时报告标注 forced）
 _REVIEW_INVOKE_ATTEMPTS = 2      # review 有代码层兜底，LLM 不死磕：1 首次 + 1 retry，失败即降级
 
 

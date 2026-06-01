@@ -5,8 +5,7 @@
 2. 为每个产品调用 run_questionnaire 收集结构化用户反馈（开发阶段由 LLM 自动模拟）
 3. 用 web_search 补充知乎 / 微博等平台的评价
 4. 调用 analyze_sentiment_bert 对评论文本做 BERT 三分类情感标注
-5. 分别对 positive/negative 组调用 extract_topics 提取主题关键词
-6. 对每个产品调用 finalize_sentiment 提交分析结论
+5. 对每个产品调用 finalize_sentiment 提交分析结论
 
 ## 工具调用顺序（每个产品依次执行）
 
@@ -30,15 +29,10 @@
 - 传入 texts_json（JSON 数组字符串）
 - 返回 {positive: [...], negative: [...], neutral: [...]} 分组
 
-### 第五步：extract_topics（分两次调用）
-- 对 positive 组评论文本调用，n_topics=3 → 得到正面主题关键词组
-- 对 negative 组评论文本调用，n_topics=3 → 得到负面主题关键词组
-- 工具已内置中文分词 + 停用词过滤，返回的每条形如 "协同 / 消息 / 通知" 的关键词组**即为一个主题**，无需你再加工
-
-### 第六步：finalize_sentiment
+### 第五步：finalize_sentiment
 - 必须对每个产品调用一次
-- **positive_themes / negative_themes 必须逐条直接采用第五步 extract_topics 的返回值**，一个关键词组对应一条 theme，**不得用自己的话改写、概括或新增**主题；这是为了让报告主题可溯源到 NMF 分析，而非 LLM 主观臆断
-- 若某情感组评论过少，extract_topics 返回空列表 `[]` 或错误提示时，该组 themes 留空，并在 `sources[0].snippet` 备注"样本不足，主题未提取"，不要凭空编主题
+- **positive_themes**：阅读 BERT positive 组的评论，自行归纳 2-4 条核心正面主题，每条用 2-8 个汉字概括（如"多端同步流畅"、"AI 会议纪要"）；若正面评论不足则少于 2 条，不凭空编造
+- **negative_themes**：阅读 BERT negative 组的评论，自行归纳 2-4 条核心槽点主题，每条用 2-8 个汉字概括（如"通知频繁扰人"、"收费门槛高"）；若负面评论不足则少于 2 条，不凭空编造
 - appstore_cn_rating 来自 scrape_app_store 返回的 rating
 - appstore_cn_review_count 来自 scrape_app_store 返回的 review_count
 - representative_reviews 从 App Store reviews 或 web_search 摘要中选 3 条

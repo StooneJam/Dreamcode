@@ -18,7 +18,7 @@ from cca.llm.factory import cross_family_enabled, get_report_llm
 from cca.schema import QAResult, ReportTask, ReviewUnit
 from cca.skills.call_report_reviewer import call_report_reviewer
 from cca.state import CCAState
-from cca.tools.chart import render_bar_chart, render_chart, render_wordcloud
+from cca.tools.chart import render_bar_chart, render_chart
 from cca.tools.pdf_renderer import render_pdf
 from cca.tools.report_tools import finalize_swot, submit_dimension_ranking
 
@@ -241,16 +241,21 @@ def report_node(state: CCAState) -> dict:
     profiles_json = _serialize_profiles(state.get("profiles", {}), forced)
 
     reviewer_active = report_task.invoke_call_report_reviewer and cross_family_enabled()
+    reviewed = False  # 限制终审仅调用一次
 
     @tool
     def call_reviewer(report_md: str) -> str:
-        """报告全部完成后调用豆包跨模型终审，检查图文一致性与事实可溯源性。"""
+        """报告全部完成后调用豆包跨模型终审，检查图文一致性与事实可溯源性。只调用一次。"""
+        nonlocal reviewed
         if not cross_family_enabled():
             return QAResult(
                 product_name="__report__",
                 passed=True,
                 note="单 key 模式，跨家族终审已关闭",
             ).model_dump_json()
+        if reviewed:
+            return "终审已完成，请勿重复调用。"
+        reviewed = True
         try:
             result = call_report_reviewer(report_md, json.loads(profiles_json))
             return result.model_dump_json()
@@ -265,7 +270,7 @@ def report_node(state: CCAState) -> dict:
         model=get_report_llm(),
         tools=[
             submit_dimension_ranking, finalize_swot,
-            render_chart, render_bar_chart, render_wordcloud, render_pdf,
+            render_chart, render_bar_chart, render_pdf,
             call_reviewer,
         ],
     )

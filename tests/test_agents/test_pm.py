@@ -961,7 +961,7 @@ def test_check_data_completeness_sentiment_too_few_flagged() -> None:
                 {"source_url": "u", "snippet": "s", "fetched_at": "t"}]},
         ]}],
         "sources": [{"source_url": "u", "snippet": "s", "fetched_at": "t"}],
-        "sentiment": {"representative_reviews": [{"text": "r1"}]},  # 仅 1 条
+        "sentiment": {"representative_reviews": []},  # 0 条，低于下限
     }}
     task_plan = _mk_task_plan("z")
     flags = _check_data_completeness(profiles, task_plan)

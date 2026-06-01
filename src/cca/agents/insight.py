@@ -1,6 +1,6 @@
-"""Insight Agent —— 问卷 + 评论采集 + NLP 情感分析，写 profiles.sentiment。
+"""Insight Agent —— 问卷 + 评论采集 + BERT 情感分析，写 profiles.sentiment。
 
-与 Collector phase 2 并发。BERT 三分类 + NMF 主题；BERT 不可用时工具层降级到 LLM 归纳（D-035）。
+与 Collector phase 2 并发。BERT 三分类分组，主题由 LLM 基于分组评论自由归纳。
 若 fine_tune.enabled 且本地有微调模型，BERT 工具自动切换；微调脚本离线跑。
 """
 from __future__ import annotations
@@ -19,7 +19,6 @@ from cca.tools.appstore import scrape_app_store
 from cca.tools.insight_tools import (
     analyze_sentiment_bert,
     challenge_pm,
-    extract_topics,
     finalize_sentiment,
     run_questionnaire,
 )
@@ -57,25 +56,6 @@ def _extract_signals(messages: list) -> list[dict]:
     return _extract_tool_jsons(messages, "challenge_pm")
 
 
-def _word_freq_from_bert(messages: list) -> dict[str, dict[str, float]]:
-    """从 analyze_sentiment_bert 分组文本确定性算正负词频，供词云。
-
-    不走 LLM 复制：词频是 30+ 条的 dict，让 LLM 手抄进 finalize_sentiment 既费 token 又易错。
-    无 BERT 分组（LLM 情感路径）时返空，词云字段留空即可。
-    """
-    from cca.utils.nlp_utils import _topic_word_freq
-
-    positive: list[str] = []
-    negative: list[str] = []
-    for group in _extract_tool_jsons(messages, "analyze_sentiment_bert"):
-        positive.extend(t for t in group.get("positive", []) if isinstance(t, str))
-        negative.extend(t for t in group.get("negative", []) if isinstance(t, str))
-    return {
-        "positive_word_freq": _topic_word_freq(positive),
-        "negative_word_freq": _topic_word_freq(negative),
-    }
-
-
 def build_insight_context(state: CCAState, product_name: str) -> dict:
     """抽出单产品 insight 所需的最小 state 切片。"""
     task_plan = state.get("task_plan") or {}
@@ -99,7 +79,7 @@ def _build_insight_product_message(
     )
     sentiment_hint = (
         "情感分析请优先使用 analyze_sentiment_bert（BERT 三分类），"
-        "再对各情感组调 extract_topics 提取主题。"
+        "再基于各情感组的评论自行归纳主题。"
     )
     return (
         f"## InsightTask · {task.product_name}\n```json\n{task_json}\n```\n\n"
@@ -121,7 +101,7 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
 
     agent = create_react_agent(
         model=get_llm("deepseek"),
-        tools=[scrape_app_store, web_search, run_questionnaire, extract_topics,
+        tools=[scrape_app_store, web_search, run_questionnaire,
                analyze_sentiment_bert, finalize_sentiment, challenge_pm],
     )
     messages = stream_react(
@@ -147,9 +127,7 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
     # 所以**不能用 `name in profiles` 守卫** —— _merge_profiles reducer (D-031) 会自动按 key 合并字段，
     # Insight 写 {sentiment: ...} 不论 Collector 是否已写过该产品都安全。
     if name in sentiments:
-        sentiment = sentiments[name]
-        sentiment.update(_word_freq_from_bert(messages))  # 词云词频，节点确定性补
-        result["profiles"] = {name: {"sentiment": sentiment}}
+        result["profiles"] = {name: {"sentiment": sentiments[name]}}
     if signals:
         result["agent_signals"] = signals
     result["audit_log"] = [{
