@@ -41,11 +41,42 @@ def _collect_forced_keys(review_state: list[dict]) -> set[str]:
     }
 
 
+def _slim_profile(profile: dict) -> dict:
+    """压缩 profile：每条 Fact 只保留 statement + url，去除 snippet/fetched_at。"""
+    result = dict(profile)
+    if dims := result.get("dimensions"):
+        slimmed = []
+        for dim in dims:
+            dim = dict(dim)
+            if facts := dim.get("facts"):
+                dim["facts"] = [
+                    {
+                        "statement": f.get("statement", ""),
+                        "url": [e.get("source_url", "") for e in (f.get("evidence") or [])],
+                    }
+                    for f in facts
+                ]
+            slimmed.append(dim)
+        result["dimensions"] = slimmed
+    if sources := result.get("sources"):
+        result["sources"] = [s.get("source_url", "") for s in sources]
+    if sentiment := result.get("sentiment"):
+        sentiment = dict(sentiment)
+        if s_sources := sentiment.get("sources"):
+            sentiment["sources"] = [s.get("source_url", "") for s in s_sources]
+        if reviews := sentiment.get("representative_reviews"):
+            sentiment["representative_reviews"] = [
+                {k: v for k, v in r.items() if k != "source"} for r in reviews
+            ]
+        result["sentiment"] = sentiment
+    return result
+
+
 def _serialize_profiles(profiles: dict[str, dict], forced_keys: set[str]) -> str:
-    """profiles → JSON；forced 产品附 `_低置信度来源` 字段。"""
+    """profiles → JSON；forced 产品附 `_低置信度来源` 字段；Fact 仅含 statement + url。"""
     annotated: dict[str, dict] = {}
     for name, profile in profiles.items():
-        entry = dict(profile)
+        entry = _slim_profile(profile)
         low = [a for a in ("collector", "insight") if f"{a}:{name}" in forced_keys]
         if low:
             entry["_低置信度来源"] = low
@@ -303,10 +334,12 @@ def report_node(state: CCAState) -> dict:
     else:
         report_status = "passed" if reviewer_result.passed else "failed"
 
+    from datetime import datetime, timezone
     return {
         "report_md": report_md,
         "report_pdf_path": pdf_path,
         "report_status": report_status,
+        "analysis_end_ts": datetime.now(timezone.utc).isoformat(),
         "qa_results": [reviewer_result.model_dump()],
         "audit_log": [{
             "agent": "report", "event": "report_generated",
