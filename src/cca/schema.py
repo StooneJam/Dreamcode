@@ -363,6 +363,21 @@ class ReviewUnit(BaseModel):
     reviewed_at: str | None = Field(None, description="ISO 8601 时间戳")
 
 
+class HumanReviewFeedback(BaseModel):
+    """用户在 phase 2.5 对 Collector/Insight 产出的一次性自由文本修订意见。
+
+    前端只给一个文本框（降低认知成本），不预分类——分栏（哪些针对采集、
+    哪些针对情感分析、哪些是竞品增删）由 PM 在 review / 重排时自行解析。
+    """
+
+    raw_feedback: str | None = Field(None, description="用户原文修订意见，不预分类")
+    approved: bool = Field(False, description="True = 无修订，直接放行")
+
+    def has_revisions(self) -> bool:
+        """是否有需 PM 采纳的实质修订（approved 直接放行不算）。"""
+        return not self.approved and bool(self.raw_feedback and self.raw_feedback.strip())
+
+
 # 决策档案：PM 每阶段产出 task 时同步落盘"为什么这么决定"，
 # 支撑离线 Q&A（用户问"为什么选这几家竞品"）+ debate defense（PM 应辩时回读 rationale）
 

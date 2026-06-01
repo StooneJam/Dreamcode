@@ -161,7 +161,8 @@ def _insight_msgs(names: list[str]) -> list[Any]:
 def _patch_all() -> None:
     """patch PM + collector + insight 的 LLM 入口。"""
     import cca.agents.pm as pm_mod
-    pm_mod.gpt = _FakePMClient(_pm_responses())  # type: ignore[assignment]
+    fake_pm = _FakePMClient(_pm_responses())
+    pm_mod.get_llm = lambda _family: fake_pm  # type: ignore[assignment]
 
     # Collector exploration_node: mock create_react_agent
     import cca.agents.collector as col_mod
@@ -206,6 +207,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--skip-report", action="store_true", default=True,
                    help="dry-run 默认跳过 report（report ReAct 不好 mock）")
+    p.add_argument("--human-review", action="store_true",
+                   help="验证 human_gate interrupt/resume 闭环（canned feedback，零 API）")
     args = p.parse_args()
 
     # dry-run 时强制 cache=off，避免 mock 数据写进真 cache
@@ -215,14 +218,39 @@ def main() -> None:
     _patch_all()
     print("[dry-run] PM / Collector / Insight 全部 mock\n", flush=True)
 
-    graph = build_graph(include_report=not args.skip_report)
     state = empty_state("帮我分析飞书的主要竞品", "飞书")
-
     hr("DRY-RUN · plumbing 验证")
-    result = graph.invoke(state, config={"recursion_limit": 30})
+
+    if args.human_review:
+        result = _run_with_human_review(args)
+    else:
+        graph = build_graph(include_report=not args.skip_report)
+        result = graph.invoke(state, config={"recursion_limit": 30})
 
     show_decisions(result.get("decision_log") or [])
     summary(result)
+
+
+def _run_with_human_review(args: argparse.Namespace) -> dict:
+    """canned-feedback 驱动 interrupt/resume，验证人在环闭环连接性（零 API）。"""
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.types import Command
+
+    os.environ["CCA_HUMAN_REVIEW"] = "1"
+    graph = build_graph(include_report=not args.skip_report, checkpointer=MemorySaver())
+    config = {"recursion_limit": 30, "configurable": {"thread_id": "dry-run-hr"}}
+    state = empty_state("帮我分析飞书的主要竞品", "飞书")
+
+    result = graph.invoke(state, config=config)
+    rounds = 0
+    while "__interrupt__" in result:
+        rounds += 1
+        payload = result["__interrupt__"][0].value
+        print(f"[dry-run] interrupt #{rounds} hint={payload.get('hint')}", flush=True)
+        print(f"[dry-run] profiles digest={payload.get('profiles')}", flush=True)
+        result = graph.invoke(Command(resume={"raw_feedback": "钉钉定价补充一下"}), config=config)
+    print(f"[dry-run] interrupt 轮数={rounds}（仅一次）", flush=True)
+    return result
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from cca.agents import collector as _collector_mod
 from cca.agents import insight as _insight_mod
 from cca.agents.pm import (
     handle_signal_node,
+    human_gate_node,
     initial_brief_node,
     report_task_node,
     review_node,
@@ -31,6 +32,7 @@ NODE_EXPLORATION = "exploration"
 NODE_TASK_PLAN = "task_plan"
 NODE_COLLECT_PRODUCT = "collect_product"
 NODE_INSIGHT_PRODUCT = "insight_product"
+NODE_HUMAN_GATE = "human_gate"
 NODE_REVIEW = "review"
 NODE_REPORT_TASK = "report_task"
 NODE_REPORT = "report"
@@ -52,14 +54,14 @@ def _insight_product_node(state: CCAState) -> dict:
 def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
     """task_plan 后 fanout 出 collect_product + insight_product 并行。
 
-    空 tasks 时直接路由到 review，避免空 fanout。
+    空 tasks 时直接路由到 human_gate（再到 review），避免空 fanout。
     reroute 重跑时跳过已通过评审的产品，避免全量重采。
     """
     raw = state.get("task_plan") or {}
     try:
         tp = TaskPlan(**raw)
     except Exception:
-        return NODE_REVIEW
+        return NODE_HUMAN_GATE
 
     # 已通过评审的 (agent, product) 对不再重采
     passed = {
@@ -87,7 +89,7 @@ def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
         }))
 
     if not sends:
-        return NODE_REVIEW
+        return NODE_HUMAN_GATE
     return sends
 
 
@@ -122,11 +124,14 @@ def _route_after_signal(state: CCAState) -> str:
     return END
 
 
-def build_graph(*, include_report: bool = True):
+def build_graph(*, include_report: bool = True, checkpointer=None):
     """编译主图。
 
     include_report=False 时 report 节点不接入（demo 时 `--skip-report` 省 token）。
     handle_signal_node 接在 review 出口的条件边上（见 _route_after_review）。
+
+    checkpointer：human_gate 的 interrupt/resume 依赖它。交互式前端传 MemorySaver 等；
+    非交互（脚本/测试/cache-fill）传 None——此时 human_gate 走 CCA_HUMAN_REVIEW 关闭分支直接放行。
     """
     g = StateGraph(CCAState)
 
@@ -135,6 +140,7 @@ def build_graph(*, include_report: bool = True):
     g.add_node(NODE_TASK_PLAN, task_plan_node)
     g.add_node(NODE_COLLECT_PRODUCT, _collect_product_node)
     g.add_node(NODE_INSIGHT_PRODUCT, _insight_product_node)
+    g.add_node(NODE_HUMAN_GATE, human_gate_node)
     g.add_node(NODE_REVIEW, review_node)
     g.add_node(NODE_REPORT_TASK, report_task_node)
     g.add_node(NODE_HANDLE_SIGNAL, handle_signal_node)
@@ -143,13 +149,14 @@ def build_graph(*, include_report: bool = True):
     g.add_edge(NODE_INITIAL_BRIEF, NODE_EXPLORATION)
     g.add_edge(NODE_EXPLORATION, NODE_TASK_PLAN)
 
-    # Send fanout：collect_product ‖ insight_product → review
+    # Send fanout：collect_product ‖ insight_product → human_gate → review
     g.add_conditional_edges(
         NODE_TASK_PLAN, _dispatch_collect_insight,
-        path_map=[NODE_COLLECT_PRODUCT, NODE_INSIGHT_PRODUCT, NODE_REVIEW],
+        path_map=[NODE_COLLECT_PRODUCT, NODE_INSIGHT_PRODUCT, NODE_HUMAN_GATE],
     )
-    g.add_edge(NODE_COLLECT_PRODUCT, NODE_REVIEW)
-    g.add_edge(NODE_INSIGHT_PRODUCT, NODE_REVIEW)
+    g.add_edge(NODE_COLLECT_PRODUCT, NODE_HUMAN_GATE)
+    g.add_edge(NODE_INSIGHT_PRODUCT, NODE_HUMAN_GATE)
+    g.add_edge(NODE_HUMAN_GATE, NODE_REVIEW)
 
     # review 后：有 pending signal → handle_signal；否则 → report_task
     g.add_conditional_edges(
@@ -169,7 +176,7 @@ def build_graph(*, include_report: bool = True):
     else:
         g.add_edge(NODE_REPORT_TASK, END)
 
-    return g.compile()
+    return g.compile(checkpointer=checkpointer)
 
 
 def empty_state(user_query: str, target_product: str, user_files: list[str] | None = None) -> CCAState:
@@ -187,6 +194,9 @@ def empty_state(user_query: str, target_product: str, user_files: list[str] | No
         "profiles": {},
         "review_state": [],
         "reroute_count": 0,
+        "human_review_feedback": None,
+        "human_review_done": False,
+        "human_feedback_consumed": False,
         "qa_results": [],
         "report_status": "pending",
         "report_md": None,

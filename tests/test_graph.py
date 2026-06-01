@@ -7,6 +7,7 @@ from cca.graph import (
     NODE_COLLECT_PRODUCT,
     NODE_EXPLORATION,
     NODE_HANDLE_SIGNAL,
+    NODE_HUMAN_GATE,
     NODE_INITIAL_BRIEF,
     NODE_INSIGHT_PRODUCT,
     NODE_REPORT,
@@ -19,7 +20,7 @@ from cca.graph import (
 
 
 def test_graph_compiles_with_report() -> None:
-    """include_report=True 默认路径，所有 9 个节点都在（含 review）。"""
+    """include_report=True 默认路径，所有节点都在（含 human_gate / review）。"""
     graph = build_graph()
     nodes = set(graph.get_graph().nodes)
     assert NODE_INITIAL_BRIEF in nodes
@@ -27,10 +28,29 @@ def test_graph_compiles_with_report() -> None:
     assert NODE_TASK_PLAN in nodes
     assert NODE_COLLECT_PRODUCT in nodes
     assert NODE_INSIGHT_PRODUCT in nodes
+    assert NODE_HUMAN_GATE in nodes
     assert NODE_REVIEW in nodes
     assert NODE_REPORT_TASK in nodes
     assert NODE_REPORT in nodes
     assert NODE_HANDLE_SIGNAL in nodes
+
+
+def test_graph_compiles_with_checkpointer() -> None:
+    """传 checkpointer 时正常编译（human_gate interrupt/resume 依赖它）。"""
+    from langgraph.checkpoint.memory import MemorySaver
+
+    graph = build_graph(checkpointer=MemorySaver())
+    assert NODE_HUMAN_GATE in set(graph.get_graph().nodes)
+
+
+def test_graph_human_gate_to_review_edge() -> None:
+    """human_gate → review 是普通边（无分支）：人在环关卡永远先于自动评审。"""
+    graph = build_graph()
+    edges = {(e.source, e.target) for e in graph.get_graph().edges}
+    assert (NODE_HUMAN_GATE, NODE_REVIEW) in edges
+    # collect/insight 不再直连 review，必须经 human_gate
+    assert (NODE_COLLECT_PRODUCT, NODE_REVIEW) not in edges
+    assert (NODE_INSIGHT_PRODUCT, NODE_REVIEW) not in edges
 
 
 def test_graph_compiles_without_report() -> None:
@@ -61,11 +81,12 @@ def test_empty_state_user_files_optional() -> None:
 
 
 def test_graph_edges_fanout_path() -> None:
-    """主路径：START → initial_brief → exploration → task_plan → [fanout] → review → report_task → report → END。
+    """主路径：START → initial_brief → exploration → task_plan → [fanout] → human_gate → review → report_task → report → END。
 
     task_plan 后由 conditional_edges dispatcher 派发 Send 至 collect_product / insight_product；
-    worker 完成后汇入 review；review 条件边到 handle_signal（有 pending signal）或 report_task。
-    handle_signal 条件边回 exploration / task_plan / report_task / END（按清空字段路由）。
+    worker 完成后汇入 human_gate（人在环关卡），再到 review；review 条件边到 handle_signal
+    （有 pending signal）或 report_task。handle_signal 条件边回 exploration / task_plan /
+    report_task / END（按清空字段路由）。
     """
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
@@ -74,8 +95,9 @@ def test_graph_edges_fanout_path() -> None:
         ("__start__", NODE_INITIAL_BRIEF),
         (NODE_INITIAL_BRIEF, NODE_EXPLORATION),
         (NODE_EXPLORATION, NODE_TASK_PLAN),
-        (NODE_COLLECT_PRODUCT, NODE_REVIEW),
-        (NODE_INSIGHT_PRODUCT, NODE_REVIEW),
+        (NODE_COLLECT_PRODUCT, NODE_HUMAN_GATE),
+        (NODE_INSIGHT_PRODUCT, NODE_HUMAN_GATE),
+        (NODE_HUMAN_GATE, NODE_REVIEW),
         (NODE_REPORT_TASK, NODE_REPORT),
         (NODE_REPORT, "__end__"),
     ]

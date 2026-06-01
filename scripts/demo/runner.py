@@ -364,16 +364,51 @@ def _patch_insight_react() -> None:
 # ── 图模式（默认）─────────────────────────────────────────────────────────────
 
 
+def _prompt_human_review(payload: dict) -> dict:
+    """human_gate interrupt 暂停时，CLI 展示产出摘要并收一次修订意见。"""
+    hr("HUMAN REVIEW · 阶段 2.5 修订意见（仅一次）")
+    print(f"  {payload.get('hint', '')}", flush=True)
+    for row in payload.get("profiles", []):
+        print(
+            f"    - {row['product_name']}: {len(row['dimensions'])} 维度 {row['dimensions']}"
+            f" | {row['review_count']} 评论 | 平台 {row['platforms']}",
+            flush=True,
+        )
+    text = input("  修订意见（直接回车 = 无修订放行）: ").strip()
+    return {"raw_feedback": text} if text else {"approved": True}
+
+
+def _invoke_with_human_review(graph, state: Any, config: dict) -> dict:
+    """图模式带人在环：跑到 interrupt 暂停 → CLI 收文本 → Command(resume) 续跑，直到无 interrupt。"""
+    from langgraph.types import Command
+    result = graph.invoke(state, config=config)
+    while "__interrupt__" in result:
+        feedback = _prompt_human_review(result["__interrupt__"][0].value)
+        result = graph.invoke(Command(resume=feedback), config=config)
+    return result
+
+
 def _run_graph(args: argparse.Namespace) -> None:
     os.environ["CCA_CACHE_MODE"] = args.cache
     print(f"[runner] CCA_CACHE_MODE={args.cache}", flush=True)
 
-    graph = build_graph(include_report=not args.skip_report)
+    config: dict = {"recursion_limit": 30}
+    if args.human_review:
+        from langgraph.checkpoint.memory import MemorySaver
+        os.environ["CCA_HUMAN_REVIEW"] = "1"
+        graph = build_graph(include_report=not args.skip_report, checkpointer=MemorySaver())
+        config["configurable"] = {"thread_id": "demo-human-review"}
+        print("[runner] human-review 开启（interrupt/resume 闭环）", flush=True)
+    else:
+        graph = build_graph(include_report=not args.skip_report)
     state = empty_state(args.user_query, args.target_product, user_files=args.user_files)
 
     hr(f"RUNNER · graph mode (cache={args.cache})")
     with track_pipeline_tokens() as token_box:
-        result = graph.invoke(state, config={"recursion_limit": 30})
+        if args.human_review:
+            result = _invoke_with_human_review(graph, state, config)
+        else:
+            result = graph.invoke(state, config=config)
 
     if result.get("exploration_result"):
         dump_json("exploration_result", result["exploration_result"])
@@ -608,6 +643,8 @@ def main() -> None:
     p.add_argument("--live-collect", action="store_true", help="真跑 Collector phase 2 深采集")
     p.add_argument("--live-insight", action="store_true", help="真跑 Insight 情感分析")
     p.add_argument("--live-debate", action="store_true", help="真跑跨家族 debate（DeepSeek vs GPT-5 + Doubao 仲裁）")
+    p.add_argument("--human-review", action="store_true",
+                   help="图模式开启阶段 2.5 人在环：interrupt 暂停收一次修订意见（需 checkpointer）")
     args = p.parse_args()
 
     args.user_files = [args.seed_file] if args.seed_file else None

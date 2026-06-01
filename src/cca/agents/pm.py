@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.types import interrupt
 from pydantic import ValidationError
 
 from cca.llm.factory import cross_family_enabled, get_llm
@@ -21,6 +22,7 @@ from cca.schema import (
     DebatePosition,
     DebateResult,
     DecisionRecord,
+    HumanReviewFeedback,
     InitialBriefOutput,
     ReportTask,
     ReportTaskOutput,
@@ -190,15 +192,31 @@ def initial_brief_node(state: CCAState) -> dict:
     return updates
 
 
+def _human_feedback_text(state: CCAState) -> str | None:
+    """state.human_review_feedback → 有实质修订时返原文，否则 None。"""
+    raw = state.get("human_review_feedback")
+    if not raw:
+        return None
+    fb = HumanReviewFeedback(**raw)
+    return fb.raw_feedback if fb.has_revisions() else None
+
+
 def task_plan_node(state: CCAState) -> dict:
-    """阶段二：基于 exploration_result 产出 TaskPlan + 决策档案。"""
+    """阶段二：基于 exploration_result 产出 TaskPlan + 决策档案。
+
+    若 state.human_review_feedback 含用户修订意见（feedback 驱动的 reroute 重排），
+    把原文注入 payload，PM 据此解析分栏并调整 collect/insight 任务。
+    """
+    payload: dict = {
+        "user_query": state["user_query"],
+        "exploration_result": state.get("exploration_result", {}),
+        "competitor_names": state.get("competitor_names", []),
+    }
+    if feedback := _human_feedback_text(state):
+        payload["human_review_feedback"] = feedback
+
     result = cast(TaskPlanOutput, _invoke_pm(
-        TaskPlanOutput, "阶段二 TaskPlan",
-        {
-            "user_query": state["user_query"],
-            "exploration_result": state.get("exploration_result", {}),
-            "competitor_names": state.get("competitor_names", []),
-        },
+        TaskPlanOutput, "阶段二 TaskPlan", payload,
     ))
     return {
         "task_plan": result.task_plan.model_dump(),
@@ -269,6 +287,69 @@ def report_task_node(state: CCAState) -> dict:
             "note": f"{len(fallback_dims)} 个 dim 未在 LLM mapping 中出现，自动归 '{_FALLBACK_BUCKET}'",
         }]
     return updates
+
+
+# ── 阶段 2.5 人在环关卡（human_gate）─────────────────────────────────
+
+
+def _human_review_enabled() -> bool:
+    """是否启用交互式人在环（Streamlit/交互 runner 显式开启）。
+
+    默认关闭——脚本/测试/cache-fill 等非交互路径不暂停，避免无 checkpointer 时 interrupt 崩。
+    """
+    return os.getenv("CCA_HUMAN_REVIEW", "").lower() in ("1", "true", "on", "yes")
+
+
+def _parse_feedback(raw: object) -> HumanReviewFeedback:
+    """interrupt resume 值 → HumanReviewFeedback。容错：str 当原文，dict 走校验，空 → approved。"""
+    if not raw:
+        return HumanReviewFeedback(approved=True)
+    if isinstance(raw, str):
+        return HumanReviewFeedback(raw_feedback=raw)
+    if isinstance(raw, dict):
+        return HumanReviewFeedback(**raw)
+    return HumanReviewFeedback(approved=True)
+
+
+def _profiles_digest(profiles: dict[str, dict]) -> list[dict]:
+    """给前端展示用的摘要表：每个产品一行，列维度名 / 评论数 / 抓取平台。"""
+    digest = []
+    for name, profile in profiles.items():
+        sentiment = profile.get("sentiment") or {}
+        reviews = sentiment.get("representative_reviews") or []
+        platforms = sorted({r.get("platform") for r in reviews if r.get("platform")})
+        digest.append({
+            "product_name": name,
+            "dimensions": [d.get("name") for d in (profile.get("dimensions") or []) if d.get("name")],
+            "review_count": len(reviews),
+            "platforms": platforms,
+            "has_pricing": bool(profile.get("pricing")),
+        })
+    return digest
+
+
+def human_gate_node(state: CCAState) -> dict:
+    """阶段 2.5 前的人在环关卡：一次性收集用户对 Collector/Insight 产出的修订意见。
+
+    仅 CCA_HUMAN_REVIEW 开启时 interrupt 暂停；非交互模式直接放行。
+    human_review_done 守卫保证只暂停一次——feedback 驱动重采后第二次到达直接 pass-through。
+    守卫必须在 interrupt() 之前判断，否则第二次到达会是全新 interrupt 再度暂停。
+    """
+    if state.get("human_review_done"):
+        return {}
+    if not _human_review_enabled():
+        return {"human_review_done": True}
+
+    raw = interrupt({
+        "kind": "human_review",
+        "hint": "请对 Collector/Insight 的产出给出修订意见；留空或 approved=true 直接放行。",
+        "profiles": _profiles_digest(state.get("profiles") or {}),
+    })
+    return {
+        "human_review_done": True,
+        "human_review_feedback": _parse_feedback(raw).model_dump(),
+        "human_feedback_consumed": False,
+    }
 
 
 # ── 阶段 2.5 Review ─────────────────────────────────────────────────
@@ -429,6 +510,10 @@ def review_node(state: CCAState) -> dict:
         for agent, product in expected
     }
 
+    # 用户一次性修订意见：仅在未消费时参与本轮判定，采纳后置 consumed=True 不再复用
+    feedback_text = _human_feedback_text(state)
+    use_feedback = bool(feedback_text) and not state.get("human_feedback_consumed")
+
     payload = {
         "expected_units": [f"{a}:{p}" for a, p in expected],
         "pre_flags": pre_flags,
@@ -439,6 +524,8 @@ def review_node(state: CCAState) -> dict:
         "profiles": profiles,
         "historical_review_state": review_state,
     }
+    if use_feedback:
+        payload["human_review_feedback"] = feedback_text
     # review 有完整代码层兜底（pre_flags 足以独立判 passed/needs_retry），
     # 所以 LLM 不死磕：少量重试，连续失败即降级为纯代码层判定，绝不让 Doubao 抽风崩掉整条流程。
     try:
@@ -485,7 +572,7 @@ def review_node(state: CCAState) -> dict:
 
     signals = [_build_retry_signal(u) for u in coerced if u.status == "needs_retry"]
 
-    return {
+    updates: dict = {
         "review_state": [u.model_dump() for u in coerced],
         "agent_signals": signals,
         "decision_log": _stamp_decisions(decision_records, "review"),
@@ -497,8 +584,13 @@ def review_node(state: CCAState) -> dict:
             "signals_raised": len(signals),
             "reroute_count": reroute_count,
             "llm_degraded": llm_degraded,
+            "used_human_feedback": use_feedback,
         }],
     }
+    # feedback 一旦参与本轮判定即标消费：后续轮次回归纯数据评审，避免同段意见反复触发返工
+    if use_feedback:
+        updates["human_feedback_consumed"] = True
+    return updates
 
 
 # ── 信号处理：debate（主观）+ reroute（事实性） ──────────────────────

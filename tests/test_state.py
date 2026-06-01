@@ -18,6 +18,9 @@ REQUIRED_FIELDS = {
     "profiles",
     "review_state",
     "reroute_count",         # PM review → handle_signal reroute 累计次数，达 2 时升 forced 防死循环
+    "human_review_feedback", # 阶段 2.5 用户一次性自由文本修订意见
+    "human_review_done",     # gate interrupt：只暂停收集一次
+    "human_feedback_consumed",  # gate review 采纳：feedback 只参与一次评审判定
     "qa_results",
     "report_status",
     "report_md",

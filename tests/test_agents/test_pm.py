@@ -1302,6 +1302,198 @@ def test_report_task_node_logs_mapping_fallback(monkeypatch: pytest.MonkeyPatch)
     )
 
 
+# ── 阶段 2.5 human_gate + 用户 feedback ───────────────────────────────
+
+
+def test_parse_feedback_variants() -> None:
+    """interrupt resume 值容错：str→原文，dict→校验，空→approved。"""
+    from cca.agents.pm import _parse_feedback
+
+    assert _parse_feedback("钉钉数据不全").raw_feedback == "钉钉数据不全"
+    assert _parse_feedback("钉钉数据不全").has_revisions() is True
+    assert _parse_feedback({"raw_feedback": "x"}).raw_feedback == "x"
+    assert _parse_feedback("").approved is True
+    assert _parse_feedback(None).approved is True
+    assert _parse_feedback("").has_revisions() is False
+
+
+def test_human_feedback_text_only_when_revisions() -> None:
+    """_human_feedback_text：有实质修订返原文，approved / 空返 None。"""
+    from cca.agents.pm import _human_feedback_text
+
+    s1 = _make_minimal_state(human_review_feedback={"raw_feedback": "补采定价", "approved": False})
+    assert _human_feedback_text(s1) == "补采定价"
+    s2 = _make_minimal_state(human_review_feedback={"raw_feedback": None, "approved": True})
+    assert _human_feedback_text(s2) is None
+    s3 = _make_minimal_state(human_review_feedback=None)
+    assert _human_feedback_text(s3) is None
+
+
+def test_profiles_digest_lists_dimensions_and_platforms() -> None:
+    """digest 给前端表格：维度名 / 评论数 / 抓取平台。"""
+    from cca.agents.pm import _profiles_digest
+
+    profiles = {
+        "钉钉": {
+            "dimensions": [{"name": "视频会议"}, {"name": "定价"}],
+            "pricing": {"has_free_tier": True},
+            "sentiment": {"representative_reviews": [
+                {"text": "a", "platform": "appstore_cn"},
+                {"text": "b", "platform": "zhihu"},
+            ]},
+        },
+    }
+    digest = _profiles_digest(profiles)
+    assert len(digest) == 1
+    row = digest[0]
+    assert row["product_name"] == "钉钉"
+    assert row["dimensions"] == ["视频会议", "定价"]
+    assert row["review_count"] == 2
+    assert row["platforms"] == ["appstore_cn", "zhihu"]
+    assert row["has_pricing"] is True
+
+
+def test_human_gate_skips_when_done() -> None:
+    """human_review_done=True → 直接 pass-through，不 interrupt（仅一次的保证）。"""
+    from cca.agents.pm import human_gate_node
+
+    state = _make_minimal_state(human_review_done=True)
+    assert human_gate_node(state) == {}
+
+
+def test_human_gate_non_interactive_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CCA_HUMAN_REVIEW 关闭 → 不暂停，只置 done=True 放行。"""
+    monkeypatch.delenv("CCA_HUMAN_REVIEW", raising=False)
+    from cca.agents.pm import human_gate_node
+
+    result = human_gate_node(_make_minimal_state())
+    assert result == {"human_review_done": True}
+
+
+def test_human_gate_interactive_collects_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CCA_HUMAN_REVIEW 开启 → interrupt 收集；resume 文本落 feedback，consumed=False。"""
+    monkeypatch.setenv("CCA_HUMAN_REVIEW", "1")
+    monkeypatch.setattr("cca.agents.pm.interrupt", lambda _payload: "钉钉定价没采全")
+
+    from cca.agents.pm import human_gate_node
+
+    result = human_gate_node(_make_minimal_state(profiles={"钉钉": {"dimensions": []}}))
+    assert result["human_review_done"] is True
+    assert result["human_feedback_consumed"] is False
+    assert result["human_review_feedback"]["raw_feedback"] == "钉钉定价没采全"
+
+
+def test_review_node_consumes_unconsumed_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """有未消费 feedback → review 采纳并标 consumed=True，audit 记 used_human_feedback。"""
+    output = _mk_review_output(
+        {"agent": "collector", "product_name": "飞书", "status": "passed", "retry_count": 0},
+        {"agent": "insight", "product_name": "飞书", "status": "passed", "retry_count": 0},
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import review_node
+
+    state = _make_minimal_state(
+        profiles={"飞书": _complete_profile("飞书")},
+        task_plan=_mk_task_plan("飞书"),
+        human_review_feedback={"raw_feedback": "飞书定价要补充", "approved": False},
+        human_feedback_consumed=False,
+    )
+    result = review_node(state)
+    assert result["human_feedback_consumed"] is True
+    assert result["audit_log"][0]["used_human_feedback"] is True
+
+
+def test_review_node_ignores_already_consumed_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """feedback 已消费 → review 不再采纳，不重置 consumed，audit used_human_feedback=False。"""
+    output = _mk_review_output(
+        {"agent": "collector", "product_name": "飞书", "status": "passed", "retry_count": 0},
+        {"agent": "insight", "product_name": "飞书", "status": "passed", "retry_count": 0},
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import review_node
+
+    state = _make_minimal_state(
+        profiles={"飞书": _complete_profile("飞书")},
+        task_plan=_mk_task_plan("飞书"),
+        human_review_feedback={"raw_feedback": "飞书定价要补充", "approved": False},
+        human_feedback_consumed=True,
+    )
+    result = review_node(state)
+    assert "human_feedback_consumed" not in result
+    assert result["audit_log"][0]["used_human_feedback"] is False
+
+
+def test_review_node_ignores_approved_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """approved（无实质修订）feedback → review 不采纳。"""
+    output = _mk_review_output(
+        {"agent": "collector", "product_name": "飞书", "status": "passed", "retry_count": 0},
+        {"agent": "insight", "product_name": "飞书", "status": "passed", "retry_count": 0},
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import review_node
+
+    state = _make_minimal_state(
+        profiles={"飞书": _complete_profile("飞书")},
+        task_plan=_mk_task_plan("飞书"),
+        human_review_feedback={"raw_feedback": None, "approved": True},
+        human_feedback_consumed=False,
+    )
+    result = review_node(state)
+    assert "human_feedback_consumed" not in result
+    assert result["audit_log"][0]["used_human_feedback"] is False
+
+
+def _capture_invoke_payload(monkeypatch: pytest.MonkeyPatch, captured: dict, response) -> None:
+    """monkeypatch _invoke_pm 捕获传入 payload，并返回给定结构化响应。"""
+    def _fake(output_type, label, payload, **_kw):  # noqa: ANN001, ARG001
+        captured["payload"] = payload
+        return response
+    monkeypatch.setattr("cca.agents.pm._invoke_pm", _fake)
+
+
+def test_task_plan_node_injects_human_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """feedback 有实质修订 → task_plan payload 注入原文，供 PM 重排分栏。"""
+    captured: dict = {}
+    response = TaskPlanOutput(
+        task_plan=TaskPlan(
+            target_product="飞书", product_type="SaaS",
+            competitor_names=["钉钉"], collect_tasks=[], insight_tasks=[],
+        ),
+        decision_records=[_mk_decision("human_revision")],
+    )
+    _capture_invoke_payload(monkeypatch, captured, response)
+
+    from cca.agents.pm import task_plan_node
+
+    state = _make_minimal_state(
+        exploration_result={"competitor_names": ["钉钉"]},
+        human_review_feedback={"raw_feedback": "再加上腾讯会议", "approved": False},
+    )
+    task_plan_node(state)
+    assert captured["payload"]["human_review_feedback"] == "再加上腾讯会议"
+
+
+def test_task_plan_node_omits_feedback_key_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """无 feedback → payload 不含 human_review_feedback 键（向后兼容）。"""
+    captured: dict = {}
+    response = TaskPlanOutput(
+        task_plan=TaskPlan(
+            target_product="飞书", product_type="SaaS",
+            competitor_names=["钉钉"], collect_tasks=[], insight_tasks=[],
+        ),
+        decision_records=[_mk_decision("competitor_selection")],
+    )
+    _capture_invoke_payload(monkeypatch, captured, response)
+
+    from cca.agents.pm import task_plan_node
+
+    task_plan_node(_make_minimal_state(exploration_result={"competitor_names": ["钉钉"]}))
+    assert "human_review_feedback" not in captured["payload"]
+
+
 def test_build_reroute_context_excludes_large_fields() -> None:
     """reroute 上下文只含决策必需切片，不带 profiles / audit_log / decision_log。"""
     import json as _json

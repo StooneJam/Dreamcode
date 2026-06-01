@@ -67,6 +67,11 @@ class CCAState(TypedDict):
     # 达 2 时 review_node 把所有 needs_retry 升 forced 不再 raise signal，防死循环。
     reroute_count: int
 
+    # 阶段 2.5 人在环：用户对 Collector/Insight 产出的一次性自由文本修订意见
+    human_review_feedback: dict | None        # HumanReviewFeedback.model_dump()
+    human_review_done: bool                   # gate interrupt：只暂停收集一次
+    human_feedback_consumed: bool             # gate review 采纳：feedback 只参与一次评审判定
+
     # 报告终审产出（来自 call_report_reviewer skill 的跨家族 debate）
     qa_results: list[dict]
     report_status: Literal["pending", "passed", "failed", "unreviewed"]

@@ -86,11 +86,20 @@
   - **非强制**：维度对齐由 Reporter 语义归并负责，采集不被 bucket 命名绑架；不要求每个产品逐字覆盖每个 bucket。
   - 留空 `tentative_buckets=[]` 表示不预设引导（下游全自主）。
 
+### 用户修订意见驱动的重排（payload 含 `human_review_feedback`）
+
+当 payload 带 `human_review_feedback`（用户在阶段 2.5 给的一次性自由文本意见触发了回溯重排），把它作为**最高优先级约束**重新规划：
+
+1. **解析分栏**：把这段自由文本拆解到三类——针对采集的（调整对应 `CollectTask.priority_dimensions` / 补采竞品）、针对情感分析的（调整 `InsightTask.target_platforms` / `priority_dimensions`）、竞品增删的（改 `competitor_names` 及对应 task 列表）
+2. **据此调整 collect_tasks / insight_tasks**，不要无视用户诉求沿用旧计划
+3. **落一条 `decision_type="human_revision"` 的 DecisionRecord**：`chosen` 里记录你对用户意见的分栏结果（哪些归 collector、哪些归 insight、哪些是竞品增删）和具体调整，`rationale` 说明如何理解并采纳，`inputs_used=["human_review_feedback"]`
+
 典型 decision_type：
 - `competitor_selection`（最终竞品列表 + 否决项）
 - `dimension_priority`（priority_dimensions 选取逻辑）
 - `task_allocation`（如何把维度分配到 CollectTask vs InsightTask）
 - `bucket_design`（tentative_buckets 拆桶逻辑）
+- `human_revision`（采纳用户修订意见的分栏与调整，仅当 payload 含 `human_review_feedback` 时）
 
 ## 阶段 2.5：Review
 
@@ -107,6 +116,11 @@
 1. **代码层 pre_flags（强约束）**：payload 中 `pre_flags["{agent}:{product}"]` 列出的标记**直接落入该 ReviewUnit.qa_flags**，不允许遗漏或软化
    - pre_flag 类型：`data_missing: priority_dimension X 无 fact` / `pricing_no_tier: pricing 无任何价格档` / `sentiment_too_few: sentiment.reviews 少于 3 条` / `source_unreliable: dimensions 无任一 source 链接`
 2. **LLM 补充判断（自由项）**：在 pre_flags 之上可追加你自己发现的问题，如"定价币种缺失但 task_plan 要求跨币种对比"
+3. **用户修订意见（`human_review_feedback`，若 payload 含此字段）**：用户在前端对本轮 Collector/Insight 产出给的一次性自由文本意见。**与 pre_flags 同等权重纳入判定**——
+   - 先解析这段自由文本，判别每条意见针对哪个 (agent, product)：是采集数据问题（归 collector）、情感分析问题（归 insight）、还是竞品增删（影响 task_plan 重排）
+   - 用户明确指出某产品数据有误 / 不充分 / 需补采 → 该 (agent, product) 倾向 `needs_retry`，并在 qa_flags 写明 `user_revision: <用户具体诉求>`
+   - 用户仅表示认可或无实质修订 → 不因此改判
+   - 该意见只在本轮参与一次（代码层用后即标消费），后续轮次回归纯数据评审，**不要假设它会反复出现**
 
 ### 状态判定规则（**B 方案强约束**）
 
