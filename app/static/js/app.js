@@ -1219,7 +1219,10 @@ function openSSE(jobId,btn){
         eventSource.close(); setThink(false); setProgress(100,0); btn.disabled=false;
         stopTimer();
         if(msg.pdf_path) showPdf(msg.pdf_path,msg.filename);
-        else showChartDashboard(DEMO_DATA);
+        else{
+          const c=$('pdf-content');
+          if(c) c.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'报告生成异常，未产出 PDF，请重试':'Report generation failed. Please retry.'}</p></div>`;
+        }
         showQaBox();
         break;
       case 'domain_seed':   renderDomainSeed(msg); break;
@@ -1468,9 +1471,8 @@ function continueSimulateAfterPhase1(){
     }],
     [400,()=>{
       setThink(false); stopTimer(); btn.disabled=false;
-      const d=Object.assign({},DEMO_DATA);
-      if(product) d.products=[product,zh?'钉钉':'DingTalk','Slack'];
-      showChartDashboard(d);
+      const c=$('pdf-content');
+      if(c) c.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'演示模式：服务未启动，无法生成真实报告':'Demo mode: server not running, no real report available.'}</p></div>`;
       showQaBox();
     }],
   ];
