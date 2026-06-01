@@ -643,16 +643,42 @@ section.snap-in { animation: sec-enter 1.1s ease forwards; }
 .progress-text { font-size: 12px; color: #9999b2; }
 
 /* ══════════════════════════════════
-   PDF SECTION
+   PDF / REPORT SECTION
 ══════════════════════════════════ */
 #pdf-section {
   background: var(--bg-light);
-  padding: 64px 80px;
+  padding: 48px 80px 64px;
   display: flex; flex-direction: column; gap: 28px;
-  align-items: center; justify-content: center;
+  align-items: center; justify-content: flex-start;
   transition: background .3s;
 }
 #pdf-section h2 { font-size: 28px; font-weight: 700; color: var(--text); text-align: center; }
+
+/* Two-column workspace */
+.report-workspace {
+  display: flex; gap: 32px; align-items: flex-start;
+  width: 100%; max-width: 1160px;
+}
+
+.workspace-left {
+  width: 500px; flex-shrink: 0;
+  display: flex; flex-direction: column; gap: 16px;
+}
+
+.workspace-right {
+  flex: 1; min-width: 0;
+}
+
+/* Stream panel in this context fills the left column */
+#pdf-section .stream-panel {
+  width: 100%;
+  height: 380px;
+}
+
+/* PDF viewer fills right column */
+#pdf-section .pdf-viewer {
+  width: 100%;
+}
 
 .pdf-viewer {
   background: var(--white); border: 1px solid var(--border);
@@ -730,6 +756,99 @@ section.snap-in { animation: sec-enter 1.1s ease forwards; }
 .chart-divider { height: 1px; background: var(--border); margin: 12px 0 4px; }
 
 /* ══════════════════════════════════
+   INTERACTION BOXES (phase1 + Q&A)
+══════════════════════════════════ */
+.interaction-box {
+  display: none;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-sm);
+  transition: background .3s, border-color .3s;
+}
+.interaction-box.show {
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+.interaction-box-hd {
+  display: flex; align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.interaction-box-title {
+  font-size: 13px; font-weight: 700; color: var(--text);
+}
+
+.interaction-summary {
+  font-size: 13px; color: var(--text); line-height: 1.8;
+  max-height: 110px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.interaction-summary::-webkit-scrollbar { width: 3px; }
+.interaction-summary::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.interaction-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-pale);
+  padding: 9px 12px;
+  font-size: 13px; color: var(--text);
+  font-family: inherit; outline: none; resize: vertical;
+  transition: border-color .2s, box-shadow .2s, background .3s;
+}
+.interaction-input:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(64,196,208,.12);
+}
+.interaction-input::placeholder { color: var(--placeholder); }
+
+.interaction-footer { display: flex; flex-direction: column; gap: 8px; }
+.interaction-actions {
+  display: flex; gap: 8px; justify-content: flex-end; align-items: center;
+}
+
+.btn-ghost {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px; font-weight: 500; cursor: pointer;
+  padding: 6px 12px;
+  transition: border-color .2s, color .2s, background .2s;
+}
+.btn-ghost:hover { border-color: var(--teal); color: var(--teal); background: rgba(64,196,208,.05); }
+
+/* Q&A message list */
+.qa-messages {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.qa-messages::-webkit-scrollbar { width: 3px; }
+.qa-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.qa-hint-text {
+  font-size: 12px; color: var(--muted); line-height: 1.6; font-style: italic;
+}
+
+.qa-msg {
+  border-radius: 8px; padding: 8px 12px;
+  font-size: 13px; line-height: 1.6; max-width: 92%;
+}
+.qa-msg.user {
+  background: rgba(64,196,208,.12); color: var(--text);
+  align-self: flex-end; border-bottom-right-radius: 3px;
+}
+.qa-msg.agent {
+  background: var(--bg-pale); color: var(--text);
+  border: 1px solid var(--border);
+  align-self: flex-start; border-bottom-left-radius: 3px;
+}
+
+/* ══════════════════════════════════
    FOOTER
 ══════════════════════════════════ */
 footer {
@@ -774,8 +893,10 @@ footer {
   .step-cards { flex-direction: column; max-width: 100%; }
   .agent-flow { flex-wrap: wrap; gap: 16px; }
   .agent-sep { display: none; }
-  #analyze { flex-direction: column; }
-  .form-card, .stream-panel { width: 100%; }
+  .form-card { width: 100%; }
+  .report-workspace { flex-direction: column; }
+  .workspace-left { width: 100%; }
+  #pdf-section .stream-panel { height: 340px; }
   .pdf-viewer { width: 100%; }
   .chart-dashboard { grid-template-columns: 1fr; }
   .footer-top { flex-direction: column; gap: 32px; }
