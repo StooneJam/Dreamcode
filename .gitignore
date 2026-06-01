@@ -59,6 +59,10 @@ htmlcov/
 .langchain/
 *.sqlite
 *.db
+
+# 用户上传文件（运行时生成）
+data/uploads/
+!data/uploads/.gitkeep
 langsmith_traces/
 
 # Node.js

@@ -1,112 +1,187 @@
-# Dreamcode — 多Agent竞品分析系统
+# Dreamcode — AI 竞品分析平台
 
-Bytedance project · 业务场景级 vibecoding 
+多智能体协同驱动的竞品分析工具：输入目标产品名称，自动完成竞品采集、情感分析、横向对比，生成专业 PDF 报告。
 
-## 项目目标
+---
 
-模拟数字调研小组，自动完成 **公开信息采集 → 结构化竞品报告输出** 的全链路工作流。
-首发垂直：**办公软件**，架构支持 config 切换其他赛道。
+## 技术栈
 
-## Agents 分工（v2 supervisor pattern）
-
-| 角色 | 职责 | 模型 |
-|---|---|---|
-| **PM Agent** | 竞品扩展 + 任务拆解 + 内联 QA + TaskRegistry 动态管理 | **GPT-5** |
-| **Collector** | 抓官网 / AppStore / RSS（合规）+ 交叉源核查 | DeepSeek + GPT-5 多模态分支 |
-| **Insight** | 评论 / 情感分析（差异化亮点）；挂 questionnaire skill | DeepSeek V4 |
-| **Analyst** | NLP 情感 + 打分 + SWOT | DeepSeek V4 |
-| **Report** | 整合 + 图表 + Markdown / PDF 渲染 | GPT-5（多模态） |
-
-**3 处 QA**：PM 审采集 → PM 审分析 → **Doubao 跨家族终审报告**。
-三模型家族（DeepSeek / GPT-5 / Doubao）层叠对抗，缓解 self-preference bias。
-
-**Collector + Insight 并行 fan-out**，互不依赖时同时跑，省时间。
-
-**可信度规则**：QA 失败 retry > 2 即标 `unreviewed`，报告自动生成"未经充分审核"段落。
-
-## 记忆体系
-
-两层Memory体系配合 LangGraph 原生能力：
-
-| 层 | 实现 | 用途 |
-|---|---|---|
-| Working memory | `State` (TypedDict) → `src/cca/memory/working.py` | 单次运行内 agent 间数据传递 |
-| Long-term store | LangGraph BaseStore + SQLite → `src/cca/memory/store.py` | 跨 session 沉淀（用 namespace 区分维度模板/历史报告/源质量） |
-
-短期 checkpointer 直接用 `langgraph.checkpoint.sqlite.SqliteSaver`，
-
-## Skills
-
-| Skill | 用途 | v1 状态 |
-|---|---|---|
-| `dimension_discovery` | 自动发现竞品对比维度（web + 可选 seed yaml） | 占位 |
-| `questionnaire` | 一手数据 cold-start 合成（LLM 模拟 persona） | 占位 |
-
-两个 skill 都作为 LangGraph **subgraph** 实现，与主图编排一致。
-
-## 报告输出
-
-- 默认 **Markdown**
-- 同时输出 **PDF**：`markdown-it-py` (md→html) → `weasyprint` (html→pdf)
-- 答辩演示需要 PDF 形态
-
-## 测试与质量
-
-- `tests/conftest.py` 提供 `FakeLLM` fixture，避免单元测试调真 API
-- 阶段二（5.24-5.30）每开一个 agent 同日补它的测试，**不集中堆到联调日**
-- `ruff` lint + format
-- `pre-commit` 在每次 commit 前自动跑 ruff
-- GitHub Actions CI：`ruff check` + `pytest`
-
-## 快速开始
-
-```powershell
-conda env create -f environment.yml
-conda activate multi-agent
-python -m spacy download zh_core_web_sm
-pre-commit install
-Copy-Item .env.example .env       # 填入你的 API key
-python scripts/hello_world.py     # 验证 LangGraph + 双模型联通
-```
+| 层 | 技术 |
+|---|---|
+| 后端流程编排 | LangGraph 0.2+ |
+| Web 服务器 | FastAPI + Uvicorn |
+| LLM（规划/报告） | GPT-5（OpenAI 兼容） |
+| LLM（采集/分析） | DeepSeek V4 Pro |
+| LLM（仲裁/终审） | 豆包（火山方舟 Ark） |
+| 联网搜索 | Tavily Search API |
+| 情感分析 | BERT + transformers |
+| 报告渲染 | WeasyPrint（Linux/Mac）/ ReportLab（Windows）|
+| 前端 | Vanilla JS + HTML/CSS（无框架） |
 
 ## 目录结构
 
 ```
 Dreamcode/
-├── config/               # 仅运行时参数（不放领域知识）
-├── src/cca/              # 核心包
-│   ├── agents/           # 5 个 agent
-│   ├── skills/           # 2 个 skill 子图（v1 占位）
-│   ├── memory/           # working.py + store.py（精简版）
-│   ├── tools/            # search / fetcher / pdf / pii_guard
-│   ├── prompts/          # md 文件
-│   ├── llm/              # 跨家族模型路由
-│   ├── observability/    # loguru + langsmith
-│   └── graph.py          # 主图装配
-├── app/                  # Streamlit 前端
-│   ├── streamlit_app.py  # 主入口
-│   ├── components/       # graph_viz + agent_panel
-│   └── static/           # CSS / 图标
-├── scripts/              # CLI 入口 + hello_world
-├── tests/                # 与 src/ 镜像，含 fixtures/golden
-├── data/                 # raw/cache/private/memory（gitignored）
-├── reports/              # 输出（gitignored）
-├── docs/                 # 架构图 + 决策日志
-└── .github/workflows/    # CI
+├── app/                    # Web 层
+│   ├── server.py           # FastAPI 入口（5 个端点 + SSE）
+│   ├── index.html          # 单页前端
+│   └── static/             # CSS / JS
+├── src/cca/                # 核心 Python 包
+│   ├── agents/             # PM / Collector / Insight / Reporter
+│   ├── tools/              # 搜索 / 图表 / PDF / AppStore 等工具
+│   ├── skills/             # Debate / Reroute / BERT 微调等可复用技能
+│   ├── llm/                # LLM 客户端工厂与运行时 Key 注入
+│   ├── prompts/            # Agent system prompts（Markdown）
+│   ├── graph.py            # LangGraph 主图编排
+│   ├── schema.py           # Pydantic 领域模型
+│   └── state.py            # LangGraph 共享状态（TypedDict）
+├── scripts/                # 开发脚本
+│   ├── run_server.py       # 启动 FastAPI 服务器
+│   ├── demo/               # 离线 dry-run / demo 运行
+│   └── ...                 # 其他调试脚本
+├── tests/                  # 单元测试（pytest）
+├── docs/                   # 架构文档 / 决策记录
+├── config/config.yaml      # 模型定价 / 任务参数等配置
+└── data/                   # 运行时数据（上传文件 / 缓存 / BERT 数据）
 ```
 
-## v2 / Stretch Roadmap
+---
 
-| 项 | v1 状态 | v2 计划 |
+## 快速开始
+
+### 环境要求
+
+- Python 3.11+
+- Node.js 18+（仅 AppStore 爬虫脚本需要）
+
+### 安装
+
+```bash
+git clone https://github.com/StooneJam/Dreamcode.git
+cd Dreamcode
+
+# 安装 Python 依赖
+pip install -e ".[dev]"
+
+# 配置环境变量
+cp .env.example .env
+```
+
+编辑 `.env`，填入以下 Key（离线 demo 模式必填，前端注入模式可选）：
+
+```env
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-5
+
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+DOUBAO_API_KEY=...
+DOUBAO_MODEL=ep-20260514111325-xjmj7
+DOUBAO_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+
+TAVILY_API_KEY=tvly-...
+```
+
+### 启动服务器
+
+```bash
+python scripts/run_server.py
+# 默认监听 http://localhost:8000
+# 可指定端口：python scripts/run_server.py --port 8080
+```
+
+浏览器打开 `http://localhost:8000` 即可使用前端界面。
+
+### 离线 Demo（不启动服务器）
+
+```bash
+# 完整流程 dry-run（使用 .env Key）
+python scripts/demo/dry_run.py
+
+# 仅跑 Reporter（已有 profiles 数据时）
+python scripts/run_report_agent.py
+```
+
+---
+
+## 使用指南
+
+### 通过 Web 界面
+
+1. 在「开始分析」表单填写目标产品名称和分析需求（可选上传参考文档 PDF/Word）
+2. 点击「开始分析」后配置 API Key：
+
+   | 槽位 | 对应 Agent | Key 来源 |
+   |---|---|---|
+   | GPT-5 槽位 | PM Agent · Reporter | OpenAI 或兼容接口 |
+   | DeepSeek 槽位 | Collector · Insight | DeepSeek API |
+   | Doubao 槽位 | Debate Judge · 终审 | 火山方舟 Ark |
+
+   Tavily Search Key 必填（[免费申请](https://app.tavily.com)）。三个 AI 槽位至少填一个，填多个不同厂商的 Key 可启用跨模型协作。
+
+3. 提交后日志面板实时展示 Agent 运行状态，完成后 PDF 报告自动展示在右侧。
+
+### 通过 Python API 直接调用
+
+```python
+from cca.graph import build_graph, empty_state
+from cca.llm.factory import LLMCredential, use_credentials
+from cca.tools.search import use_tavily_key
+
+graph = build_graph(checkpointer=None)
+state = empty_state(
+    user_query="分析飞书与钉钉、Slack 的视频会议功能差异和定价策略",
+    target_product="飞书",
+)
+
+creds = {
+    "gpt-5":    LLMCredential(api_key="sk-...", model="gpt-5"),
+    "deepseek": LLMCredential(api_key="sk-...", model="deepseek-v4-pro",
+                              base_url="https://api.deepseek.com"),
+}
+
+with use_credentials(creds):
+    with use_tavily_key("tvly-..."):
+        result = graph.invoke(state)
+
+print(result["report_pdf_path"])
+```
+
+---
+
+## 项目截图 / Demo
+
+> 完整运行演示 GIF 待补充
+
+报告样本图表：
+
+| 雷达图（维度竞争力） | 双轴柱状图（评分 vs 评论量） | 定价对比 |
 |---|---|---|
-| Memory 分层 | 1 store（namespace 区分） | 拆 episodic / semantic / source_quality 独立库 |
-| Skills | 占位 | 真接入 dimension_discovery 与 questionnaire |
-| PII 脱敏 | 正则兜底 | presidio + 中文 NER |
-| 报告渲染 | md + weasyprint | 加 PPT / HTML 交互版 |
-| 多垂直 | 办公软件 | 加 SaaS / 电商 / 知识工具 |
+| ![radar](output/charts/dimension_radar.png) | ![dual](output/charts/rating_review_dual_axis.png) | ![pricing](output/charts/pricing_compare.png) |
 
-## 文档
+---
 
-- `Meeting1 + Timeline.md` — 17 天工期细则
-- `docs/architecture.html` — LangGraph 架构图
-- `docs/decisions.md` — 决策日志
+## 核心特性
+
+- **四 Agent 流水线**：PM 制定计划 → Collector 联网深采集 → Insight BERT 情感分析 → Reporter 生成报告，全程 LangGraph 自动编排
+- **跨模型辩论（Debate）**：PM 规划、报告终审阶段引入多家族 LLM 相互质疑，减少单一模型自我偏好
+- **人在环审查（Human-in-the-Loop）**：Collector + Insight 完成后暂停，用户可提交自由文本修订意见，PM 自动解析并重新规划
+- **运行时 Key 注入**：每次分析使用用户自己的 API Key，服务器不存储任何凭证，通过 `contextvars` 线程安全传递
+- **信号路由 / 自动重跑**：Agent 发现数据缺口时向 PM 发 Signal，触发定向补采，最多 2 轮防死循环
+- **SSE 流式日志**：分析过程实时推送到前端，工具调用、思考过程、PM 评审结果逐步可见
+- **专业 PDF 报告**：包含 SWOT 分析、维度竞争力雷达图、App Store 评分双轴对比、定价横向比较、用户评价主题汇总
+
+---
+
+## 鸣谢与联系方式
+
+- [LangGraph](https://github.com/langchain-ai/langgraph) — 多 Agent 图编排框架
+- [FastAPI](https://fastapi.tiangolo.com) — 异步 Web 框架
+- [Tavily](https://tavily.com) — 专为 AI Agent 设计的搜索 API
+- [DeepSeek](https://deepseek.com) / [OpenAI](https://openai.com) / [ByteDance Doubao](https://www.volcengine.com/product/doubao)
+
+**团队**：StooneJam · BAbykiller322
+
+Issues 与建议请提交至 [GitHub Issues](https://github.com/StooneJam/Dreamcode/issues)。
