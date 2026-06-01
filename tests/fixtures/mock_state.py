@@ -1,6 +1,8 @@
 """Report Agent 开发用 mock CCAState —— 模拟 Phase 2 结束后 PM 下发 ReportTask 的时刻。"""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from cca.schema import (
     CollectTask,
     Dimension,
@@ -120,6 +122,8 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         report_md=None,
         report_pdf_path=None,
         # 累加型 reducer 字段，初始为空列表
+        analysis_start_ts=datetime.now(timezone.utc).isoformat(),
+        analysis_end_ts=None,
         qa_notes=["企业微信定价数据来源不稳定，已 forced 放行"],
         audit_log=[],
         debate_results=[],

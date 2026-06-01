@@ -78,6 +78,10 @@ class CCAState(TypedDict):
     report_md: str | None
     report_pdf_path: str | None
 
+    # 分析计时（ISO 8601 UTC）
+    analysis_start_ts: str | None   # 图启动时记录
+    analysis_end_ts: str | None     # 报告完成时记录
+
     # 跨阶段累加的日志与信号
     qa_notes: Annotated[list[str], add]
     audit_log: Annotated[list[dict], add]

@@ -181,6 +181,7 @@ def build_graph(*, include_report: bool = True, checkpointer=None):
 
 def empty_state(user_query: str, target_product: str, user_files: list[str] | None = None) -> CCAState:
     """构造图的最小起点 state。"""
+    from datetime import datetime, timezone
     return {
         "user_query": user_query,
         "target_product": target_product,
@@ -201,6 +202,8 @@ def empty_state(user_query: str, target_product: str, user_files: list[str] | No
         "report_status": "pending",
         "report_md": None,
         "report_pdf_path": None,
+        "analysis_start_ts": datetime.now(timezone.utc).isoformat(),
+        "analysis_end_ts": None,
         "qa_notes": [],
         "audit_log": [],
         "debate_results": [],
