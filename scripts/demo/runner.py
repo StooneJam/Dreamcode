@@ -35,6 +35,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from cca.graph import build_graph, empty_state
 
 from cca.demo._common import dump_json, hr, show_decisions, sub, summary
+from cca.observability.logger import format_table, track_pipeline_tokens
 
 DebateScenario = Literal["accept", "reject", "none"]
 
@@ -371,7 +372,8 @@ def _run_graph(args: argparse.Namespace) -> None:
     state = empty_state(args.user_query, args.target_product, user_files=args.user_files)
 
     hr(f"RUNNER · graph mode (cache={args.cache})")
-    result = graph.invoke(state, config={"recursion_limit": 30})
+    with track_pipeline_tokens() as token_box:
+        result = graph.invoke(state, config={"recursion_limit": 30})
 
     if result.get("exploration_result"):
         dump_json("exploration_result", result["exploration_result"])
@@ -387,6 +389,10 @@ def _run_graph(args: argparse.Namespace) -> None:
         dump_json("audit_log", result["audit_log"])
     show_decisions(result.get("decision_log") or [])
     summary(result)
+
+    if token_box.get("usages"):
+        hr("TOKEN 消耗 · 本次 pipeline 按模型")
+        print(format_table(token_box["usages"]))
 
 
 # ── 手工编排模式（--live-* / --debate 触发）─────────────────────────────────
