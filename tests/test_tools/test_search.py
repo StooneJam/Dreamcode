@@ -55,6 +55,74 @@ def test_web_search_uses_env_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["api_key"] == "tvly-test-key"
 
 
+def test_web_search_prefers_run_uploaded_key_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """用户上传的 per-run key 优先于 .env 项目 key。"""
+    captured = {}
+
+    def fake_client(api_key: str) -> MagicMock:
+        captured["api_key"] = api_key
+        m = MagicMock()
+        m.search.return_value = {"results": []}
+        return m
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-project-key")
+    monkeypatch.setattr(search, "TavilyClient", fake_client)
+
+    with search.use_tavily_key("tvly-user-key"):
+        web_search.invoke({"query": "anything"})
+
+    assert captured["api_key"] == "tvly-user-key"
+
+
+def test_web_search_falls_back_to_env_when_no_run_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """没上传（contextvar 为 None）走项目自己的 .env key。"""
+    captured = {}
+
+    def fake_client(api_key: str) -> MagicMock:
+        captured["api_key"] = api_key
+        m = MagicMock()
+        m.search.return_value = {"results": []}
+        return m
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-project-key")
+    monkeypatch.setattr(search, "TavilyClient", fake_client)
+
+    with search.use_tavily_key(None):
+        web_search.invoke({"query": "anything"})
+
+    assert captured["api_key"] == "tvly-project-key"
+
+
+def test_validate_tavily_key_returns_none_when_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_client = MagicMock()
+    mock_client.search.return_value = {"results": []}
+    monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
+
+    assert search.validate_tavily_key("tvly-good") is None
+
+
+def test_validate_tavily_key_returns_error_string_when_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """非法 key 返回错误串供前端提示用户重传，不 raise。"""
+    from tavily.errors import InvalidAPIKeyError
+
+    mock_client = MagicMock()
+    mock_client.search.side_effect = InvalidAPIKeyError("401 unauthorized")
+    monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
+
+    err = search.validate_tavily_key("tvly-bad")
+
+    assert isinstance(err, str)
+    assert "校验失败" in err
+
+
 def test_web_search_returns_error_string_on_rate_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

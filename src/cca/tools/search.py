@@ -4,11 +4,42 @@ Tavily 联网搜索 —— PM 粗搜索 + Collector 细搜索共用入口。
 
 from __future__ import annotations
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator
 
 import requests
 from langchain_core.tools import tool
 from tavily import TavilyClient
 from tavily import errors as tavily_errors
+
+# 前端上传的 per-run Tavily key；None 时回落 .env 里项目自己的 key。
+# 与 llm/factory.py 的 _run_creds 同一范式：key 走 contextvar，不进 state（state 会被
+# audit_log 记录、被前端 stream 订阅，密钥进 state 等于泄漏）。
+_run_tavily_key: ContextVar[str | None] = ContextVar("cca_run_tavily_key", default=None)
+
+
+@contextmanager
+def use_tavily_key(key: str | None) -> Iterator[None]:
+    """前端在 graph.invoke 外层包住一次运行，注入用户上传的 Tavily key。
+
+    空 / None → 回落 .env 里项目自己的 key。非法 key 应在 run 入口前用
+    validate_tavily_key 拦下让用户重传，不在这里兜底。
+    """
+    token = _run_tavily_key.set(key or None)
+    try:
+        yield
+    finally:
+        _run_tavily_key.reset(token)
+
+
+def validate_tavily_key(key: str) -> str | None:
+    """对 Tavily 打一次最小 search 探活。返回 None 表示可用，否则返回错误串供前端提示重传。"""
+    try:
+        TavilyClient(api_key=key).search("ping", max_results=1)
+    except Exception as exc:
+        return f"Tavily key 校验失败（{type(exc).__name__}: {exc}）"
+    return None
 
 # 运营/瞬时类失败：catch 返错误串，让图存活、ReAct 降级（D-035）。
 # auth/config 类（MissingAPIKeyError / InvalidAPIKeyError）故意不在此列 ——
@@ -40,7 +71,7 @@ def web_search(query: str, max_results: int = 5) -> list[dict] | str:
     Returns:
         List of {title, url, content}. Empty list if nothing found.
     """
-    client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+    client = TavilyClient(api_key=_run_tavily_key.get() or os.getenv("TAVILY_API_KEY"))
     try:
         response = client.search(query, max_results=max_results)
     except _TRANSIENT_SEARCH_ERRORS as e:
