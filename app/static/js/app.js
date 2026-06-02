@@ -222,7 +222,17 @@ function jumpTo(id){
   },650);
   return false;
 }
-function handleLogin(){ alert(T('loginMsg')); }
+function getOwner(){ return (localStorage.getItem('dc-owner')||'').trim(); }
+function setOwnerDisplay(){
+  const el=$('t-nav-login'); if(!el) return;
+  el.textContent = getOwner() || T('navLoginBtn');
+}
+function handleLogin(){
+  const name=(prompt(lang==='zh'
+    ?'输入用户名（隔离你的报告与对话；可换浏览器找回，无密码）'
+    :'Enter a username (isolates your reports & chats; no password)', getOwner())||'').trim();
+  if(name){ localStorage.setItem('dc-owner',name); setOwnerDisplay(); }
+}
 function downloadPdf(){
   if(!pdfPath){ alert(T('pdfEmpty')); return; }
   const a = document.createElement('a');
@@ -299,6 +309,7 @@ function applyLang(){
   set('t-pay-note',t.payNote);
   // Update dynamic warn text
   const warnEl=$('api-warn'); if(warnEl) warnEl.textContent=t.keyWarn;
+  setOwnerDisplay();  // 登录态优先于"登录"按钮文案
 }
 function setLang(l){
   lang=l; applyLang(); renderScrollTrack();
@@ -1187,10 +1198,12 @@ async function startAnalysis(){
   const fd=new FormData();
   fd.append('target_product',product);
   fd.append('user_query',$('input-query').value.trim()||product);
+  fd.append('owner',getOwner());
   if(uploadedFile) fd.append('file',uploadedFile);
   ['gpt5','deepseek','doubao'].forEach(fam=>{
     const key=$(`${fam}-key`)?.value.trim();
-    if(key) fd.append(`${fam}_key`,key);
+    // key 存浏览器供答疑复用（不入库）；用户只在生成时输一次
+    if(key){ fd.append(`${fam}_key`,key); localStorage.setItem(`dc-key-${fam}`,key); }
   });
   const tv=$('tavily-key')?.value.trim(); if(tv) fd.append('tavily_key',tv);
   try{
@@ -1300,10 +1313,15 @@ async function sendReportQuestion(){
     return;
   }
   try{
+    const qBody={question:text};
+    ['gpt5','deepseek','doubao'].forEach(fam=>{
+      const k=localStorage.getItem(`dc-key-${fam}`);
+      if(k) qBody[`${fam}_key`]=k;   // 重启后回看也能答：key 来自浏览器，仅本次请求用
+    });
     const res=await fetch(`/api/jobs/${currentJobId}/question`,{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({question:text}),
+      headers:{'Content-Type':'application/json','X-Owner':getOwner()},
+      body:JSON.stringify(qBody),
     });
     const {answer}=await res.json();
     appendQaMessage('agent',answer);
