@@ -161,7 +161,26 @@ def finalize_profile(product_name: str, profile_json: str) -> str:
         ),
     )
     if err:
-        return err
+        # 校验失败：不让模型无限循环，尝试逐步剥离问题字段后提交最小 profile
+        from cca.tools._validation import _try_parse_lenient
+        partial_raw, _ = _try_parse_lenient(profile_json)
+        if isinstance(partial_raw, dict):
+            base = _clean(partial_raw)
+            # 每次多剥一层问题字段，直到 Pydantic 接受
+            for drop_fields in ([], ["dimensions"], ["dimensions", "pricing"],
+                                 ["dimensions", "pricing", "sources"]):
+                trial = {k: v for k, v in base.items() if k not in drop_fields}
+                try:
+                    minimal = ProductProfile.model_validate(trial)
+                    warn = f"部分字段已跳过({drop_fields})：{err[:80]}" if drop_fields else err[:80]
+                    return json.dumps(
+                        {"product_name": product_name, "profile": minimal.model_dump(),
+                         "_warn": warn},
+                        ensure_ascii=False,
+                    )
+                except Exception:
+                    continue
+        return err  # 实在无法恢复才返回错误让模型重试
     return json.dumps(
         {"product_name": product_name, "profile": profile.model_dump()},
         ensure_ascii=False,

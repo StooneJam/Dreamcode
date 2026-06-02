@@ -105,6 +105,7 @@ def _stream_iter(agent: Any, messages: list, recursion_limit: int):
 
 def _run_real(agent: Any, messages: list, label: str, recursion_limit: int) -> list:
     """真跑 ReAct：优先 .stream，失败 fallback .invoke。"""
+    from langgraph.errors import GraphRecursionError
     seen = 0
     final_messages: list = []
     got_any_chunk = False
@@ -116,6 +117,10 @@ def _run_real(agent: Any, messages: list, label: str, recursion_limit: int) -> l
                 _print_message(msg, label)
             seen = len(msgs)
             final_messages = msgs
+    except GraphRecursionError:
+        # 撞步数上限：返回已收集到的 messages，不中断整体流程
+        _print(label, f"WARN: recursion_limit={recursion_limit} reached，返回已有产出")
+        got_any_chunk = bool(final_messages)
     except (AttributeError, TypeError):
         got_any_chunk = False
 

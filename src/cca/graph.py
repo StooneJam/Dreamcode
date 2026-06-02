@@ -39,16 +39,43 @@ NODE_REPORT = "report"
 NODE_HANDLE_SIGNAL = "handle_signal"
 
 
+def _skip_result(agent: str, product_name: str, exc: Exception) -> dict:
+    """节点异常时产出最小 forced 占位，让流程继续。"""
+    from datetime import datetime, timezone
+    note = f"{type(exc).__name__}: {str(exc)[:200]}"
+    return {
+        "profiles": {product_name: {"product_name": product_name, "company": None,
+                                     "dimensions": [], "sources": []}},
+        "review_state": [{"agent": agent, "product_name": product_name,
+                          "status": "forced", "retry_count": 0,
+                          "qa_flags": [f"节点异常已跳过：{note}"],
+                          "pm_note": "节点崩溃，强制放行", "reviewed_at": None}],
+        "audit_log": [{"agent": agent, "event": "node_skipped",
+                       "product": product_name, "error": note,
+                       "ts": datetime.now(timezone.utc).isoformat()}],
+    }
+
+
 def _collect_product_node(state: CCAState) -> dict:
     """Send fanout worker：单产品深采集。走模块引用以支持 test mock。"""
-    task = CollectTask(**state["_fanout_task"])
-    return _collector_mod.collect_one_product(task, state["_fanout_context"])
+    task_data = state["_fanout_task"]
+    product_name = task_data.get("product_name", "unknown") if isinstance(task_data, dict) else "unknown"
+    try:
+        task = CollectTask(**task_data)
+        return _collector_mod.collect_one_product(task, state["_fanout_context"])
+    except Exception as exc:
+        return _skip_result("collector", product_name, exc)
 
 
 def _insight_product_node(state: CCAState) -> dict:
     """Send fanout worker：单产品 sentiment 分析。走模块引用以支持 test mock。"""
-    task = InsightTask(**state["_fanout_task"])
-    return _insight_mod.insight_one_product(task, state["_fanout_context"])
+    task_data = state["_fanout_task"]
+    product_name = task_data.get("product_name", "unknown") if isinstance(task_data, dict) else "unknown"
+    try:
+        task = InsightTask(**task_data)
+        return _insight_mod.insight_one_product(task, state["_fanout_context"])
+    except Exception as exc:
+        return _skip_result("insight", product_name, exc)
 
 
 def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
