@@ -33,3 +33,14 @@ def test_question_empty_returns_hint(env) -> None:
     r = client.post("/api/jobs/job1/question",
                     json={"question": "   "}, headers={"X-Owner": "alice"})
     assert "问题为空" in r.json()["answer"]
+
+
+def test_question_accepts_browser_keys_in_body(env) -> None:
+    """请求携带浏览器 key（支持重启后回看再答疑）时仍正常作答，不破路径。"""
+    client, db = env
+    db.save_report("job1", "alice", "飞书", "# 正文", "p")
+    r = client.post("/api/jobs/job1/question",
+                    json={"question": "Q", "doubao_key": "sk-test"},
+                    headers={"X-Owner": "alice"})
+    assert r.status_code == 200
+    assert r.json()["answer"]

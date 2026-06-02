@@ -311,7 +311,10 @@ async def question(
     async with _qa_locks[key]:
         conv_id = db.get_or_create_conversation(job_id, owner)
         history = db.get_messages(conv_id)
-        creds = job.get("creds") if job else None
+        # 凭证优先用请求携带的浏览器 key（支持重启后回看再答疑），回退到内存 job
+        creds = _build_creds(
+            body.get("gpt5_key"), body.get("deepseek_key"), body.get("doubao_key")
+        ) or (job.get("creds") if job else None)
         ctx = contextvars.copy_context()
 
         def _answer() -> str:
