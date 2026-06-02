@@ -17,7 +17,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Header, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -41,6 +41,8 @@ _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # job_id → {status, queue, result, creds, checkpointer, thread_config, feedback_event, feedback_data}
 _jobs: dict[str, dict] = {}
+# 按 (job_id, owner) 串行化同会话问答，避免历史交错与重复建会话
+_qa_locks: dict[str, asyncio.Lock] = {}
 
 
 # ── 凭证构建 ──────────────────────────────────────────────────────────────
@@ -285,23 +287,31 @@ async def feedback(job_id: str, body: dict) -> dict:
 
 
 @app.post("/api/jobs/{job_id}/question")
-async def question(job_id: str, body: dict) -> dict:
-    job = _jobs.get(job_id)
-    if not job or job.get("status") != "done":
-        return {"answer": "报告尚未生成，请稍后再试。"}
-
-    report_md = (job.get("result") or {}).get("report_md") or ""
+async def question(
+    job_id: str, body: dict, owner: str = Header("anonymous", alias="X-Owner")
+) -> dict:
+    owner = (owner or "").strip() or "anonymous"
     q = (body.get("question") or "").strip()
-    if not q or not report_md:
-        return {"answer": "无法回答：报告内容不可用。"}
+    if not q:
+        return {"answer": "无法回答：问题为空。"}
 
-    # 同会话串行，避免并发问答交错写 qa_history
-    if "qa_lock" not in job:
-        job["qa_lock"] = asyncio.Lock()
+    # 报告优先从 DB 取（owner 隔离、跨重启可用）；同会话内存 job 兜底（须 owner 匹配）
+    report = db.get_report(job_id, owner)
+    report_md = report["report_md"] if report else ""
+    job = _jobs.get(job_id)
+    if not report_md and job and job.get("owner") == owner:
+        report_md = (job.get("result") or {}).get("report_md") or ""
+    if not report_md:
+        return {"answer": "报告尚未生成或无权访问。"}
 
-    async with job["qa_lock"]:
-        history: list[dict] = job.setdefault("qa_history", [])
-        creds = job.get("creds")
+    key = f"{job_id}:{owner}"
+    if key not in _qa_locks:
+        _qa_locks[key] = asyncio.Lock()
+
+    async with _qa_locks[key]:
+        conv_id = db.get_or_create_conversation(job_id, owner)
+        history = db.get_messages(conv_id)
+        creds = job.get("creds") if job else None
         ctx = contextvars.copy_context()
 
         def _answer() -> str:
@@ -314,7 +324,7 @@ async def question(job_id: str, body: dict) -> dict:
         except Exception as exc:
             return {"answer": f"回答失败：{exc}"}
 
-        history.append({"role": "user", "content": q})
-        history.append({"role": "assistant", "content": answer})
+        db.add_message(conv_id, "user", q)
+        db.add_message(conv_id, "assistant", answer)
 
     return {"answer": answer}
