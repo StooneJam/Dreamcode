@@ -4,6 +4,8 @@
 .idea/
 评分标准.png
 1111.md
+devlog_*.md
+
 
 .env
 .env.local
