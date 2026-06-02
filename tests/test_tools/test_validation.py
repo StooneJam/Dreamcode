@@ -53,6 +53,15 @@ def test_malformed_json_returns_friendly_error_with_context() -> None:
     assert "只输出一个完整的 JSON 对象" in err  # 含 actionable hint
 
 
+def test_truncated_json_unclosed_at_end_is_recovered() -> None:
+    """Doubao 撞 token 上限把 JSON 截在末尾（括号未闭合）→ 倒退补全救回，不报错。
+    与上面 malformed 用例成对：截断（末端未闭合）救，畸形（结构完整值缺失）响亮报错。"""
+    obj, err = safe_load_validate('{"name": "x", "score": 1', _Sample)
+    assert err is None
+    assert obj.name == "x"
+    assert obj.score == 1
+
+
 def test_pydantic_validation_error_lists_field_paths() -> None:
     """Pydantic 失败按 'field.path: msg' 格式列出，LLM 能定位字段。"""
     obj, err = safe_load_validate('{"name": "x", "score": -1}', _Sample)

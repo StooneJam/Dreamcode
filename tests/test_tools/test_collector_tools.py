@@ -94,30 +94,39 @@ def _valid_profile_json(product_name: str = "钉钉") -> str:
     }, ensure_ascii=False)
 
 
-def test_finalize_profile_accepts_valid_schema() -> None:
+def _finalize(product_name: str, profile_json: str):
+    """用 ToolCall 形式 invoke，拿到带 .artifact 的 ToolMessage（content 只给模型看停止指令）。"""
     from cca.tools.collector_tools import finalize_profile
 
-    output = finalize_profile.invoke({
-        "product_name": "钉钉",
-        "profile_json": _valid_profile_json("钉钉"),
+    return finalize_profile.invoke({
+        "type": "tool_call", "name": "finalize_profile",
+        "args": {"product_name": product_name, "profile_json": profile_json}, "id": "t1",
     })
-    parsed = json.loads(output)
-    assert parsed["product_name"] == "钉钉"
-    assert parsed["profile"]["company"] == "阿里巴巴"
-    assert parsed["profile"]["website"] == "https://www.dingtalk.com"
+
+
+def test_finalize_profile_accepts_valid_schema() -> None:
+    msg = _finalize("钉钉", _valid_profile_json("钉钉"))
+    assert "提交成功" in msg.content
+    assert msg.artifact["degraded"] == []
+    assert msg.artifact["profile"]["company"] == "阿里巴巴"
+    assert msg.artifact["profile"]["website"] == "https://www.dingtalk.com"
+
+
+def test_finalize_profile_content_tells_model_to_stop() -> None:
+    """模型只看 content：必须是成功+停止指令，绝不能回显 profile JSON（防 859da7c 死循环回归）。"""
+    from cca.tools.collector_tools import finalize_profile
+
+    content = finalize_profile.invoke({  # invoke(dict) 返回 content 字符串本身
+        "product_name": "钉钉", "profile_json": _valid_profile_json("钉钉"),
+    })
+    assert isinstance(content, str)
+    assert "不得再次调用 finalize_profile" in content
 
 
 def test_finalize_profile_overrides_mismatched_product_name() -> None:
     """profile_json 里的 product_name 跟参数不一致 → 以参数为准（防 LLM 拼错）。"""
-    from cca.tools.collector_tools import finalize_profile
-
-    output = finalize_profile.invoke({
-        "product_name": "钉钉",
-        "profile_json": _valid_profile_json("DingTalk"),  # 不一致
-    })
-    parsed = json.loads(output)
-    assert parsed["product_name"] == "钉钉"
-    assert parsed["profile"]["product_name"] == "钉钉"
+    msg = _finalize("钉钉", _valid_profile_json("DingTalk"))  # 不一致
+    assert msg.artifact["profile"]["product_name"] == "钉钉"
 
 
 def test_finalize_profile_returns_error_string_on_invalid_schema() -> None:
@@ -135,8 +144,6 @@ def test_finalize_profile_returns_error_string_on_invalid_schema() -> None:
 
 def test_finalize_profile_cleans_evidence_missing_source_url() -> None:
     """Evidence 缺 source_url 是 LLM 常见偏差；本工具应剔除而非阻断整个产品。"""
-    from cca.tools.collector_tools import finalize_profile
-
     raw = {
         "product_name": "Y",
         "product_type": "SaaS",
@@ -152,9 +159,27 @@ def test_finalize_profile_cleans_evidence_missing_source_url() -> None:
             {"snippet": "no url"},  # 应被剔除
         ],
     }
-    result = json.loads(finalize_profile.invoke({"product_name": "Y", "profile_json": json.dumps(raw)}))
-    assert len(result["profile"]["dimensions"][0]["facts"]) == 1  # 缺 url fact 被剔
-    assert len(result["profile"]["sources"]) == 1                # 缺 url sources 项被剔
+    profile = _finalize("Y", json.dumps(raw)).artifact["profile"]
+    assert len(profile["dimensions"][0]["facts"]) == 1  # 缺 url fact 被剔
+    assert len(profile["sources"]) == 1                 # 缺 url sources 项被剔
+
+
+def test_finalize_profile_strips_only_broken_field_keeps_good_dimensions() -> None:
+    """Fix A：pricing 枚举非法、dimensions 合法 → 只剥 pricing，好 dimensions 必须保住。"""
+    raw = {
+        "product_name": "W",
+        "product_type": "SaaS",
+        "dimensions": [{
+            "name": "AI", "category": "功能",
+            "facts": [{"statement": "F", "evidence": [{"source_url": "https://a.com"}]}],
+        }],
+        "pricing": {"has_free_tier": True, "pricing_model": "非法枚举值"},  # 坏在 pricing
+    }
+    msg = _finalize("W", json.dumps(raw))
+    assert msg.artifact["degraded"] == ["pricing"]            # 只剥 pricing
+    assert len(msg.artifact["profile"]["dimensions"]) == 1    # 好 dimensions 没被连累
+    assert msg.artifact["profile"]["pricing"] is None
+    assert "已剥离" in msg.content                            # 模型被告知数据不完整
 
 
 def test_request_product_replacement_constructs_data_gap_signal() -> None:
@@ -194,7 +219,6 @@ def test_request_product_replacement_rejects_empty_evidence() -> None:
 def test_finalize_profile_autofills_sources_from_evidence() -> None:
     """LLM 漏填顶层 sources 时，工具应从 dimensions/pricing 的 evidence 自动聚合 URL。
     R4 兜底：不依赖 LLM 自觉。"""
-    from cca.tools.collector_tools import finalize_profile
 
     raw = {
         "product_name": "Z",
@@ -215,14 +239,13 @@ def test_finalize_profile_autofills_sources_from_evidence() -> None:
         },
         "sources": [],  # ← LLM 漏填，工具应兜底
     }
-    result = json.loads(finalize_profile.invoke({"product_name": "Z", "profile_json": json.dumps(raw)}))
-    urls = {s["source_url"] for s in result["profile"]["sources"]}
+    profile = _finalize("Z", json.dumps(raw)).artifact["profile"]
+    urls = {s["source_url"] for s in profile["sources"]}
     assert urls == {"https://a.com", "https://b.com", "https://c.com/pricing"}
 
 
 def test_finalize_profile_autofill_dedupes_against_existing_sources() -> None:
     """LLM 已经填了部分 sources 时，autofill 不重复添加。"""
-    from cca.tools.collector_tools import finalize_profile
 
     raw = {
         "product_name": "Z",
@@ -236,7 +259,7 @@ def test_finalize_profile_autofill_dedupes_against_existing_sources() -> None:
         }],
         "sources": [{"source_url": "https://a.com", "snippet": "已存在"}],
     }
-    result = json.loads(finalize_profile.invoke({"product_name": "Z", "profile_json": json.dumps(raw)}))
-    urls = [s["source_url"] for s in result["profile"]["sources"]]
+    profile = _finalize("Z", json.dumps(raw)).artifact["profile"]
+    urls = [s["source_url"] for s in profile["sources"]]
     assert urls.count("https://a.com") == 1  # 不重复
     assert "https://b.com" in urls           # 新 URL 加上

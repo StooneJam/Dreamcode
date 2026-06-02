@@ -96,10 +96,14 @@ def _try_parse_lenient(json_str: str) -> tuple[dict | list | None, str | None]:
     except json.JSONDecodeError:
         pass
 
-    # 中途截断（Doubao token 上限）→ 倒退补全
-    recovered, _ = _try_recover_truncated(json_str)
-    if recovered is not None:
-        return recovered, None
+    # 中途截断（Doubao token 上限）→ 倒退补全。仅当末端确实未闭合（有未配对括号
+    # 或停在字符串内）才尝试，否则像 {"score": } 这种"结构完整但值缺失"的畸形 JSON
+    # 会被一路回退救成 {}，把模型本可自修的真错误静默掩盖掉。
+    pending, ends_in_str = _scan_structure(json_str)
+    if pending or ends_in_str:
+        recovered, _ = _try_recover_truncated(json_str)
+        if recovered is not None:
+            return recovered, None
 
     # 所有救援均失败，返回原始错误供 LLM 修复
     try:

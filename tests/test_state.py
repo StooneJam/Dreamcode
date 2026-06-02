@@ -25,6 +25,8 @@ REQUIRED_FIELDS = {
     "report_status",
     "report_md",
     "report_pdf_path",
+    "analysis_start_ts",     # 图入口写入，END 汇总算耗时
+    "analysis_end_ts",       # report_node 写入
     "qa_notes",
     "audit_log",
     "debate_results",        # debate skill 跨阶段累加

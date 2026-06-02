@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from cca.schema import CollectTask, CollectorExplorationResult, ProductProfile
+from cca.schema import CollectorExplorationResult, CollectTask
 from cca.state import CCAState
 
 
@@ -338,12 +338,13 @@ def _valid_profile_payload(product_name: str = "钉钉") -> dict:
     }
 
 
-def _finalize_profile_tool_msg(product_name: str = "钉钉") -> ToolMessage:
+def _finalize_profile_tool_msg(
+    product_name: str = "钉钉", degraded: list[str] | None = None,
+) -> ToolMessage:
+    """模拟 finalize_profile 产出：content 给模型看，profile 经 artifact 传回。"""
     return ToolMessage(
-        content=json.dumps({
-            "product_name": product_name,
-            "profile": _valid_profile_payload(product_name),
-        }, ensure_ascii=False),
+        content=f"提交成功：{product_name} 已入库。请立即停止，不得再次调用 finalize_profile。",
+        artifact={"profile": _valid_profile_payload(product_name), "degraded": degraded or []},
         tool_call_id="x",
         name="finalize_profile",
     )
@@ -375,9 +376,11 @@ def test_extract_finalized_profile_takes_latest() -> None:
     early = _finalize_profile_tool_msg("旧产品")
     late = _finalize_profile_tool_msg("新产品")
     messages = [early, AIMessage(content="再想想"), late]
-    profile = _extract_finalized_profile(messages)
-    assert profile is not None
+    extracted = _extract_finalized_profile(messages)
+    assert extracted is not None
+    profile, degraded = extracted
     assert profile["product_name"] == "新产品"
+    assert degraded == []
 
 
 def test_extract_finalized_profile_returns_none_when_not_called() -> None:
@@ -414,6 +417,24 @@ def test_collect_one_product_success_path() -> None:
     assert result["profiles"]["钉钉"]["product_type"] == "企业协作平台"
     assert result["audit_log"][0]["event"] == "collect_done"
     assert result["audit_log"][0]["product_name"] == "钉钉"
+    assert "review_state" not in result  # 数据完整 → 不注入 forced
+
+
+def test_collect_one_product_degraded_emits_forced_review_unit() -> None:
+    """Fix B：提交时剥离过字段（degraded 非空）→ 注入 forced ReviewUnit，让报告层看到降级。"""
+    task = CollectTask(product_name="钉钉", priority_dimensions=[])
+    mock_agent = _make_mock_agent([_finalize_profile_tool_msg("钉钉", degraded=["pricing"])])
+    with patch("cca.agents.collector.create_react_agent", return_value=mock_agent):
+        from cca.agents.collector import collect_one_product
+        result = collect_one_product(task, context={"target_product": "飞书"})
+
+    assert "钉钉" in result["profiles"]  # 残缺 profile 仍入库
+    unit = result["review_state"][0]
+    assert unit["agent"] == "collector"
+    assert unit["product_name"] == "钉钉"
+    assert unit["status"] == "forced"
+    assert "pricing" in unit["qa_flags"][0]
+    assert result["audit_log"][0]["degraded_fields"] == ["pricing"]
 
 
 def test_collect_one_product_replacement_path() -> None:
