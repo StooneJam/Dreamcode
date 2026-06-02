@@ -14,6 +14,7 @@ import contextvars
 import json
 import sys
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile
@@ -28,8 +29,9 @@ from langgraph.types import Command
 from cca.agents._streaming import set_sse_emitter
 from cca.agents.qa_chat import answer_question
 from cca.graph import build_graph, empty_state
-from cca.llm.factory import LLMCredential, SLOT_DEFAULTS, get_report_llm, use_credentials
+from cca.llm.factory import SLOT_DEFAULTS, LLMCredential, get_report_llm, use_credentials
 from cca.schema import AgentFamily
+from cca.store import db
 from cca.tools.search import use_tavily_key
 
 _APP_DIR = Path(__file__).parent
@@ -100,6 +102,7 @@ async def _run_job(
     user_files: list[str] | None,
     creds: dict[AgentFamily, LLMCredential] | None,
     tavily: str | None,
+    owner: str,
 ) -> None:
     queue: asyncio.Queue = _jobs[job_id]["queue"]
     loop = asyncio.get_event_loop()
@@ -164,6 +167,7 @@ async def _run_job(
         pdf = result.get("report_pdf_path") or ""
         _jobs[job_id]["result"] = result
         _jobs[job_id]["status"] = "done"
+        db.save_report(job_id, owner, target_product, result.get("report_md") or "", pdf)
         await queue.put({
             "type": "done",
             "pdf_path": pdf,
@@ -180,7 +184,13 @@ async def _run_job(
 # ── FastAPI app ───────────────────────────────────────────────────────────
 
 
-app = FastAPI()
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    db.init_db()
+    yield
+
+
+app = FastAPI(lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=str(_APP_DIR / "static")), name="static")
 
 
@@ -193,6 +203,7 @@ async def index() -> FileResponse:
 async def analyze(
     target_product: str = Form(...),
     user_query: str = Form(""),
+    owner: str = Form(""),
     file: UploadFile | None = File(None),
     gpt5_key: str | None = Form(None),
     deepseek_key: str | None = Form(None),
@@ -200,6 +211,7 @@ async def analyze(
     tavily_key: str | None = Form(None),
 ) -> dict:
     job_id = str(uuid.uuid4())
+    owner = owner.strip() or "anonymous"
 
     user_files: list[str] | None = None
     if file and file.filename:
@@ -210,13 +222,13 @@ async def analyze(
     creds = _build_creds(gpt5_key, deepseek_key, doubao_key)
     _jobs[job_id] = {
         "status": "pending", "queue": asyncio.Queue(),
-        "result": None, "creds": creds,
+        "result": None, "creds": creds, "owner": owner,
     }
 
     asyncio.create_task(_run_job(
         job_id, target_product,
         user_query or target_product,
-        user_files, creds, tavily_key,
+        user_files, creds, tavily_key, owner,
     ))
     return {"job_id": job_id}
 
