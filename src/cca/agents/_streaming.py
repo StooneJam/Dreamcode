@@ -58,6 +58,11 @@ def _emit(event: dict) -> None:
             pass
 
 
+def emit_sse(event: dict) -> None:
+    """Push a structured SSE event from any agent or skill."""
+    _emit(event)
+
+
 def _short(text: str, n: int) -> str:
     text = text.replace("\n", " ").strip()
     return text if len(text) <= n else text[:n] + "..."

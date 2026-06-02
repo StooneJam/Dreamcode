@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import interrupt
 from pydantic import ValidationError
 
+from cca.agents._streaming import emit_sse
 from cca.llm.factory import cross_family_enabled, get_llm
 from cca.schema import (
     AgentFamily,
@@ -187,8 +188,14 @@ def initial_brief_node(state: CCAState) -> dict:
         ds = result.domain_seed.model_dump()
         ds["source_files"] = [file_path]  # 代码端强制覆盖
         updates["domain_seed"] = ds
+        emit_sse({"type": "domain_seed",
+                  "product_type_hint": ds.get("product_type_hint"),
+                  "dimension_candidates": ds.get("dimension_candidates", []),
+                  "competitor_mentions": ds.get("competitor_mentions", []),
+                  "terminology": ds.get("terminology", {})})
     if file_audit:
         updates["audit_log"] = file_audit
+    emit_sse({"type": "progress", "pct": 8, "sec_left": 120})
     return updates
 
 
@@ -218,6 +225,7 @@ def task_plan_node(state: CCAState) -> dict:
     result = cast(TaskPlanOutput, _invoke_pm(
         TaskPlanOutput, "阶段二 TaskPlan", payload,
     ))
+    emit_sse({"type": "progress", "pct": 22, "sec_left": 95})
     return {
         "task_plan": result.task_plan.model_dump(),
         "competitor_names": result.task_plan.competitor_names,
@@ -286,6 +294,7 @@ def report_task_node(state: CCAState) -> dict:
             "fallback_dims": fallback_dims,
             "note": f"{len(fallback_dims)} 个 dim 未在 LLM mapping 中出现，自动归 '{_FALLBACK_BUCKET}'",
         }]
+    emit_sse({"type": "progress", "pct": 72, "sec_left": 28})
     return updates
 
 
@@ -590,6 +599,8 @@ def review_node(state: CCAState) -> dict:
     # feedback 一旦参与本轮判定即标消费：后续轮次回归纯数据评审，避免同段意见反复触发返工
     if use_feedback:
         updates["human_feedback_consumed"] = True
+    emit_sse({"type": "review_update", "units": [u.model_dump() for u in coerced]})
+    emit_sse({"type": "progress", "pct": 68, "sec_left": 40})
     return updates
 
 
@@ -695,6 +706,17 @@ def _handle_reroute_signal(signal: AgentSignal, state: CCAState) -> dict:
     return apply_reroute(reroute(signal, _build_reroute_context(state)))
 
 
+def _phase_from_partial(partial: dict) -> str:
+    """推断 reroute 回溯的目标阶段（从被清空的字段反推）。"""
+    if "exploration_result" in partial:
+        return "phase_1"
+    if "task_plan" in partial:
+        return "phase_2"
+    if "report_task" in partial:
+        return "phase_3"
+    return "phase_2"
+
+
 def handle_signal_node(state: CCAState) -> dict:
     """处理下游 AgentSignal。
 
@@ -719,14 +741,28 @@ def handle_signal_node(state: CCAState) -> dict:
     # reroute_count 每轮 handle_signal_node 最多 +1（一次循环 = 一次 reroute 周期）：
     # 防止一批 5 个 signal 同时触发 reroute 把 reroute_count 直接跳到 5 绕过 HARD_LIMIT=2。
     did_reroute = False
+    new_reroute_count = (state.get("reroute_count") or 0) + 1
     for sig in ordered:
         if sig.requires_debate:
             partial = _handle_debate_signal(sig, state)
+            for dr in partial.get("debate_results", []):
+                emit_sse({
+                    "type": "debate_result",
+                    "target": dr.get("target"),
+                    "final_verdict": dr.get("final_verdict"),
+                    "judge_rationale": dr.get("judge_rationale"),
+                })
         else:
             partial = _handle_reroute_signal(sig, state)
             if any(partial.get(k) is None and k in partial
                    for k in ("exploration_result", "task_plan", "report_task")):
                 did_reroute = True
+                emit_sse({
+                    "type": "reroute",
+                    "phase": sig.reroute_phase or _phase_from_partial(partial),
+                    "count": new_reroute_count,
+                    "reason": (sig.payload.claim if sig.payload else ""),
+                })
         debate_results.extend(partial.pop("debate_results", []))
         audit_log.extend(partial.pop("audit_log", []))
         scalar_updates.update(partial)
