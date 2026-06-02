@@ -139,3 +139,19 @@ def get_messages(conversation_id: str) -> list[dict]:
             (conversation_id,),
         ).fetchall()
     return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+def get_history(report_id: str, owner: str) -> list[dict]:
+    """取 (report, owner) 会话的全部消息；无会话返 []（只读，不建会话）。"""
+    with _tx() as conn:
+        conv = conn.execute(
+            "SELECT id FROM conversations WHERE report_id = ? AND owner = ?",
+            (report_id, owner),
+        ).fetchone()
+        if not conv:
+            return []
+        rows = conn.execute(
+            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id",
+            (conv["id"],),
+        ).fetchall()
+    return [{"role": r["role"], "content": r["content"]} for r in rows]

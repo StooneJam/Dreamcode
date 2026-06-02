@@ -66,3 +66,20 @@ def test_messages_isolated_across_conversations(store) -> None:
     store.add_message(a, "user", "alice 的问题")
     b = store.get_or_create_conversation("r1", "bob")
     assert store.get_messages(b) == []                 # bob 会话看不到 alice 的消息
+
+
+def test_get_history_readonly_returns_empty_without_conversation(store) -> None:
+    assert store.get_history("rX", "alice") == []      # 无会话返 []，且不创建
+    # 确认没有副作用建出会话：list 仍查不到该会话的消息
+    assert store.get_history("rX", "alice") == []
+
+
+def test_get_history_returns_messages_for_owner(store) -> None:
+    conv = store.get_or_create_conversation("r1", "alice")
+    store.add_message(conv, "user", "Q")
+    store.add_message(conv, "assistant", "A")
+    assert store.get_history("r1", "alice") == [
+        {"role": "user", "content": "Q"},
+        {"role": "assistant", "content": "A"},
+    ]
+    assert store.get_history("r1", "bob") == []         # 隔离

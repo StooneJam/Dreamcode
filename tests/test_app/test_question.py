@@ -1,32 +1,5 @@
-"""测试 /api/jobs/{id}/question 的 DB 持久化 + owner 隔离。patch get_report_llm，不调真 API。"""
+"""测试 /api/jobs/{id}/question 的 DB 持久化 + owner 隔离（fixture 见 conftest）。"""
 from __future__ import annotations
-
-import sys
-from pathlib import Path
-from types import SimpleNamespace
-
-import pytest
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # 让 `app` 包可导入
-
-
-def _fake_get_report_llm():
-    """假 ChatModel：回声最后一条 HumanMessage，便于断言 grounding 与历史。"""
-    def _invoke(messages):
-        human = [m for m in messages if type(m).__name__ == "HumanMessage"]
-        return SimpleNamespace(content=f"answer to: {human[-1].content}")
-    return SimpleNamespace(invoke=_invoke)
-
-
-@pytest.fixture
-def env(tmp_path, monkeypatch):
-    from cca.store import db
-    db.configure(tmp_path / "t.db")
-    db.init_db()
-    import app.server as server
-    monkeypatch.setattr(server, "get_report_llm", _fake_get_report_llm)
-    return TestClient(server.app), db
 
 
 def test_question_persists_history_and_grounds(env) -> None:

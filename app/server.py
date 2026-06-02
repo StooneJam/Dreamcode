@@ -328,3 +328,22 @@ async def question(
         db.add_message(conv_id, "assistant", answer)
 
     return {"answer": answer}
+
+
+@app.get("/api/reports")
+async def reports_list(owner: str = Header("anonymous", alias="X-Owner")) -> dict:
+    """该 owner 的历史报告列表（不含正文）。"""
+    owner = (owner or "").strip() or "anonymous"
+    return {"reports": db.list_reports(owner)}
+
+
+@app.get("/api/reports/{report_id}")
+async def report_detail(
+    report_id: str, owner: str = Header("anonymous", alias="X-Owner")
+):
+    """回看单份报告：正文 + 历史对话。owner 不匹配返 404。"""
+    owner = (owner or "").strip() or "anonymous"
+    report = db.get_report(report_id, owner)
+    if not report:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return {"report": report, "messages": db.get_history(report_id, owner)}
