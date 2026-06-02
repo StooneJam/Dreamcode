@@ -48,6 +48,8 @@ dependencies = [
     "markdown-it-py>=3.0.0",         # pdf_renderer
     "weasyprint>=62.0",              # Linux/Mac
     "reportlab>=4.0.0",              # Windows
+    # 认证
+    "tencentcloud-sdk-python-sms>=3.0.0",   # 手机号短信验证码
     # 可观测性
     "langsmith>=0.1.0",
     "loguru>=0.7.0",
