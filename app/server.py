@@ -242,16 +242,18 @@ async def stream(job_id: str) -> StreamingResponse:
 
 @app.get("/api/report/pdf")
 async def get_pdf(path: str, download: int = 0):
+    from urllib.parse import quote
     p = Path(path)
     if not p.is_absolute():
         p = _PROJECT_ROOT / p
     if not p.exists() or not p.is_file():
         return JSONResponse({"error": "file not found"}, status_code=404)
     disposition = "attachment" if download else "inline"
-    return FileResponse(
-        p, media_type="application/pdf",
-        headers={"Content-Disposition": f'{disposition}; filename="{p.name}"'},
-    )
+    # RFC 5987：filename* 支持任意 Unicode，兼容中文文件名
+    encoded = quote(p.name, safe="")
+    cd = f'{disposition}; filename="report.pdf"; filename*=UTF-8\'\'{encoded}'
+    return FileResponse(p, media_type="application/pdf",
+                        headers={"Content-Disposition": cd})
 
 
 @app.post("/api/jobs/{job_id}/feedback")
