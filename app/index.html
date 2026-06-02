@@ -51,9 +51,19 @@
       <button class="lang-btn active" data-lang="zh" onclick="setLang('zh')">中</button>
       <button class="lang-btn"        data-lang="en" onclick="setLang('en')">EN</button>
     </div>
+    <a class="nav-reports-btn" onclick="toggleReportsPanel();return false;" id="t-nav-reports">我的报告</a>
     <a class="nav-login-btn" onclick="handleLogin();return false;" id="t-nav-login">登录</a>
   </div>
 </nav>
+
+<!-- ══ 历史报告浮层 ══ -->
+<div id="reports-panel" class="reports-panel">
+  <div class="reports-panel-hd">
+    <span id="t-reports-title">历史报告</span>
+    <button class="reports-panel-close" onclick="closeReportsPanel()">✕</button>
+  </div>
+  <div id="reports-list" class="reports-list"></div>
+</div>
 
 
 <!-- ═══════════════════════════════════════════

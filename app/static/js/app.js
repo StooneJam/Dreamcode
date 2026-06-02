@@ -36,6 +36,9 @@ const I18N = {
     footerCopy:'© 2026 Dreamcode · 保留所有权利',
     errNoProduct:'请输入目标产品名称', errFiletype:'仅支持 PDF、Word、TXT 格式',
     errFilesize:'文件不能超过 20MB', loginMsg:'登录功能即将上线',
+    myReportsBtn:'我的报告', myReportsTitle:'历史报告',
+    myReportsEmpty:'暂无历史报告', myReportsLoading:'加载中...',
+    myReportsErr:'加载失败，请重试',
     galleryLabel:'报告样本展示', galleryHint:'点击圆点或箭头切换图表',
     // Modal
     modalTitle:'选择接入方式', modalSub:'选择一种方式以启动本次分析', modalNext:'下一步 →',
@@ -86,6 +89,9 @@ const I18N = {
     footerCopy:'© 2026 Dreamcode · All rights reserved',
     errNoProduct:'Please enter a target product name', errFiletype:'Only PDF, Word, TXT supported',
     errFilesize:'File must be under 20 MB', loginMsg:'Login coming soon',
+    myReportsBtn:'My Reports', myReportsTitle:'Report History',
+    myReportsEmpty:'No reports yet', myReportsLoading:'Loading...',
+    myReportsErr:'Failed to load, please retry',
     galleryLabel:'Report Samples', galleryHint:'Click dots or arrows to switch charts',
     // Modal
     modalTitle:'API Access Method', modalSub:'Choose how to power this analysis', modalNext:'Next →',
@@ -241,6 +247,76 @@ function downloadPdf(){
 }
 
 /* ══════════════════════════════════════
+   历史报告面板
+══════════════════════════════════════ */
+function toggleReportsPanel(){
+  const panel=$('reports-panel');
+  if(!panel) return;
+  const open=panel.classList.toggle('show');
+  if(open) loadReportsList();
+}
+function closeReportsPanel(){ $('reports-panel')?.classList.remove('show'); }
+
+async function loadReportsList(){
+  const list=$('reports-list');
+  if(!list) return;
+  list.innerHTML=`<div class="reports-loading">${T('myReportsLoading')}</div>`;
+  const owner=getOwner();
+  if(!owner){
+    list.innerHTML=`<div class="reports-empty">${lang==='zh'?'请先登录（点击右上角登录按钮）':'Please log in first'}</div>`;
+    return;
+  }
+  try{
+    const res=await fetch('/api/reports',{headers:{'X-Owner':owner}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const {reports}=await res.json();
+    if(!reports||!reports.length){
+      list.innerHTML=`<div class="reports-empty">${T('myReportsEmpty')}</div>`;
+      return;
+    }
+    list.innerHTML=reports.map(r=>`
+      <div class="report-item" onclick="loadReport('${esc(r.id)}','${esc(r.target_product)}')">
+        <span class="report-item-name">${esc(r.target_product)}</span>
+        <span class="report-item-date">${(r.created_at||'').slice(0,10)}</span>
+      </div>`).join('');
+  } catch(_){
+    list.innerHTML=`<div class="reports-empty">${T('myReportsErr')}</div>`;
+  }
+}
+
+async function loadReport(id, productName){
+  closeReportsPanel();
+  jumpTo('pdf-section');
+  const owner=getOwner();
+  const _fname=$('pdf-fname');
+  if(_fname) _fname.textContent=`${productName} 竞品分析报告`;
+  const _pcontent=$('pdf-content');
+  if(_pcontent) _pcontent.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted)">${lang==='zh'?'加载报告中...':'Loading report...'}</p></div>`;
+  $('qa-messages').innerHTML=`<p class="qa-hint-text" id="t-qa-hint">${T('qaHint')}</p>`;
+  $('qa-box').classList.add('show');
+  try{
+    const res=await fetch(`/api/reports/${id}`,{headers:{'X-Owner':owner}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const {report, messages}=await res.json();
+    currentJobId=id;
+    pdfPath=report.pdf_path||'';
+    if(pdfPath){
+      showPdf(pdfPath, `${productName}_竞品分析报告.pdf`);
+    } else {
+      if(_pcontent) _pcontent.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'该报告暂无 PDF 文件':'No PDF available for this report'}</p></div>`;
+    }
+    // 回显历史对话
+    const msgBox=$('qa-messages');
+    if(messages&&messages.length){
+      msgBox.innerHTML='';
+      messages.forEach(m=>appendQaMessage(m.role==='user'?'user':'agent', m.content));
+    }
+  } catch(e){
+    if(_pcontent) _pcontent.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'报告加载失败，请重试':'Failed to load report, please retry'}</p></div>`;
+  }
+}
+
+/* ══════════════════════════════════════
    Theme
 ══════════════════════════════════════ */
 function toggleTheme(){
@@ -264,7 +340,8 @@ function applyLang(){
   const setH=(id,v)=>{ const e=$(id); if(e) e.innerHTML=v; };
   const setA=(id,k,v)=>{ const e=$(id); if(e) e[k]=v; };
 
-  set('t-nav-login',t.navLoginBtn); set('t-eyebrow',t.eyebrow);
+  set('t-nav-login',t.navLoginBtn); set('t-nav-reports',t.myReportsBtn);
+  set('t-reports-title',t.myReportsTitle); set('t-eyebrow',t.eyebrow);
   setH('t-hero-title',t.heroTitle); set('t-hero-sub',t.heroSub);
   set('t-hero-sub-en',t.heroSubEn); set('t-hero-cta',t.heroCta);
   set('t-report-title',t.reportTitle); set('t-report-filename',t.reportFilename); set('t-dl-btn',t.dlBtn);
@@ -1443,7 +1520,7 @@ function simulate(btn,product){
       // Debate 结果（TaskPlan 被接受）
       renderDebateResult({
         target:'pm_taskplan',
-        verdict:'accepted',
+        final_verdict:'accepted',
         judge_rationale:zh
           ?'竞品列表合理，维度覆盖充分，采纳 PM 原始方案。'
           :'Competitor list and dimension coverage are sound. PM plan accepted as-is.',
@@ -1469,7 +1546,7 @@ function continueSimulateAfterPhase1(){
       // 报告终审 debate（call_report_reviewer）
       renderDebateResult({
         target:'report',
-        verdict:'accepted_with_revision',
+        final_verdict:'accepted_with_revision',
         judge_rationale:zh
           ?'报告结构合理，部分定价数据需补充来源引用，其余内容已采纳。'
           :'Report structure is sound; minor pricing citations added. Accepted with revision.',
