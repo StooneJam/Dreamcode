@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 from cca.settings import PROJECT_ROOT, load_config
 from cca.skills.bert_finetune.collect import crawl_domain_samples, load_samples, save_samples

@@ -1,12 +1,10 @@
 """BERT 微调 skill 测试 —— mock App Store 爬取，不依赖网络或 GPU。"""
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from cca.skills.bert_finetune.collect import LabeledSample, crawl_domain_samples, load_samples, save_samples
 

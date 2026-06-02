@@ -86,7 +86,7 @@ def _try_parse_lenient(json_str: str) -> tuple[dict | list | None, str | None]:
     """
     try:
         return json.loads(json_str), None
-    except json.JSONDecodeError as first_err:
+    except json.JSONDecodeError:
         pass
 
     # 尾部杂质 → 救

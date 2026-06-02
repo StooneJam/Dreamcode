@@ -12,7 +12,6 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from cca.agents.qa_report import (
     _build_initial_message,

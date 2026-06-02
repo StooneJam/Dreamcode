@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from cca.skills.questionnaire.anonymize import anonymize_responses
 from cca.skills.questionnaire.collect import QuestionResponse, SurveyResponse
