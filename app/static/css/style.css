@@ -1487,7 +1487,7 @@ footer {
 /* Overlay backdrop */
 .panel-expand-backdrop {
   display: none; position: fixed; inset: 0; z-index: 7999;
-  background: rgba(0,0,0,.55);
+  background: var(--bg-light);
 }
 .panel-expand-backdrop.active { display: block; }
 
@@ -1500,7 +1500,7 @@ footer {
   width: min(92vw, 1100px) !important; max-width: none !important;
   height: 82vh !important;
   border-radius: var(--radius-lg) !important;
-  box-shadow: 0 32px 80px rgba(0,0,0,.5) !important;
+  box-shadow: var(--shadow-card) !important;
   overflow: hidden;
   animation: expand-in .18s ease;
 }
