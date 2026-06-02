@@ -1,5 +1,17 @@
 'use strict';
 
+/* ── Google OAuth 回调处理（页面加载时一次性执行） ── */
+(function(){
+  const p=new URLSearchParams(window.location.search);
+  const token=p.get('token'), name=p.get('display_name'), authErr=p.get('auth_error');
+  if(token){
+    localStorage.setItem('dc-token',token);
+    localStorage.setItem('dc-display-name',decodeURIComponent(name||''));
+    history.replaceState({},'','/');
+  }
+  if(authErr) setTimeout(()=>alert('Google 登录失败，请重试'),400);
+})();
+
 /* ══════════════════════════════════════
    i18n
 ══════════════════════════════════════ */
@@ -31,11 +43,17 @@ const I18N = {
     phase1InputPh:'请输入您对分析结果的修改建议（可选）...',
     qaTitle:'向 Agent 提问', qaHint:'报告生成完成，您可以向 Agent 提问关于报告中的任何问题',
     qaInputPh:'输入您的问题...', qaSend:'发送',
-    pdfPageInfo:(c,t)=>`第 ${c} / ${t} 页`, progress:(p,s)=>`分析进度 ${p}% · 预计剩余 ${s} 秒`,
+    pdfPageInfo:(c,t)=>`第 ${c} / ${t} 页`, progress:(p)=>`分析进度 ${p}%`,
     footerTagline:'AI 驱动的竞品分析平台', fc1Title:'产品', fc2Title:'支持',
     footerCopy:'© 2026 Dreamcode · 保留所有权利',
     errNoProduct:'请输入目标产品名称', errFiletype:'仅支持 PDF、Word、TXT 格式',
     errFilesize:'文件不能超过 20MB', loginMsg:'登录功能即将上线',
+    loginTitle:'登录 Dreamcode', loginTabPhone:'手机号登录', loginTabGoogle:'Google 登录',
+    loginPhoneLabel:'手机号', loginPhonePh:'请输入 11 位手机号',
+    loginPhoneHint:'仅支持中国大陆手机号（+86），境外用户请使用 Google 登录',
+    loginSendOtp:'发送验证码', loginOtpLabel:'验证码', loginOtpPh:'输入 6 位验证码',
+    loginVerify:'登录', loginGoogleNote:'在中国大陆需能访问 Google 服务（VPN）',
+    loginGoogleBtn:'使用 Google 账号登录', loginLogout:'退出登录',
     myReportsBtn:'我的报告', myReportsTitle:'历史报告',
     myReportsEmpty:'暂无历史报告', myReportsLoading:'加载中...',
     myReportsErr:'加载失败，请重试',
@@ -84,11 +102,17 @@ const I18N = {
     phase1InputPh:'Enter your feedback on the analysis (optional)...',
     qaTitle:'Ask the Agent', qaHint:'Report ready. Ask the Agent any question about the report.',
     qaInputPh:'Ask a question...', qaSend:'Send',
-    pdfPageInfo:(c,t)=>`Page ${c} of ${t}`, progress:(p,s)=>`Progress ${p}% · ~${s}s`,
+    pdfPageInfo:(c,t)=>`Page ${c} of ${t}`, progress:(p)=>`Progress ${p}%`,
     footerTagline:'AI-powered Competitive Analysis', fc1Title:'Product', fc2Title:'Support',
     footerCopy:'© 2026 Dreamcode · All rights reserved',
     errNoProduct:'Please enter a target product name', errFiletype:'Only PDF, Word, TXT supported',
     errFilesize:'File must be under 20 MB', loginMsg:'Login coming soon',
+    loginTitle:'Log in to Dreamcode', loginTabPhone:'Phone Login', loginTabGoogle:'Google Login',
+    loginPhoneLabel:'Phone', loginPhonePh:'Enter 11-digit phone number',
+    loginPhoneHint:'China mainland only (+86). Use Google login for other regions.',
+    loginSendOtp:'Send Code', loginOtpLabel:'Code', loginOtpPh:'Enter 6-digit code',
+    loginVerify:'Log In', loginGoogleNote:'Requires access to Google services',
+    loginGoogleBtn:'Sign in with Google', loginLogout:'Log Out',
     myReportsBtn:'My Reports', myReportsTitle:'Report History',
     myReportsEmpty:'No reports yet', myReportsLoading:'Loading...',
     myReportsErr:'Failed to load, please retry',
@@ -228,17 +252,105 @@ function jumpTo(id){
   },650);
   return false;
 }
-function getOwner(){ return (localStorage.getItem('dc-owner')||'').trim(); }
-function setOwnerDisplay(){
+function getAuthToken(){ return (localStorage.getItem('dc-token')||'').trim(); }
+function getDisplayName(){ return (localStorage.getItem('dc-display-name')||'').trim(); }
+function authHeaders(){
+  const t=getAuthToken(); return t?{'Authorization':`Bearer ${t}`}:{};
+}
+function setAuthDisplay(){
   const el=$('t-nav-login'); if(!el) return;
-  el.textContent = getOwner() || T('navLoginBtn');
+  el.textContent = getDisplayName() || T('navLoginBtn');
 }
-function handleLogin(){
-  const name=(prompt(lang==='zh'
-    ?'输入用户名（隔离你的报告与对话；可换浏览器找回，无密码）'
-    :'Enter a username (isolates your reports & chats; no password)', getOwner())||'').trim();
-  if(name){ localStorage.setItem('dc-owner',name); setOwnerDisplay(); }
+function handleLogin(){ openLoginModal(); }
+
+function openLoginModal(){
+  const loggedIn=!!getAuthToken();
+  const stIn=$('login-state-in'), stOut=$('login-state-out');
+  if(stIn) stIn.style.display=loggedIn?'block':'none';
+  if(stOut) stOut.style.display=loggedIn?'none':'block';
+  if(loggedIn){ const el=$('login-display-name'); if(el) el.textContent=getDisplayName()||'用户'; }
+  $('login-modal').style.display='flex';
 }
+function closeLoginModal(){ $('login-modal').style.display='none'; }
+function switchLoginTab(tab){
+  ['phone','google'].forEach(t=>{
+    const c=$(`login-tab-${t}`); if(c) c.style.display=t===tab?'flex':'none';
+    const btn=document.querySelector(`.login-tab[data-tab="${t}"]`);
+    if(btn) btn.classList.toggle('active',t===tab);
+  });
+}
+
+async function sendOtp(){
+  const phone=($('login-phone')?.value||'').trim();
+  if(!/^\d{11}$/.test(phone)){
+    alert(lang==='zh'?'请输入正确的 11 位手机号':'Enter a valid 11-digit phone number'); return;
+  }
+  const btn=$('send-otp-btn'); btn.disabled=true;
+  try{
+    const resp=await fetch('/auth/phone/send-otp',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({phone}),
+    });
+    if(!resp.ok){ const d=await resp.json(); alert(d.error); btn.disabled=false; return; }
+    const row=$('login-otp-row'); if(row) row.style.display='flex';
+    let sec=60;
+    const timer=setInterval(()=>{
+      btn.textContent=lang==='zh'?`${sec}s 后重发`:`Resend in ${sec}s`;
+      if(--sec<0){ clearInterval(timer); btn.disabled=false; btn.textContent=T('loginSendOtp'); }
+    },1000);
+  } catch{ btn.disabled=false; }
+}
+
+async function verifyOtp(){
+  const phone=($('login-phone')?.value||'').trim();
+  const code=($('login-otp')?.value||'').trim();
+  if(!code) return;
+  try{
+    const resp=await fetch('/auth/phone/verify',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({phone,code}),
+    });
+    if(!resp.ok){ const d=await resp.json(); alert(d.error); return; }
+    const {token,display_name}=await resp.json();
+    localStorage.setItem('dc-token',token);
+    localStorage.setItem('dc-display-name',display_name);
+    setAuthDisplay(); closeLoginModal();
+  } catch{ alert(lang==='zh'?'验证失败，请重试':'Verification failed, please retry'); }
+}
+
+async function logout(){
+  const token=getAuthToken();
+  if(token) await fetch('/auth/logout',{method:'POST',headers:{'Authorization':`Bearer ${token}`}}).catch(()=>{});
+  localStorage.removeItem('dc-token'); localStorage.removeItem('dc-display-name');
+  setAuthDisplay(); closeLoginModal();
+}
+
+const _exitSvg='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+const _expandSvg='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
+
+function _getOrCreateBackdrop(){
+  let bd=$('panel-expand-backdrop');
+  if(!bd){
+    bd=document.createElement('div');
+    bd.id='panel-expand-backdrop';
+    bd.className='panel-expand-backdrop';
+    bd.onclick=()=>{ document.querySelectorAll('.panel-fullscreen').forEach(p=>{ togglePanelFullscreen(p.id, p.id==='stream-panel'?'log-expand-btn':'pdf-expand-btn'); }); };
+    document.body.appendChild(bd);
+  }
+  return bd;
+}
+
+function togglePanelFullscreen(panelId, btnId){
+  const panel=$(panelId), btn=$(btnId);
+  const isFs=panel.classList.toggle('panel-fullscreen');
+  const exitLabel=lang==='zh'?'关闭':'Close';
+  btn.innerHTML=isFs ? `${_exitSvg}<span style="margin-left:4px">${exitLabel}</span>` : _expandSvg;
+  const bd=_getOrCreateBackdrop();
+  bd.classList.toggle('active', isFs);
+  if(isFs) document.addEventListener('keydown',_escHandler);
+  else document.removeEventListener('keydown',_escHandler);
+}
+function _escHandler(e){ if(e.key==='Escape') document.querySelectorAll('.panel-fullscreen').forEach(p=>{ togglePanelFullscreen(p.id, p.id==='stream-panel'?'log-expand-btn':'pdf-expand-btn'); }); }
 function downloadPdf(){
   if(!pdfPath){ alert(T('pdfEmpty')); return; }
   const a = document.createElement('a');
@@ -261,13 +373,12 @@ async function loadReportsList(){
   const list=$('reports-list');
   if(!list) return;
   list.innerHTML=`<div class="reports-loading">${T('myReportsLoading')}</div>`;
-  const owner=getOwner();
-  if(!owner){
+  if(!getAuthToken()){
     list.innerHTML=`<div class="reports-empty">${lang==='zh'?'请先登录（点击右上角登录按钮）':'Please log in first'}</div>`;
     return;
   }
   try{
-    const res=await fetch('/api/reports',{headers:{'X-Owner':owner}});
+    const res=await fetch('/api/reports',{headers:{...authHeaders()}});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const {reports}=await res.json();
     if(!reports||!reports.length){
@@ -287,7 +398,6 @@ async function loadReportsList(){
 async function loadReport(id, productName){
   closeReportsPanel();
   jumpTo('pdf-section');
-  const owner=getOwner();
   const _fname=$('pdf-fname');
   if(_fname) _fname.textContent=`${productName} 竞品分析报告`;
   const _pcontent=$('pdf-content');
@@ -295,7 +405,7 @@ async function loadReport(id, productName){
   $('qa-messages').innerHTML=`<p class="qa-hint-text" id="t-qa-hint">${T('qaHint')}</p>`;
   $('qa-box').classList.add('show');
   try{
-    const res=await fetch(`/api/reports/${id}`,{headers:{'X-Owner':owner}});
+    const res=await fetch(`/api/reports/${id}`,{headers:{...authHeaders()}});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const {report, messages}=await res.json();
     currentJobId=id;
@@ -386,7 +496,15 @@ function applyLang(){
   set('t-pay-note',t.payNote);
   // Update dynamic warn text
   const warnEl=$('api-warn'); if(warnEl) warnEl.textContent=t.keyWarn;
-  setOwnerDisplay();  // 登录态优先于"登录"按钮文案
+  setAuthDisplay();
+  // 登录弹窗 i18n
+  set('t-login-title',t.loginTitle); set('t-login-tab-phone',t.loginTabPhone);
+  set('t-login-tab-google',t.loginTabGoogle); set('t-login-phone-label',t.loginPhoneLabel);
+  setA('login-phone','placeholder',t.loginPhonePh); set('t-login-phone-hint',t.loginPhoneHint);
+  set('send-otp-btn',t.loginSendOtp); set('t-login-otp-label',t.loginOtpLabel);
+  setA('login-otp','placeholder',t.loginOtpPh); set('t-login-verify',t.loginVerify);
+  set('t-login-google-note',t.loginGoogleNote); set('t-login-google-btn',t.loginGoogleBtn);
+  set('t-login-logout',t.loginLogout);
 }
 function setLang(l){
   lang=l; applyLang(); renderScrollTrack();
@@ -1206,9 +1324,9 @@ function showReportStatus(status){
 }
 
 function setThink(show){ $('think-badge').classList.toggle('show',show); }
-function setProgress(pct,s){
+function setProgress(pct){
   $('progress-fill').style.width=pct+'%';
-  $('progress-text').textContent=pct>0?T('progress')(pct,s):'';
+  $('progress-text').textContent=pct>0?T('progress')(pct):'';
 }
 
 /* ══════════════════════════════════════
@@ -1262,7 +1380,7 @@ function handleSubmit(e){
 async function startAnalysis(){
   const product=$('input-product').value.trim();
   const btn=$('submit-btn'); btn.disabled=true;
-  $('log-body').innerHTML=''; setThink(false); setProgress(0,0);
+  $('log-body').innerHTML=''; setThink(false); setProgress(0);
   $('phase1-box').classList.remove('show');
   $('qa-box').classList.remove('show');
   const _rsb=$('report-status-badge'); if(_rsb) _rsb.style.display='none';
@@ -1275,7 +1393,6 @@ async function startAnalysis(){
   const fd=new FormData();
   fd.append('target_product',product);
   fd.append('user_query',$('input-query').value.trim()||product);
-  fd.append('owner',getOwner());
   if(uploadedFile) fd.append('file',uploadedFile);
   ['gpt5','deepseek','doubao'].forEach(fam=>{
     const key=$(`${fam}-key`)?.value.trim();
@@ -1284,7 +1401,7 @@ async function startAnalysis(){
   });
   const tv=$('tavily-key')?.value.trim(); if(tv) fd.append('tavily_key',tv);
   try{
-    const res=await fetch('/api/analyze',{method:'POST',body:fd});
+    const res=await fetch('/api/analyze',{method:'POST',body:fd,headers:{...authHeaders()}});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const {job_id}=await res.json();
     currentJobId=job_id; isSimulateMode=false;
@@ -1302,11 +1419,11 @@ function openSSE(jobId,btn){
       case 'tool_call': setThink(false); appendLog(msg.agent,`→ ${msg.tool}(${msg.args})`,true); break;
       case 'tool_result': appendLog(msg.agent,`← ${msg.tool} (${msg.size}) ${msg.preview}`,true); break;
       case 'log': appendLog(msg.agent,msg.text,false); break;
-      case 'progress': setProgress(msg.pct,msg.sec_left); break;
+      case 'progress': setProgress(msg.pct); break;
       case 'phase1_checkpoint':
         setThink(false); showPhase1Box(msg.summary); break;
       case 'done':
-        eventSource.close(); setThink(false); setProgress(100,0); btn.disabled=false;
+        eventSource.close(); setThink(false); setProgress(100); btn.disabled=false;
         stopTimer();
         if(msg.pdf_path) showPdf(msg.pdf_path,msg.filename);
         else{
@@ -1397,7 +1514,7 @@ async function sendReportQuestion(){
     });
     const res=await fetch(`/api/jobs/${currentJobId}/question`,{
       method:'POST',
-      headers:{'Content-Type':'application/json','X-Owner':getOwner()},
+      headers:{'Content-Type':'application/json',...authHeaders()},
       body:JSON.stringify(qBody),
     });
     const {answer}=await res.json();
@@ -1484,7 +1601,7 @@ function simulate(btn,product){
     [300,()=>setThink(true)],
     [1000,()=>{ appendLog('PM Agent',zh?'分析用户查询，制定竞品分析计划...':'Parsing query, creating plan...'); setThink(false); }],
     [600,()=>{
-      appendLog('PM Agent','→ initial_brief({...})',true); setProgress(8,90);
+      appendLog('PM Agent','→ initial_brief({...})',true); setProgress(8);
       // 若用户上传了参考文档，模拟 domain_seed 事件
       if(uploadedFile){
         renderDomainSeed({
@@ -1497,16 +1614,16 @@ function simulate(btn,product){
       }
     }],
     [900,()=>setThink(true)],
-    [800,()=>{ setThink(false); appendLog('Collector',zh?'联网搜索竞品官网...':'Searching competitor websites...'); setProgress(20,75); }],
+    [800,()=>{ setThink(false); appendLog('Collector',zh?'联网搜索竞品官网...':'Searching competitor websites...'); setProgress(20); }],
     [600,()=>appendLog('Collector','→ web_search({ query: "target pricing 2026" })',true)],
-    [900,()=>{ appendLog('Collector','← web_search (2.1KB) pricing data fetched...',true); setProgress(32,62); }],
+    [900,()=>{ appendLog('Collector','← web_search (2.1KB) pricing data fetched...',true); setProgress(32); }],
     [600,()=>setThink(true)],
-    [900,()=>{ setThink(false); appendLog('Insight',zh?'App Store 情感分析，抓取用户评论...':'App Store sentiment, crawling reviews...'); setProgress(56,38); }],
+    [900,()=>{ setThink(false); appendLog('Insight',zh?'App Store 情感分析，抓取用户评论...':'App Store sentiment, crawling reviews...'); setProgress(56); }],
     [600,()=>appendLog('Insight','→ appstore_search({ product: "...", region: "cn" })',true)],
-    [900,()=>{ appendLog('Insight','← appstore_search (3.2KB) 320 reviews',true); setProgress(68,26); }],
+    [900,()=>{ appendLog('Insight','← appstore_search (3.2KB) 320 reviews',true); setProgress(68); }],
     [600,()=>appendLog('Insight',zh?'BERT 情感分类完成...':'BERT classification done...')],
     [700,()=>{
-      setProgress(75,22);
+      setProgress(75);
       // PM 评审结果
       const mockUnits=[
         {agent:'collector',product_name:zh?'钉钉':'DingTalk',status:'passed',qa_flags:[],pm_note:null},
@@ -1540,8 +1657,8 @@ function continueSimulateAfterPhase1(){
   const zh=lang==='zh';
   const btn=simBtn, product=simProduct;
   const steps=[
-    [500,()=>{ appendLog('Reporter',zh?'开始生成报告...':'Generating report...'); setProgress(78,18); }],
-    [800,()=>{ appendLog('Reporter','→ finalize_swot({...})',true); setProgress(88,8); }],
+    [500,()=>{ appendLog('Reporter',zh?'开始生成报告...':'Generating report...'); setProgress(78); }],
+    [800,()=>{ appendLog('Reporter','→ finalize_swot({...})',true); setProgress(88); }],
     [900,()=>{
       // 报告终审 debate（call_report_reviewer）
       renderDebateResult({
@@ -1562,7 +1679,7 @@ function continueSimulateAfterPhase1(){
         note:i===0?(zh?'数据完整，评分可信':'Complete data, high confidence'):null,
       })));
       showReportStatus('passed');
-      setProgress(100,0);
+      setProgress(100);
     }],
     [400,()=>{
       setThink(false); stopTimer(); btn.disabled=false;
