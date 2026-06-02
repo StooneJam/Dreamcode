@@ -172,18 +172,21 @@ def finalize_profile(product_name: str, profile_json: str) -> str:
                 trial = {k: v for k, v in base.items() if k not in drop_fields}
                 try:
                     minimal = ProductProfile.model_validate(trial)
-                    warn = f"部分字段已跳过({drop_fields})：{err[:80]}" if drop_fields else err[:80]
-                    return json.dumps(
-                        {"product_name": product_name, "profile": minimal.model_dump(),
-                         "_warn": warn},
-                        ensure_ascii=False,
+                    skipped = f"，跳过字段 {drop_fields}" if drop_fields else ""
+                    return (
+                        f"提交成功：{product_name} ProductProfile 已入库"
+                        f"（{len(minimal.dimensions)} 个维度{skipped}）。"
+                        f"本产品 ReAct 任务已完成，请立即停止所有工具调用，"
+                        f"不得再次调用 finalize_profile。"
                     )
                 except Exception:
                     continue
         return err  # 实在无法恢复才返回错误让模型重试
-    return json.dumps(
-        {"product_name": product_name, "profile": profile.model_dump()},
-        ensure_ascii=False,
+    return (
+        f"提交成功：{product_name} ProductProfile 已入库"
+        f"（{len(profile.dimensions)} 个维度，{len(profile.sources)} 个来源）。"
+        f"本产品 ReAct 任务已完成，请立即停止所有工具调用，"
+        f"不得再次调用 finalize_profile。"
     )
 
 
