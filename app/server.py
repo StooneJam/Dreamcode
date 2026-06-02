@@ -5,7 +5,7 @@
   GET  /api/stream/{job_id}          → SSE：实时推 Agent 日志 + done/error
   GET  /api/report/pdf               → 内嵌预览或下载 PDF
   POST /api/jobs/{job_id}/feedback   → Phase 1 用户修订意见 → resume graph
-  POST /api/jobs/{job_id}/question   → 报告 Q&A（基于 report_md 用 LLM 回答）
+  POST /api/jobs/{job_id}/question   → 报告多轮 Q&A（基于 report_md + qa_history）
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from cca.agents._streaming import set_sse_emitter
+from cca.agents.qa_chat import answer_question
 from cca.graph import build_graph, empty_state
 from cca.llm.factory import LLMCredential, SLOT_DEFAULTS, get_report_llm, use_credentials
 from cca.schema import AgentFamily
@@ -278,28 +279,30 @@ async def question(job_id: str, body: dict) -> dict:
         return {"answer": "报告尚未生成，请稍后再试。"}
 
     report_md = (job.get("result") or {}).get("report_md") or ""
-    q = body.get("question", "").strip()
+    q = (body.get("question") or "").strip()
     if not q or not report_md:
         return {"answer": "无法回答：报告内容不可用。"}
 
-    creds = job.get("creds")
-    loop = asyncio.get_event_loop()
-    ctx = contextvars.copy_context()
+    # 同会话串行，避免并发问答交错写 qa_history
+    if "qa_lock" not in job:
+        job["qa_lock"] = asyncio.Lock()
 
-    def _answer():
-        from langchain_core.messages import HumanMessage, SystemMessage
-        with use_credentials(creds):
-            llm = get_report_llm()
-            return llm.invoke([
-                SystemMessage(content=(
-                    "你是竞品分析助手。基于以下报告内容简洁地回答用户问题，"
-                    "只引用报告中有的信息，不要编造数据。"
-                )),
-                HumanMessage(content=f"报告内容：\n{report_md[:6000]}\n\n问题：{q}"),
-            ]).content
+    async with job["qa_lock"]:
+        history: list[dict] = job.setdefault("qa_history", [])
+        creds = job.get("creds")
+        ctx = contextvars.copy_context()
 
-    try:
-        answer = await loop.run_in_executor(None, ctx.run, _answer)
-        return {"answer": answer}
-    except Exception as exc:
-        return {"answer": f"回答失败：{exc}"}
+        def _answer() -> str:
+            with use_credentials(creds):
+                return answer_question(report_md, history, q, get_report_llm())
+
+        try:
+            loop = asyncio.get_event_loop()
+            answer = await loop.run_in_executor(None, ctx.run, _answer)
+        except Exception as exc:
+            return {"answer": f"回答失败：{exc}"}
+
+        history.append({"role": "user", "content": q})
+        history.append({"role": "assistant", "content": answer})
+
+    return {"answer": answer}
