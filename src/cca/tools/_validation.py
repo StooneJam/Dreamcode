@@ -28,8 +28,9 @@ def _format_decode_error(json_str: str, e: json.JSONDecodeError) -> str:
     )
 
 
-def _unclosed_brackets(s: str) -> list[str]:
-    """返回 s 中未闭合的括号/大括号的补全序列（倒序），不进入字符串内部。"""
+
+def _scan_structure(s: str) -> tuple[list[str], bool]:
+    """扫描 JSON 字符串，返回 (需要补全的括号列表, 是否在字符串内部结束)。"""
     stack: list[str] = []
     in_str = False
     esc = False
@@ -49,29 +50,29 @@ def _unclosed_brackets(s: str) -> list[str]:
             stack.append("}" if c == "{" else "]")
         elif c in ("}", "]") and stack:
             stack.pop()
-    return list(reversed(stack))
+    return list(reversed(stack)), in_str
 
 
 def _try_recover_truncated(json_str: str) -> tuple[dict | list | None, None]:
-    """截断恢复：从错误位置倒退，找到上一个合法分隔边界后补全括号。
+    """截断恢复：从末尾逐字符回退，找到合法边界后补全引号+括号。
 
-    Doubao 在输出 token 上限时会在 JSON 中间截断；该函数丢弃截断后的残片，
-    补上缺失的 `}` / `]` 使其成为合法 JSON，代价是最后几条 fact 可能丢失。
-    最多回退 500 字符；无法恢复则返 (None, None)。
+    Doubao token 上限导致 JSON 截断，可能在字符串内部（需补 `"`）或括号
+    内部（需补 `}` / `]`）。最多回退 1200 字符；无法恢复返 (None, None)。
     """
     s = json_str.rstrip()
-    # 先尝试从末尾直接补括号
-    for trim in range(0, min(500, len(s))):
+    for trim in range(0, min(1200, len(s))):
         candidate = s[: len(s) - trim] if trim else s
-        closing = _unclosed_brackets(candidate)
-        if closing:
-            completed = candidate + "".join(closing)
-        else:
-            completed = candidate
-        try:
-            return json.loads(completed), None
-        except json.JSONDecodeError:
-            pass
+        closing_brackets, ends_in_str = _scan_structure(candidate)
+        closing = "".join(closing_brackets)
+        # 同时尝试：直接补括号 / 先关引号再补括号
+        variants = [candidate + closing]
+        if ends_in_str:
+            variants.append(candidate + '"' + closing)
+        for completed in variants:
+            try:
+                return json.loads(completed), None
+            except json.JSONDecodeError:
+                pass
     return None, None
 
 

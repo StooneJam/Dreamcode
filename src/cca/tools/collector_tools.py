@@ -143,9 +143,15 @@ def finalize_profile(product_name: str, profile_json: str) -> str:
     工具会主动清洗常见 schema 偏差（无 source_url 的 Evidence 会被剔除；无证据的 Fact 会被剔除）。
     清洗后仍不合规会抛 ToolException 带具体字段路径，ReAct 看到后修 JSON 重试。
     """
+    def _clean(d: dict) -> dict:
+        # 无论模型是否传入 product_name，都用外层参数覆盖，避免 Field required 循环
+        d = _clean_profile(d)
+        d["product_name"] = product_name
+        return d
+
     profile, err = safe_load_validate(
         profile_json, ProductProfile,
-        pre_clean=_clean_profile,
+        pre_clean=_clean,
         hint=(
             "字段规则提示："
             "\n- Dimension 必填：name, category, facts"
@@ -156,8 +162,6 @@ def finalize_profile(product_name: str, profile_json: str) -> str:
     )
     if err:
         return err
-    if profile.product_name != product_name:
-        profile = profile.model_copy(update={"product_name": product_name})
     return json.dumps(
         {"product_name": product_name, "profile": profile.model_dump()},
         ensure_ascii=False,
