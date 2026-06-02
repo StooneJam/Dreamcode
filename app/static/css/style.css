@@ -1487,7 +1487,7 @@ footer {
 /* Overlay backdrop */
 .panel-expand-backdrop {
   display: none; position: fixed; inset: 0; z-index: 7999;
-  background: var(--bg-light);
+  background: rgba(0, 0, 0, 0.6);
 }
 .panel-expand-backdrop.active { display: block; }
 

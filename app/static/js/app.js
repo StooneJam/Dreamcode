@@ -347,8 +347,20 @@ function togglePanelFullscreen(panelId, btnId){
   btn.innerHTML=isFs ? `${_exitSvg}<span style="margin-left:4px">${exitLabel}</span>` : _expandSvg;
   const bd=_getOrCreateBackdrop();
   bd.classList.toggle('active', isFs);
-  if(isFs) document.addEventListener('keydown',_escHandler);
-  else document.removeEventListener('keydown',_escHandler);
+  if(isFs){
+    // 脱离 section 的 stacking context，直接挂到 body（根上下文），
+    // 确保 z-index:8000 能压过 backdrop 的 z-index:7999
+    panel._fsParent=panel.parentNode;
+    panel._fsNextSib=panel.nextSibling;
+    document.body.appendChild(panel);
+    document.addEventListener('keydown',_escHandler);
+  } else {
+    // 退出全屏：还原到原始 DOM 位置
+    if(panel._fsParent){
+      panel._fsParent.insertBefore(panel, panel._fsNextSib||null);
+    }
+    document.removeEventListener('keydown',_escHandler);
+  }
 }
 function _escHandler(e){ if(e.key==='Escape') document.querySelectorAll('.panel-fullscreen').forEach(p=>{ togglePanelFullscreen(p.id, p.id==='stream-panel'?'log-expand-btn':'pdf-expand-btn'); }); }
 function downloadPdf(){
