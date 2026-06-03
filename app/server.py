@@ -12,13 +12,15 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
+import re
 import sys
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import FastAPI, File, Form, Header, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi import Depends, FastAPI, File, Form, Header, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -43,6 +45,17 @@ _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 _jobs: dict[str, dict] = {}
 # 按 (job_id, owner) 串行化同会话问答，避免历史交错与重复建会话
 _qa_locks: dict[str, asyncio.Lock] = {}
+
+
+# ── Owner 解析（从 session token） ────────────────────────────────────────
+
+
+def _resolve_owner(authorization: str = Header("", alias="Authorization")) -> str:
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        return "anonymous"
+    from cca.auth.session import resolve_session
+    return resolve_session(token) or "anonymous"
 
 
 # ── 凭证构建 ──────────────────────────────────────────────────────────────
@@ -205,15 +218,14 @@ async def index() -> FileResponse:
 async def analyze(
     target_product: str = Form(...),
     user_query: str = Form(""),
-    owner: str = Form(""),
     file: UploadFile | None = File(None),
     gpt5_key: str | None = Form(None),
     deepseek_key: str | None = Form(None),
     doubao_key: str | None = Form(None),
     tavily_key: str | None = Form(None),
+    owner: str = Depends(_resolve_owner),
 ) -> dict:
     job_id = str(uuid.uuid4())
-    owner = owner.strip() or "anonymous"
 
     user_files: list[str] | None = None
     if file and file.filename:
@@ -288,9 +300,8 @@ async def feedback(job_id: str, body: dict) -> dict:
 
 @app.post("/api/jobs/{job_id}/question")
 async def question(
-    job_id: str, body: dict, owner: str = Header("anonymous", alias="X-Owner")
+    job_id: str, body: dict, owner: str = Depends(_resolve_owner)
 ) -> dict:
-    owner = (owner or "").strip() or "anonymous"
     q = (body.get("question") or "").strip()
     if not q:
         return {"answer": "无法回答：问题为空。"}
@@ -334,19 +345,79 @@ async def question(
 
 
 @app.get("/api/reports")
-async def reports_list(owner: str = Header("anonymous", alias="X-Owner")) -> dict:
+async def reports_list(owner: str = Depends(_resolve_owner)) -> dict:
     """该 owner 的历史报告列表（不含正文）。"""
-    owner = (owner or "").strip() or "anonymous"
     return {"reports": db.list_reports(owner)}
 
 
 @app.get("/api/reports/{report_id}")
-async def report_detail(
-    report_id: str, owner: str = Header("anonymous", alias="X-Owner")
-):
+async def report_detail(report_id: str, owner: str = Depends(_resolve_owner)):
     """回看单份报告：正文 + 历史对话。owner 不匹配返 404。"""
-    owner = (owner or "").strip() or "anonymous"
     report = db.get_report(report_id, owner)
     if not report:
         return JSONResponse({"error": "not found"}, status_code=404)
     return {"report": report, "messages": db.get_history(report_id, owner)}
+
+
+# ── Auth endpoints ─────────────────────────────────────────────────────────
+
+
+@app.post("/auth/phone/send-otp")
+async def phone_send_otp(body: dict) -> dict:
+    phone = (body.get("phone") or "").strip()
+    if not re.match(r"^\d{11}$", phone):
+        return JSONResponse({"error": "手机号格式不正确"}, status_code=400)
+    from cca.auth.sms_otp import send_otp
+    try:
+        send_otp(phone)
+    except Exception as exc:
+        return JSONResponse({"error": f"短信发送失败：{exc}"}, status_code=502)
+    return {"ok": True}
+
+
+@app.post("/auth/phone/verify")
+async def phone_verify(body: dict) -> dict:
+    phone = (body.get("phone") or "").strip()
+    code = (body.get("code") or "").strip()
+    from cca.auth.sms_otp import verify_otp
+    if not verify_otp(phone, code):
+        return JSONResponse({"error": "验证码错误或已过期"}, status_code=400)
+    from cca.auth.session import create_session
+    user_id, display_name = db.get_or_create_user("phone", phone, f"用户{phone[-4:]}")
+    token = create_session(user_id)
+    return {"token": token, "display_name": display_name}
+
+
+@app.get("/auth/google")
+async def google_login(request: Request) -> RedirectResponse:
+    from cca.auth.google_oauth import build_auth_url
+    redirect_uri = str(request.url_for("google_callback"))
+    return RedirectResponse(build_auth_url(redirect_uri))
+
+
+@app.get("/auth/google/callback", name="google_callback")
+async def google_callback(request: Request, code: str = "", error: str = "") -> RedirectResponse:
+    if error or not code:
+        return RedirectResponse("/?auth_error=google")
+    try:
+        from cca.auth.google_oauth import fetch_userinfo
+        from cca.auth.session import create_session
+        redirect_uri = str(request.url_for("google_callback"))
+        userinfo = await fetch_userinfo(code, redirect_uri)
+        user_id, display_name = db.get_or_create_user(
+            "google", userinfo["sub"], userinfo.get("name") or userinfo.get("email", "用户")
+        )
+        token = create_session(user_id)
+    except Exception:
+        return RedirectResponse("/?auth_error=google")
+    encoded_name = quote(display_name, safe="")
+    return RedirectResponse(f"/?token={token}&display_name={encoded_name}")
+
+
+@app.post("/auth/logout")
+async def logout(authorization: str = Header("", alias="Authorization")) -> dict:
+    token = authorization.removeprefix("Bearer ").strip()
+    if token:
+        from cca.auth.session import delete_session
+        delete_session(token)
+    return {"ok": True}

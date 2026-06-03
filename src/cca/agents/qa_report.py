@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
-from cca.agents._streaming import stream_react
+from cca.agents._streaming import emit_sse, stream_react
 from cca.llm.factory import cross_family_enabled, get_report_llm
 from cca.schema import QAResult, ReportTask, ReviewUnit
 from cca.skills.call_report_reviewer import call_report_reviewer
@@ -350,6 +350,7 @@ def report_node(state: CCAState) -> dict:
             call_reviewer,
         ],
     )
+    emit_sse({"type": "progress", "pct": 75, "sec_left": 25})
     messages = stream_react(
         agent,
         [
@@ -383,6 +384,10 @@ def report_node(state: CCAState) -> dict:
         report_status = "unreviewed"
     else:
         report_status = "passed" if reviewer_result.passed else "failed"
+
+    emit_sse({"type": "report_status", "status": report_status})
+    emit_sse({"type": "qa_result", "results": [reviewer_result.model_dump()]})
+    emit_sse({"type": "progress", "pct": 95, "sec_left": 2})
 
     from datetime import datetime, timezone
     return {

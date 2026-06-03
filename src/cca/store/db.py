@@ -36,9 +36,34 @@ CREATE TABLE IF NOT EXISTS messages (
     content         TEXT NOT NULL,
     created_at      TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS users (
+    id           TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_identities (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    UNIQUE(provider, provider_id)
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token      TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS otp_codes (
+    phone      TEXT PRIMARY KEY,
+    code       TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_reports_owner ON reports(owner, created_at);
 CREATE INDEX IF NOT EXISTS idx_conv_lookup ON conversations(report_id, owner);
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 """
 
 
@@ -155,3 +180,76 @@ def get_history(report_id: str, owner: str) -> list[dict]:
             (conv["id"],),
         ).fetchall()
     return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────
+
+
+def get_or_create_user(provider: str, provider_id: str, display_name: str) -> tuple[str, str]:
+    """按 (provider, provider_id) 查找或新建用户，返回 (user_id, display_name)。"""
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM user_identities WHERE provider = ? AND provider_id = ?",
+            (provider, provider_id),
+        ).fetchone()
+        if row:
+            user_id = row["user_id"]
+            name_row = conn.execute(
+                "SELECT display_name FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+            return user_id, name_row["display_name"]
+        user_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO users(id, display_name, created_at) VALUES (?, ?, ?)",
+            (user_id, display_name, _now()),
+        )
+        conn.execute(
+            "INSERT INTO user_identities(id, user_id, provider, provider_id, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), user_id, provider, provider_id, _now()),
+        )
+    return user_id, display_name
+
+
+def save_session(token: str, user_id: str, expires_at: str) -> None:
+    with _tx() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions(token, user_id, expires_at, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (token, user_id, expires_at, _now()),
+        )
+
+
+def get_session_user(token: str) -> str | None:
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM sessions WHERE token = ? AND expires_at > ?",
+            (token, _now()),
+        ).fetchone()
+    return row["user_id"] if row else None
+
+
+def delete_session(token: str) -> None:
+    with _tx() as conn:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+def save_otp(phone: str, code: str, expires_at: str) -> None:
+    with _tx() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO otp_codes(phone, code, expires_at) VALUES (?, ?, ?)",
+            (phone, code, expires_at),
+        )
+
+
+def check_and_consume_otp(phone: str, code: str) -> bool:
+    """验证验证码是否正确且未过期；正确时立即删除（防重放）。"""
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT code FROM otp_codes WHERE phone = ? AND expires_at > ?",
+            (phone, _now()),
+        ).fetchone()
+        if not row or row["code"] != code:
+            return False
+        conn.execute("DELETE FROM otp_codes WHERE phone = ?", (phone,))
+    return True
