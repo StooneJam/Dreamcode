@@ -118,6 +118,28 @@ def test_initial_brief_node_returns_initial_brief(monkeypatch: pytest.MonkeyPatc
     assert "domain_seed" not in result
 
 
+def test_initial_brief_node_writes_back_refined_target_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PM 精炼后的 target_product 回写 state，成为单一来源（覆盖入口原值）。"""
+    output = InitialBriefOutput(
+        initial_brief=InitialBrief(
+            target_product="小米 Buds 4",
+            company_hint="小米",
+            user_query="分析 200 元内的耳机",
+        ),
+        decision_records=[_mk_decision("target_product_selection")],
+    )
+    _patch_pm_gpt(monkeypatch, output)
+
+    from cca.agents.pm import initial_brief_node
+
+    result = initial_brief_node(
+        _make_minimal_state(user_query="分析 200 元内的耳机", target_product="耳机")
+    )
+    assert result["target_product"] == "小米 Buds 4"
+
+
 def test_initial_brief_node_consumes_user_file_and_produces_domain_seed(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:

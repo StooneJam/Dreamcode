@@ -182,6 +182,10 @@ def initial_brief_node(state: CCAState) -> dict:
 
     updates: dict = {
         "initial_brief": result.initial_brief.model_dump(),
+        # 回写精炼后的 target_product，作为 phase 1 之后的单一来源：下游（Collector 探索 /
+        # 报告 / 前端摘要）统一读 state.target_product，避免「PM 精炼了 target 但报告读的还是
+        # 入口原值」的分叉。原始用户输入仍保留在 state.user_query，不丢信息。
+        "target_product": result.initial_brief.target_product,
         "decision_log": _stamp_decisions(result.decision_records, "initial_brief"),
     }
     if result.domain_seed is not None and file_path is not None:
