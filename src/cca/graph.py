@@ -212,6 +212,7 @@ def empty_state(user_query: str, target_product: str, user_files: list[str] | No
     return {
         "user_query": user_query,
         "target_product": target_product,
+        "report_language": "zh",
         "user_files": user_files,
         "initial_brief": None,
         "domain_seed": None,
