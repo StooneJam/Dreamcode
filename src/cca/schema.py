@@ -87,9 +87,13 @@ class ReviewSample(BaseModel):
 
     text: str
     rating: int | None = Field(None, ge=1, le=5)
-    platform: Literal["appstore_cn", "appstore_us", "zhihu", "weibo", "other"] = Field(
+    platform: str = Field(
         default="other",
-        description="评论来源平台，默认 'other'；App Store 中文区填 'appstore_cn'",
+        description=(
+            "评论来源平台，开放字符串：不预设产品领域。"
+            "App 'appstore_cn'/'appstore_us'，社交 'zhihu'/'weibo'，电商 'tmall'/'jd'/'amazon'，"
+            "垂类/专业测评站或任意自定义来源名；未知填 'other'"
+        ),
     )
     source: Evidence | None = None
 
@@ -97,9 +101,15 @@ class ReviewSample(BaseModel):
 class UserSentiment(BaseModel):
     """用户口碑聚合，全部数据须来自公开渠道的客观抓取。"""
 
-    appstore_cn_rating: float | None = Field(None, ge=1, le=5, description="AppStore 实际评分")
-    appstore_cn_review_count: int | None = None
-    appstore_region: str | None = Field(None, description="评分所在区域，如 'cn'、'us'、'global'")
+    aggregate_rating: float | None = Field(
+        None, ge=1, le=5,
+        description="渠道聚合评分，统一归一到 1–5（App Store 评分 / 电商星级 / 垂类评分皆可）",
+    )
+    rating_review_count: int | None = Field(None, description="评分对应的评论/打分样本量")
+    rating_source: str | None = Field(
+        None,
+        description="评分来源渠道，开放字符串，如 'appstore_cn' / 'tmall' / 'jd' / 'amazon' / 'fragrantica'",
+    )
     positive_themes: list[str] = Field(
         default_factory=list,
         description="用户好评的主题归纳，由 LLM 基于 BERT positive 分组评论自由归纳",
@@ -240,11 +250,12 @@ class InsightTask(BaseModel):
     """PM 分配给 Insight 的单项分析任务。"""
 
     product_name: str
-    target_platforms: list[Literal["appstore_cn", "appstore_us", "zhihu", "weibo", "other"]] = (
-        Field(
-            default_factory=list,
-            description="PM 凭训练知识给 hint，Insight 可拒绝 / 扩展 / 替换；为空则由 Insight 自主决定",
-        )
+    target_platforms: list[str] = Field(
+        default_factory=list,
+        description=(
+            "PM 给的数据源 hint，开放字符串（App Store / 电商 / 垂类社区 / 任意来源名），"
+            "不预设产品领域；Insight 可拒绝 / 扩展 / 替换；为空则由 Insight 自主决定"
+        ),
     )
     priority_dimensions: list[str] = Field(
         default_factory=list,

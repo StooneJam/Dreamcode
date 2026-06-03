@@ -101,7 +101,7 @@ class TestInsightOneProduct:
     def _fake_sentiment(self, product_name: str) -> str:
         from cca.schema import UserSentiment
         s = UserSentiment(
-            appstore_cn_rating=4.2,
+            aggregate_rating=4.2,
             positive_themes=["界面简洁", "通知及时"],
             negative_themes=["偶发卡顿"],
         )
@@ -340,18 +340,18 @@ class TestFinalizeSentimentTool:
     def _valid_sentiment_json(self) -> str:
         from cca.schema import UserSentiment
         return UserSentiment(
-            appstore_cn_rating=4.2,
-            appstore_cn_review_count=50000,
-            appstore_region="cn",
+            aggregate_rating=4.2,
+            rating_review_count=50000,
+            rating_source="appstore_cn",
             positive_themes=["协同效率高", "通知及时"],
             negative_themes=["偶发卡顿"],
-        ).model_json()
+        ).model_dump_json()
 
     def test_returns_product_name_and_sentiment(self):
         from cca.tools.insight_tools import finalize_sentiment
         from cca.schema import UserSentiment
         s_json = UserSentiment(
-            appstore_cn_rating=4.1,
+            aggregate_rating=4.1,
             positive_themes=["好用"],
             negative_themes=["卡顿"],
         ).model_dump_json()
@@ -361,25 +361,25 @@ class TestFinalizeSentimentTool:
             "sentiment_json": s_json,
         }))
         assert result["product_name"] == "钉钉"
-        assert result["sentiment"]["appstore_cn_rating"] == 4.1
+        assert result["sentiment"]["aggregate_rating"] == 4.1
         assert "好用" in result["sentiment"]["positive_themes"]
 
     def test_invalid_rating_returns_error_string(self):
         """rating 越界 → 返回 LLM-friendly 错误字符串（不 raise）。"""
         from cca.tools.insight_tools import finalize_sentiment
 
-        bad_json = '{"appstore_cn_rating": 99, "positive_themes": [], "negative_themes": []}'
+        bad_json = '{"aggregate_rating": 99, "positive_themes": [], "negative_themes": []}'
         result = finalize_sentiment.invoke({"product_name": "X", "sentiment_json": bad_json})
         assert "UserSentiment 校验失败" in result
-        assert "appstore_cn_rating" in result
+        assert "aggregate_rating" in result
 
     def test_schema_fields_preserved(self):
         from cca.tools.insight_tools import finalize_sentiment
         from cca.schema import UserSentiment
         s = UserSentiment(
-            appstore_cn_rating=3.5,
-            appstore_cn_review_count=1000,
-            appstore_region="cn",
+            aggregate_rating=3.5,
+            rating_review_count=1000,
+            rating_source="appstore_cn",
             positive_themes=["a", "b"],
             negative_themes=["c"],
         )
@@ -388,8 +388,8 @@ class TestFinalizeSentimentTool:
             "sentiment_json": s.model_dump_json(),
         }))
         sent = result["sentiment"]
-        assert sent["appstore_cn_review_count"] == 1000
-        assert sent["appstore_region"] == "cn"
+        assert sent["rating_review_count"] == 1000
+        assert sent["rating_source"] == "appstore_cn"
         assert sent["positive_themes"] == ["a", "b"]
 
 

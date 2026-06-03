@@ -81,9 +81,9 @@ def sentiment(evidence: Evidence) -> UserSentiment:
         source=evidence,
     )
     return UserSentiment(
-        appstore_cn_rating=4.6,
-        appstore_cn_review_count=12000,
-        appstore_region="cn",
+        aggregate_rating=4.6,
+        rating_review_count=12000,
+        rating_source="appstore_cn",
         positive_themes=["通话稳定", "界面简洁"],
         negative_themes=["通知有时延迟"],
         representative_reviews=[review],
@@ -139,8 +139,8 @@ def test_pricing_info_valid(pricing: PricingInfo) -> None:
 
 
 def test_user_sentiment_valid(sentiment: UserSentiment) -> None:
-    assert sentiment.appstore_cn_rating == 4.6
-    assert sentiment.appstore_cn_review_count == 12000
+    assert sentiment.aggregate_rating == 4.6
+    assert sentiment.rating_review_count == 12000
 
 
 def test_swot_valid(swot: SWOT) -> None:
@@ -218,9 +218,10 @@ def test_insight_task_accepts_multiple_platforms() -> None:
     assert len(task.target_platforms) == 2
 
 
-def test_insight_task_rejects_invalid_platform() -> None:
-    with pytest.raises(ValidationError):
-        InsightTask(product_name="飞书", target_platforms=["twitter"])
+def test_insight_task_accepts_open_platform() -> None:
+    """target_platforms 是开放字符串：不预设产品领域，任意来源名都接受。"""
+    task = InsightTask(product_name="飞书", target_platforms=["twitter", "fragrantica", "tmall"])
+    assert task.target_platforms == ["twitter", "fragrantica", "tmall"]
 
 
 def test_report_task_valid() -> None:
@@ -292,14 +293,15 @@ def test_review_sample_rejects_out_of_range_rating() -> None:
         ReviewSample(text="好评", rating=6, platform="appstore_cn")
 
 
-def test_review_sample_rejects_invalid_platform() -> None:
-    with pytest.raises(ValidationError):
-        ReviewSample(text="好评", rating=5, platform="twitter")
+def test_review_sample_accepts_open_platform() -> None:
+    """platform 是开放字符串：电商 / 垂类 / 任意来源名都接受。"""
+    sample = ReviewSample(text="好评", rating=5, platform="fragrantica")
+    assert sample.platform == "fragrantica"
 
 
 def test_user_sentiment_rejects_out_of_range_rating() -> None:
     with pytest.raises(ValidationError):
-        UserSentiment(appstore_cn_rating=5.5)
+        UserSentiment(aggregate_rating=5.5)
 
 
 def test_product_profile_rejects_out_of_range_confidence() -> None:

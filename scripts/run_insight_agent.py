@@ -262,15 +262,15 @@ def run_real_pipeline() -> None:
         ]
 
         sentiment = UserSentiment(
-            appstore_cn_rating=appstore_rating,
-            appstore_cn_review_count=appstore_review_count,
-            appstore_region="cn",
+            aggregate_rating=appstore_rating,
+            rating_review_count=appstore_review_count,
+            rating_source="appstore_cn",
             positive_themes=positive_themes,
             negative_themes=negative_themes,
             representative_reviews=rep_reviews,
             sources=sources,
         )
-        print(f"  AppStore 评分：{sentiment.appstore_cn_rating}（{sentiment.appstore_cn_review_count} 条评论）")
+        print(f"  评分：{sentiment.aggregate_rating}（{sentiment.rating_review_count} 条评论，来源 {sentiment.rating_source}）")
         print(f"  positive_themes：{sentiment.positive_themes}")
         print(f"  negative_themes：{sentiment.negative_themes}")
         print(f"  代表性评论数：{len(sentiment.representative_reviews)}")
@@ -280,7 +280,7 @@ def run_real_pipeline() -> None:
     _section("全部产品 UserSentiment 汇总")
     for name, s in all_results.items():
         print(f"\n  {name}")
-        print(f"    AppStore：{s.get('appstore_cn_rating')}  评论数：{s.get('appstore_cn_review_count')}")
+        print(f"    评分：{s.get('aggregate_rating')}  评论数：{s.get('rating_review_count')}  来源：{s.get('rating_source')}")
         print(f"    正面：{s.get('positive_themes')}")
         print(f"    负面：{s.get('negative_themes')}")
 
@@ -344,9 +344,9 @@ def run_mock_pipeline() -> None:
 
         _step(8, "整合 UserSentiment（mock）")
         s = UserSentiment(
-            appstore_cn_rating=4.2 if name == "钉钉" else 4.0,
-            appstore_cn_review_count=10000,
-            appstore_region="cn",
+            aggregate_rating=4.2 if name == "钉钉" else 4.0,
+            rating_review_count=10000,
+            rating_source="appstore_cn",
             positive_themes=positive_themes,
             negative_themes=negative_themes,
             representative_reviews=[

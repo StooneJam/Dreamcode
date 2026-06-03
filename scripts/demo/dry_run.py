@@ -143,7 +143,7 @@ def _insight_msgs(names: list[str]) -> list[Any]:
     for n in names:
         from cca.schema import ReviewSample
         sentiment = UserSentiment(
-            appstore_cn_rating=4.0, appstore_cn_review_count=10000,
+            aggregate_rating=4.0, rating_review_count=10000,
             positive_themes=["界面简洁"], negative_themes=["偶发卡顿"],
             representative_reviews=[
                 ReviewSample(text=f"{n} 评论 {i}", rating=4, platform="appstore_cn")

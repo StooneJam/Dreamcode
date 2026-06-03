@@ -75,7 +75,8 @@ def _feishu() -> dict:
             ],
         ),
         sentiment=UserSentiment(
-            appstore_cn_rating=4.6, appstore_cn_review_count=85000,
+            aggregate_rating=4.6, rating_review_count=85000,
+            rating_source="appstore_cn",
             positive_themes=["界面设计现代", "文档协作流畅", "视频会议稳定", "AI 功能实用"],
             negative_themes=["功能复杂，上手成本高", "通知推送混乱", "与钉钉生态不兼容"],
             representative_reviews=[
@@ -131,7 +132,8 @@ def _dingtalk() -> dict:
             ],
         ),
         sentiment=UserSentiment(
-            appstore_cn_rating=4.4, appstore_cn_review_count=210000,
+            aggregate_rating=4.4, rating_review_count=210000,
+            rating_source="appstore_cn",
             positive_themes=["使用普及广", "考勤打卡功能完善", "政企生态成熟"],
             negative_themes=["广告推广内容多", "界面相对老旧", "免费版限制明显"],
             representative_reviews=[
@@ -178,7 +180,8 @@ def _wecom() -> dict:
             ],
         ),
         sentiment=UserSentiment(
-            appstore_cn_rating=4.2, appstore_cn_review_count=95000,
+            aggregate_rating=4.2, rating_review_count=95000,
+            rating_source="appstore_cn",
             positive_themes=["与微信无缝衔接", "客户管理方便", "消息到达率高"],
             negative_themes=["内部协作功能偏弱", "文档能力较弱", "界面与微信重叠感强"],
             representative_reviews=[

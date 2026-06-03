@@ -41,8 +41,8 @@ def _make_profile(name: str, rating: float, price: float) -> dict:
         tiers=[PricingTier(name="Pro", price_per_user_monthly=price, currency="CNY")],
     )
     sentiment = UserSentiment(
-        appstore_cn_rating=rating,
-        appstore_cn_review_count=12000,
+        aggregate_rating=rating,
+        rating_review_count=12000,
         positive_themes=["界面简洁", "通知及时"],
         negative_themes=["偶发卡顿", "视频会议掉线"],
         representative_reviews=[

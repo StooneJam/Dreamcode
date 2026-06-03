@@ -63,13 +63,15 @@ def build_insight_context(state: CCAState, product_name: str) -> dict:
         "profiles": state.get("profiles", {}),
         "competitor_names": state.get("competitor_names", []),
         "target_product": state["target_product"],
+        # 数据源路由信号：一轮 debate 收敛的权威赛道，Insight 据此选 App Store / 电商 / 垂类
+        "product_type": task_plan.get("product_type") or "",
         # 软引导：让 Insight 知道 PM 预设的 bucket，themes 尽量覆盖；非强制
         "tentative_buckets": task_plan.get("tentative_buckets") or [],
     }
 
 
 def _build_insight_product_message(
-    task: InsightTask, profiles: dict, competitor_names: list[str],
+    task: InsightTask, profiles: dict, competitor_names: list[str], product_type: str,
 ) -> str:
     task_json = json.dumps(task.model_dump(), ensure_ascii=False)
     profiles_hint = json.dumps(
@@ -83,11 +85,13 @@ def _build_insight_product_message(
     )
     return (
         f"## InsightTask · {task.product_name}\n```json\n{task_json}\n```\n\n"
+        f"## 产品赛道（数据源路由依据）\nproduct_type: {product_type or '未知'}\n\n"
         f"## 竞品全列表（run_questionnaire 参数用）\n"
         f"{', '.join(competitor_names)}\n\n"
         f"## 已知产品基本信息（来自 Collector）\n```json\n{profiles_hint}\n```\n\n"
         f"## 情感分析策略\n{sentiment_hint}\n\n"
-        f"请对 **{task.product_name}** 采集用户评论与情感，完成后调用 finalize_sentiment。"
+        f"请按 product_type 选数据源（详见系统提示的数据源路由），对 **{task.product_name}** "
+        f"采集用户口碑与情感，完成后调用 finalize_sentiment。"
     )
 
 
@@ -98,6 +102,7 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
     """
     profiles = context.get("profiles", {})
     competitor_names = context.get("competitor_names", [])
+    product_type = context.get("product_type", "")
 
     agent = create_react_agent(
         model=get_llm("deepseek"),
@@ -109,7 +114,7 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
         [
             SystemMessage(content=_load_prompt()),
             HumanMessage(content=_build_insight_product_message(
-                task, profiles, competitor_names,
+                task, profiles, competitor_names, product_type,
             )),
         ],
         label=f"Insight·{task.product_name}",

@@ -82,15 +82,16 @@ def analyze_sentiment_bert(texts_json: str) -> str:
 @tool
 def finalize_sentiment(product_name: str, sentiment_json: str) -> str:
     """提交单产品 UserSentiment。必填 positive_themes / negative_themes；
-    appstore_cn_rating 有则填（1–5）。"""
+    aggregate_rating 有则填（1–5，渠道聚合评分）。"""
     sentiment, err = safe_load_validate(
         sentiment_json, UserSentiment,
         hint=(
             "字段规则提示："
             "\n- positive_themes / negative_themes 必填字符串数组"
-            "\n- appstore_cn_rating 可选，浮点 1.0–5.0"
+            "\n- aggregate_rating 可选，浮点 1.0–5.0（渠道聚合评分，App / 电商 / 垂类皆可）"
+            "\n- rating_review_count 可选整数；rating_source 可选字符串（来源渠道名，如 'appstore_cn'/'tmall'/'jd'）"
             "\n- representative_reviews[].rating 可选，整数 1–5"
-            "\n- platform 枚举: appstore_cn / appstore_us / zhihu / weibo / other"
+            "\n- representative_reviews[].platform 开放字符串，未知填 'other'"
         ),
     )
     if err:
