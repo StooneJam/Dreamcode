@@ -38,6 +38,7 @@ class CCAState(TypedDict):
     """
     user_query: str
     target_product: str
+    report_language: str  # "zh" | "en"，默认 "zh"
 
     # 用户上传文档路径（CLI/Streamlit 在调用 graph 前写入），第一版只取第一个
     # PM phase 1 直接消化这些文件。

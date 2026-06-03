@@ -94,6 +94,11 @@ def init_db() -> None:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _tx() as conn:
         conn.executescript(_SCHEMA)
+        # 迁移：补 password_hash 列（已存在时忽略）
+        try:
+            conn.execute("ALTER TABLE user_identities ADD COLUMN password_hash TEXT")
+        except sqlite3.OperationalError:
+            pass
 
 
 def save_report(
@@ -209,6 +214,40 @@ def get_or_create_user(provider: str, provider_id: str, display_name: str) -> tu
             (str(uuid.uuid4()), user_id, provider, provider_id, _now()),
         )
     return user_id, display_name
+
+
+def create_password_user(username: str, password_hash: str) -> tuple[str, str]:
+    """新建用户名+密码账号，用户名已占用时抛 ValueError。"""
+    with _tx() as conn:
+        if conn.execute(
+            "SELECT id FROM user_identities WHERE provider = 'password' AND provider_id = ?",
+            (username,),
+        ).fetchone():
+            raise ValueError("username_taken")
+        user_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO users(id, display_name, created_at) VALUES (?, ?, ?)",
+            (user_id, username, _now()),
+        )
+        conn.execute(
+            "INSERT INTO user_identities"
+            "(id, user_id, provider, provider_id, password_hash, created_at)"
+            " VALUES (?, ?, 'password', ?, ?, ?)",
+            (str(uuid.uuid4()), user_id, username, password_hash, _now()),
+        )
+    return user_id, username
+
+
+def get_password_user(username: str) -> tuple[str, str, str] | None:
+    """按用户名查账号，返回 (user_id, display_name, password_hash) 或 None。"""
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT ui.user_id, u.display_name, ui.password_hash "
+            "FROM user_identities ui JOIN users u ON u.id = ui.user_id "
+            "WHERE ui.provider = 'password' AND ui.provider_id = ?",
+            (username,),
+        ).fetchone()
+    return (row["user_id"], row["display_name"], row["password_hash"]) if row else None
 
 
 def save_session(token: str, user_id: str, expires_at: str) -> None:

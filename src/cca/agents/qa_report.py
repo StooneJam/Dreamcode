@@ -24,9 +24,19 @@ from cca.tools.report_tools import finalize_swot, submit_dimension_ranking
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "report_agent.md"
 
+_LANG_DIRECTIVE: dict[str, str] = {
+    "en": (
+        "CRITICAL INSTRUCTION: Write the entire report in English. "
+        "All section titles, body text, table content, chart labels, and conclusions "
+        "must be in English. Do not use Chinese anywhere in the report output.\n\n"
+    ),
+}
 
-def _load_system_prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8")
+
+def _load_system_prompt(report_language: str = "zh") -> str:
+    base = _PROMPT_PATH.read_text(encoding="utf-8")
+    directive = _LANG_DIRECTIVE.get(report_language, "")
+    return directive + base
 
 
 # ── profile 序列化（含 forced 标注） ───────────────────────────────────
@@ -351,10 +361,11 @@ def report_node(state: CCAState) -> dict:
         ],
     )
     emit_sse({"type": "progress", "pct": 75, "sec_left": 25})
+    lang = state.get("report_language", "zh")
     messages = stream_react(
         agent,
         [
-            SystemMessage(content=_load_system_prompt()),
+            SystemMessage(content=_load_system_prompt(lang)),
             HumanMessage(content=_build_initial_message(
                 report_task, profiles_json,
                 exploration_result=state.get("exploration_result"),
