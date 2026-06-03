@@ -50,6 +50,8 @@ DEV_DOUBAO_OVERRIDE: bool = _DEV_OVERRIDE == "doubao"
 
 _DOUBAO_MAX_TOKENS = int(os.getenv("DOUBAO_MAX_TOKENS", "16384"))
 
+_DOUBAO_THINKING = (os.getenv("DOUBAO_THINKING", "disabled") or "").lower()
+
 # 各角色槽位的默认 temperature。creds 路径建客户端时复用，保持与 .env 单例一致。
 _FAMILY_TEMP: dict[AgentFamily, float] = {"gpt-5": 0.2, "deepseek": 0.3, "doubao": 0.2}
 _REPORT_TEMP = 0.8
@@ -76,6 +78,9 @@ SLOT_DEFAULTS: dict[AgentFamily, dict] = {
 
 def _make_doubao(temperature: float) -> ChatOpenAI:
     """构造一个 Doubao 客户端。dev override 时三个家族都用它。"""
+    extra: dict = {}
+    if _DOUBAO_THINKING in ("disabled", "enabled", "auto"):
+        extra["extra_body"] = {"thinking": {"type": _DOUBAO_THINKING}}
     return ChatOpenAI(
         model=os.getenv("DOUBAO_MODEL", SLOT_DEFAULTS["doubao"]["model"]),
         api_key=os.getenv("DOUBAO_API_KEY"),
@@ -84,6 +89,7 @@ def _make_doubao(temperature: float) -> ChatOpenAI:
         temperature=temperature,
         max_retries=_MAX_RETRIES,
         max_tokens=_DOUBAO_MAX_TOKENS,
+        **extra,
     )
 
 

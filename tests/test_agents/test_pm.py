@@ -51,13 +51,26 @@ class _FakeStructuredLLM:
         return self._response
 
 
-def _patch_pm_gpt(monkeypatch: pytest.MonkeyPatch, response):
-    """替换 pm.get_llm 返回的客户端的 with_structured_output 为 fake。"""
+class _FakeMessage:
+    """模拟 ChatOpenAI 直出（无 structured）返回的 AIMessage。"""
+
+    def __init__(self, content: str):
+        self.content = content
+
+
+def _patch_pm_gpt(monkeypatch: pytest.MonkeyPatch, response, *, fallback_content: str = ""):
+    """替换 pm.get_llm：with_structured_output 走 fake；直接 invoke 走 JSON 直出兜底。
+
+    fallback_content 为兜底通道返回的原始文本，默认空 → pydantic 校验失败 → _invoke_pm raise。
+    """
     fake = _FakeStructuredLLM(response)
 
     class _FakeGPT:
         def with_structured_output(self, target_type, method=None):  # noqa: ARG002
             return fake
+
+        def invoke(self, _messages):
+            return _FakeMessage(fallback_content)
 
     monkeypatch.setattr("cca.agents.pm.get_llm", lambda _family: _FakeGPT())
 
@@ -290,6 +303,58 @@ def test_task_plan_node_returns_task_plan_and_competitors(
     assert result["competitor_names"] == ["钉钉", "企业微信"]
     assert len(result["decision_log"]) == 2
     assert all(d["phase"] == "task_plan" for d in result["decision_log"])
+
+
+def _mk_taskplan_output() -> TaskPlanOutput:
+    return TaskPlanOutput(
+        task_plan=TaskPlan(
+            target_product="飞书",
+            product_type="协作办公SaaS",
+            competitor_names=["钉钉"],
+            collect_tasks=[],
+            insight_tasks=[],
+        ),
+        decision_records=[_mk_decision("task_allocation")],
+    )
+
+
+def test_invoke_pm_falls_back_to_json_when_structured_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """function_calling 持续返 None → 切 JSON 直出通道，本地解析出真实对象。"""
+    _patch_pm_gpt(monkeypatch, None, fallback_content=_mk_taskplan_output().model_dump_json())
+
+    from cca.agents.pm import _invoke_pm
+
+    result = _invoke_pm(TaskPlanOutput, "阶段二 TaskPlan", {"user_query": "x"})
+    assert isinstance(result, TaskPlanOutput)
+    assert result.task_plan.product_type == "协作办公SaaS"
+    assert result.task_plan.competitor_names == ["钉钉"]
+
+
+def test_invoke_pm_json_fallback_strips_markdown_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """兜底通道：模型用 ```json 围栏包裹也能抠出 JSON 解析。"""
+    fenced = f"```json\n{_mk_taskplan_output().model_dump_json()}\n```"
+    _patch_pm_gpt(monkeypatch, None, fallback_content=fenced)
+
+    from cca.agents.pm import _invoke_pm
+
+    result = _invoke_pm(TaskPlanOutput, "阶段二 TaskPlan", {"user_query": "x"})
+    assert isinstance(result, TaskPlanOutput)
+
+
+def test_invoke_pm_raises_when_structured_and_json_both_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """两条通道都拿不到合法结构 → RuntimeError，由调用方决定崩还是降级。"""
+    _patch_pm_gpt(monkeypatch, None, fallback_content="对不起，我无法完成。")
+
+    from cca.agents.pm import _invoke_pm
+
+    with pytest.raises(RuntimeError):
+        _invoke_pm(TaskPlanOutput, "阶段二 TaskPlan", {"user_query": "x"})
 
 
 # ── Phase 3: ReportTask（合并了原 AnalystTask 字段） ────────────────────

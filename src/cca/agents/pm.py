@@ -116,41 +116,34 @@ def _load_user_file(state: CCAState) -> tuple[str | None, str | None, list[dict]
 _PM_INVOKE_MAX_RETRIES = int(os.getenv("PM_INVOKE_MAX_RETRIES", "4"))
 
 
-def _invoke_pm(output_type, phase_label: str, payload: dict, *, max_attempts: int | None = None):
-    """PM 统一调用模板：with_structured_output + 失败自修。
+def _extract_json_block(text: str) -> str:
+    """从自由文本里抠出 JSON 对象：第一个 { 到最后一个 }。"""
+    start, end = text.find("{"), text.rfind("}")
+    return text[start:end + 1] if start != -1 and end > start else text
 
-    失败模式：
-    1. ValidationError —— LLM 漏 required 字段：反馈错误详情让 LLM 修
-    2. invoke 返 None —— LLM 用自由文本而非 function call 回答（Doubao 在复杂嵌套
-       schema 上偶发）：显式强调必须用 function_call
 
-    max_attempts 控制总尝试次数（含首次）。默认 _PM_INVOKE_MAX_RETRIES；有代码层兜底的
-    节点（review）可传小值快速失败、不死磕。全部用尽仍失败 → raise，由调用方决定崩还是兜底。
+def _invoke_structured(
+    output_type, phase_label: str, base_messages: list, attempts: int,
+) -> tuple[object | None, str | None]:
+    """function_calling 自修循环。返回 (结构化结果, 末次错误)；耗尽返 (None, 末次错误)。
 
-    不接 cache —— 保留 LLM 在 schema 约束内的判断灵活度。
+    ValidationError —— LLM 漏 required 字段：回灌错误详情让其修。
+    返 None —— LLM 没发 function_call（Doubao/Ark 偶发不兑现 forced tool_choice）：强调必须调函数。
     """
-    attempts = max_attempts or _PM_INVOKE_MAX_RETRIES
     llm = get_llm(PM_FAMILY).with_structured_output(output_type, method="function_calling")
-    user = _phase_prefix(phase_label) + json.dumps(payload, ensure_ascii=False)
-    messages = [SystemMessage(content=_load_system_prompt()), HumanMessage(content=user)]
-
-    result = None
     last_error: str | None = None
-
     for attempt in range(attempts):
+        messages = base_messages if last_error is None else base_messages + [HumanMessage(content=last_error)]
         try:
-            current_messages = messages if attempt == 0 else messages + [HumanMessage(content=last_error)]
-            result = llm.invoke(current_messages)
+            result = llm.invoke(messages)
         except ValidationError as e:
             last_error = (
                 f"上一次输出有 schema 错误，请严格按 {output_type.__name__} schema 重新输出。\n"
                 f"错误详情：\n{e}\n\n"
-                f"特别注意：DecisionRecord.rationale 是必填字符串，"
-                f"每条 DecisionRecord 都必须有 rationale 字段。"
+                f"特别注意：DecisionRecord.rationale 是必填字符串，每条都必须有。"
             )
             print(f"  [pm:{phase_label}] WARN: ValidationError on attempt {attempt + 1}, retrying", flush=True)
             continue
-
         if result is None:
             last_error = (
                 f"上一次回复没有调用 function（第 {attempt + 1} 次）。"
@@ -159,14 +152,50 @@ def _invoke_pm(output_type, phase_label: str, payload: dict, *, max_attempts: in
             )
             print(f"  [pm:{phase_label}] WARN: LLM 返 None（attempt {attempt + 1}/{attempts}），retry", flush=True)
             continue
+        return result, None
+    return None, last_error
 
+
+def _invoke_json_fallback(output_type, base_messages: list):
+    """结构化通道耗尽后的换招：让模型直出 JSON，本地用 pydantic 校验。
+
+    绕开 tool_call 通道——Doubao/Ark 偶发不兑现 forced tool_choice、改用自由文本应答时
+    function_calling 恒返 None，死磕无意义。产出的仍是 LLM 真实对象，非代码层 stub。
+    """
+    schema = json.dumps(output_type.model_json_schema(), ensure_ascii=False)
+    instruction = HumanMessage(content=(
+        f"直接输出一个严格符合下面 JSON Schema 的 JSON 对象，"
+        f"不要解释、不要 markdown 围栏：\n{schema}"
+    ))
+    raw = get_llm(PM_FAMILY).invoke(base_messages + [instruction])
+    content = raw.content if isinstance(raw.content, str) else str(raw.content)
+    return output_type.model_validate_json(_extract_json_block(content))
+
+
+def _invoke_pm(output_type, phase_label: str, payload: dict, *, max_attempts: int | None = None):
+    """PM 统一调用：function_calling 自修，耗尽后切 JSON 直出通道再试，仍失败 → raise。
+
+    max_attempts 控制 function_calling 总尝试数（含首次）。默认 _PM_INVOKE_MAX_RETRIES；
+    有代码层兜底的节点（review）传小值快速失败、不死磕。不接 cache，保留判断灵活度。
+    """
+    attempts = max_attempts or _PM_INVOKE_MAX_RETRIES
+    base_messages = [
+        SystemMessage(content=_load_system_prompt()),
+        HumanMessage(content=_phase_prefix(phase_label) + json.dumps(payload, ensure_ascii=False)),
+    ]
+
+    result, last_error = _invoke_structured(output_type, phase_label, base_messages, attempts)
+    if result is not None:
         return result
 
-    raise RuntimeError(
-        f"PM {phase_label} 节点在 {attempts} 次尝试后仍未获得结构化输出。"
-        f"最后错误：{last_error}。"
-        f"检查 model id 的 function_calling 支持，或 prompt 是否过长。"
-    )
+    print(f"  [pm:{phase_label}] 结构化通道耗尽，切 JSON 直出通道兜底", flush=True)
+    try:
+        return _invoke_json_fallback(output_type, base_messages)
+    except (ValidationError, ValueError) as e:
+        raise RuntimeError(
+            f"PM {phase_label} 节点 function_calling + JSON 直出均失败。"
+            f"最后错误：{last_error or e}。检查 model id 的 function_calling 支持或 prompt 是否过长。"
+        ) from e
 
 
 def initial_brief_node(state: CCAState) -> dict:
