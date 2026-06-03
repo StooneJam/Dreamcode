@@ -28,3 +28,15 @@ def env(tmp_path, monkeypatch):
     import app.server as server
     monkeypatch.setattr(server, "get_report_llm", _fake_get_report_llm)
     return TestClient(server.app), db
+
+
+@pytest.fixture
+def auth():
+    """工厂：为 owner 建一个 session，返回新鉴权契约的 Authorization 头（Bearer token）。
+
+    owner 解析已从 X-Owner header 改为 Authorization session token（见 server._resolve_owner）。
+    """
+    def _make(owner: str) -> dict:
+        from cca.auth.session import create_session
+        return {"Authorization": f"Bearer {create_session(owner)}"}
+    return _make
