@@ -50,9 +50,7 @@ def test_finalize_profile_artifact_flows_through_real_react_loop() -> None:
     assert "提交成功" in tool_msg.content              # 模型只看到停止串，不回显 profile
     assert tool_msg.artifact["profile"]                # ToolNode 把 profile 放进了 artifact
 
-    extracted = _extract_finalized_profile(msgs)
-    assert extracted is not None
-    profile, degraded = extracted
+    profile = _extract_finalized_profile(msgs)
+    assert profile is not None
     assert profile["product_name"] == "钉钉"
     assert len(profile["dimensions"]) == 1             # 完整抽回
-    assert degraded == []

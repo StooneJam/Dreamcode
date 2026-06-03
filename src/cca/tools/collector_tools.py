@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from langchain_core.tools import tool
-from pydantic import ValidationError
 
 from cca.schema import (
     AgentSignal,
@@ -16,7 +15,7 @@ from cca.schema import (
     CollectorExplorationResult,
     ProductProfile,
 )
-from cca.tools._validation import _try_parse_lenient, safe_load_validate
+from cca.tools._validation import safe_load_validate
 
 
 def _now() -> str:
@@ -43,6 +42,13 @@ def _clean_profile(raw: dict) -> dict:
     for dim in raw.get("dimensions") or []:
         cleaned_facts = []
         for fact in dim.get("facts") or []:
+            # 模型把事实正文放在五花八门的 key（实测豆包用过 content/value/snippet…），schema 要
+            # statement。不维护别名白名单（换产品永远漏下一个）；直接取除 evidence 外最长的字符串
+            # 当正文——事实正文通常最长，泛化到任意 key，配合返错自愈彻底不 husk。
+            if not fact.get("statement"):
+                cands = [v for k, v in fact.items() if k != "evidence" and isinstance(v, str) and v]
+                if cands:
+                    fact["statement"] = max(cands, key=len)
             ev_list = [ev for ev in (fact.get("evidence") or []) if _valid_evidence(ev)]
             if ev_list:
                 fact["evidence"] = ev_list
@@ -132,47 +138,18 @@ def challenge_pm(
     return signal.model_dump_json()
 
 
-# 校验失败时可整体剥离的顶层字段（嵌套大 / 枚举严格，模型重试也难修对）。
-# product_type/target_users/website 等标量不在此列：模型一次重试即可改对，不该静默丢。
-_DROPPABLE_FIELDS = {"dimensions", "pricing", "sources"}
-
-
-def _strip_to_valid(base: dict) -> tuple[ProductProfile, list[str]] | None:
-    """逐次删除 Pydantic 实际报错的顶层字段直到验过，只丢坏字段、保住其余数据。
-
-    与旧版"累加式 + dimensions 优先"不同：pricing 出错只删 pricing，不连累好 dimensions。
-    错误落在不可删字段（如必填 product_name）上时无法补救，返 None 让模型重试。
-    """
-    trial = dict(base)
-    dropped: list[str] = []
-    while True:
-        try:
-            return ProductProfile.model_validate(trial), dropped
-        except ValidationError as exc:
-            bad = {
-                str(e["loc"][0]) for e in exc.errors()
-                if e["loc"] and str(e["loc"][0]) in _DROPPABLE_FIELDS
-            } - set(dropped)
-            if not bad:
-                return None
-            for field in bad:
-                trial.pop(field, None)
-                dropped.append(field)
-
-
-def _submit_receipt(profile: ProductProfile, dropped: list[str]) -> tuple[str, dict]:
+def _submit_receipt(profile: ProductProfile) -> tuple[str, dict]:
     """构造 finalize_profile 返回：模型只看到 content（成功+停止），profile 走 artifact 暗channel。
 
-    剥离过字段时 content 注明、artifact.degraded 携带字段名，collect_one_product 据此标 forced。
+    content 只给模型看停止指令；profile 经 artifact 回传，collect_one_product 据此入库。
     """
-    note = f"，已剥离无法校验字段 {dropped}（数据不完整）" if dropped else ""
     content = (
         f"提交成功：{profile.product_name} ProductProfile 已入库"
-        f"（{len(profile.dimensions)} 个维度，{len(profile.sources)} 个来源{note}）。"
+        f"（{len(profile.dimensions)} 个维度，{len(profile.sources)} 个来源）。"
         f"本产品 ReAct 任务已完成，请立即停止所有工具调用，"
         f"不得再次调用 finalize_profile。"
     )
-    return content, {"profile": profile.model_dump(), "degraded": dropped}
+    return content, {"profile": profile.model_dump()}
 
 
 @tool(response_format="content_and_artifact")
@@ -197,22 +174,16 @@ def finalize_profile(product_name: str, profile_json: str) -> tuple[str, dict]:
         pre_clean=_clean,
         hint=(
             "字段规则提示："
-            "\n- Dimension 必填：name, category, facts"
+            "\n- Dimension 必填：name, facts（category 可选）"
             "\n- Fact 必填：statement, evidence（list 非空）"
             "\n- Evidence 必填：source_url"
-            "\n- PricingInfo 必填：has_free_tier (bool), pricing_model (per_user/per_team/custom/unknown)"
+            "\n- PricingInfo.pricing_model 用 per_user/per_team/custom/unknown（其他值自动归 unknown）"
         ),
     )
     if not err:
-        return _submit_receipt(profile, [])
-
-    # 校验失败：精准剥离报错字段后提交，避免模型对不可修复错误（Doubao 截断等）无限重试
-    partial_raw, _ = _try_parse_lenient(profile_json)
-    if isinstance(partial_raw, dict):
-        stripped = _strip_to_valid(_clean(partial_raw))
-        if stripped is not None:
-            return _submit_receipt(*stripped)
-    return err, {"profile": None, "degraded": None}  # 无法补救才返错让模型重试
+        return _submit_receipt(profile)
+    # 放松后 schema 几乎只在类型错 / 截断不可救时失败：返错让模型自修重试（不再静默剥字段）
+    return err, {"profile": None}
 
 
 @tool

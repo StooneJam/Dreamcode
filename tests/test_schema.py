@@ -387,9 +387,10 @@ def test_decision_record_requires_rationale() -> None:
         )  # type: ignore[call-arg]
 
 
-def test_pricing_info_rejects_invalid_model() -> None:
-    with pytest.raises(ValidationError):
-        PricingInfo(has_free_tier=True, pricing_model="monthly")
+def test_pricing_info_coerces_invalid_model_to_unknown() -> None:
+    """采集期放松：非法 pricing_model 不再 raise，归一到 unknown。"""
+    p = PricingInfo(has_free_tier=True, pricing_model="monthly")
+    assert p.pricing_model == "unknown"
 
 
 def test_review_unit_rejects_invalid_agent() -> None:

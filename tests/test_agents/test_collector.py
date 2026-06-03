@@ -376,11 +376,9 @@ def test_extract_finalized_profile_takes_latest() -> None:
     early = _finalize_profile_tool_msg("旧产品")
     late = _finalize_profile_tool_msg("新产品")
     messages = [early, AIMessage(content="再想想"), late]
-    extracted = _extract_finalized_profile(messages)
-    assert extracted is not None
-    profile, degraded = extracted
+    profile = _extract_finalized_profile(messages)
+    assert profile is not None
     assert profile["product_name"] == "新产品"
-    assert degraded == []
 
 
 def test_extract_finalized_profile_returns_none_when_not_called() -> None:
@@ -418,23 +416,6 @@ def test_collect_one_product_success_path() -> None:
     assert result["audit_log"][0]["event"] == "collect_done"
     assert result["audit_log"][0]["product_name"] == "钉钉"
     assert "review_state" not in result  # 数据完整 → 不注入 forced
-
-
-def test_collect_one_product_degraded_emits_forced_review_unit() -> None:
-    """Fix B：提交时剥离过字段（degraded 非空）→ 注入 forced ReviewUnit，让报告层看到降级。"""
-    task = CollectTask(product_name="钉钉", priority_dimensions=[])
-    mock_agent = _make_mock_agent([_finalize_profile_tool_msg("钉钉", degraded=["pricing"])])
-    with patch("cca.agents.collector.create_react_agent", return_value=mock_agent):
-        from cca.agents.collector import collect_one_product
-        result = collect_one_product(task, context={"target_product": "飞书"})
-
-    assert "钉钉" in result["profiles"]  # 残缺 profile 仍入库
-    unit = result["review_state"][0]
-    assert unit["agent"] == "collector"
-    assert unit["product_name"] == "钉钉"
-    assert unit["status"] == "forced"
-    assert "pricing" in unit["qa_flags"][0]
-    assert result["audit_log"][0]["degraded_fields"] == ["pricing"]
 
 
 def test_collect_one_product_replacement_path() -> None:

@@ -153,34 +153,14 @@ def exploration_node(state: CCAState) -> dict:
 # ── Phase 2：单产品深采集 ──────────────────────────────────────────────
 
 
-def _extract_finalized_profile(messages: list) -> tuple[dict, list[str]] | None:
-    """取 finalize_profile 最后一次成功提交的 (profile, 被剥离字段)。
-
-    profile 经 ToolMessage.artifact 传回（content 只给模型看停止指令），
-    degraded 非空表示提交时剥离过 schema 不合规字段，数据不完整。
-    """
+def _extract_finalized_profile(messages: list) -> dict | None:
+    """取 finalize_profile 最后一次成功提交的 profile（经 ToolMessage.artifact 回传）。"""
     for msg in reversed(messages):
         if isinstance(msg, ToolMessage) and msg.name == "finalize_profile":
             artifact = getattr(msg, "artifact", None)
             if isinstance(artifact, dict) and artifact.get("profile"):
-                return artifact["profile"], artifact.get("degraded") or []
+                return artifact["profile"]
     return None
-
-
-def _degraded_review_unit(product_name: str, dropped: list[str]) -> dict:
-    """采集产出部分字段 schema 不合规被剥离 → 标 forced，让报告层看到数据降级。
-
-    与 graph._skip_result（采集崩溃）同档处理：降级数据 ≈ 缺失数据，强制放行但低置信度。
-    """
-    return {
-        "agent": "collector",
-        "product_name": product_name,
-        "status": "forced",
-        "retry_count": 0,
-        "qa_flags": [f"提交时剥离无法校验字段 {dropped}，数据不完整"],
-        "pm_note": "采集部分字段校验失败，已强制放行（低置信度）",
-        "reviewed_at": None,
-    }
 
 
 def _build_collect_message(task: CollectTask, context: dict) -> str:
@@ -227,25 +207,20 @@ def collect_one_product(task: CollectTask, context: dict) -> dict:
             "product_brief": _stable_product_brief(context.get("product_brief")),
         },
     )
-    extracted = _extract_finalized_profile(messages)
+    profile = _extract_finalized_profile(messages)
     signals = _extract_tool_jsons(messages, "request_product_replacement")
 
-    if extracted is not None:
-        profile, degraded = extracted
-        updates: dict = {
+    if profile is not None:
+        return {
             "profiles": {task.product_name: profile},
             "agent_signals": signals,
             "audit_log": [{
                 "agent": "collector", "event": "collect_done",
                 "product_name": task.product_name,
                 "dimensions_count": len(profile.get("dimensions", [])),
-                "degraded_fields": degraded,
                 "signals_raised": len(signals),
             }],
         }
-        if degraded:
-            updates["review_state"] = [_degraded_review_unit(task.product_name, degraded)]
-        return updates
     if signals:
         return {
             "agent_signals": signals,

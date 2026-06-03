@@ -107,7 +107,6 @@ def _finalize(product_name: str, profile_json: str):
 def test_finalize_profile_accepts_valid_schema() -> None:
     msg = _finalize("钉钉", _valid_profile_json("钉钉"))
     assert "提交成功" in msg.content
-    assert msg.artifact["degraded"] == []
     assert msg.artifact["profile"]["company"] == "阿里巴巴"
     assert msg.artifact["profile"]["website"] == "https://www.dingtalk.com"
 
@@ -164,22 +163,55 @@ def test_finalize_profile_cleans_evidence_missing_source_url() -> None:
     assert len(profile["sources"]) == 1                 # 缺 url sources 项被剔
 
 
-def test_finalize_profile_strips_only_broken_field_keeps_good_dimensions() -> None:
-    """Fix A：pricing 枚举非法、dimensions 合法 → 只剥 pricing，好 dimensions 必须保住。"""
+def test_finalize_profile_keeps_dimensions_when_category_missing() -> None:
+    """放松后：dimension 漏 category（本次 husk 元凶）不再毁掉整段 dimensions，原样入库。"""
     raw = {
         "product_name": "W",
         "product_type": "SaaS",
         "dimensions": [{
-            "name": "AI", "category": "功能",
+            "name": "AI",  # 故意漏 category
             "facts": [{"statement": "F", "evidence": [{"source_url": "https://a.com"}]}],
         }],
-        "pricing": {"has_free_tier": True, "pricing_model": "非法枚举值"},  # 坏在 pricing
     }
     msg = _finalize("W", json.dumps(raw))
-    assert msg.artifact["degraded"] == ["pricing"]            # 只剥 pricing
-    assert len(msg.artifact["profile"]["dimensions"]) == 1    # 好 dimensions 没被连累
-    assert msg.artifact["profile"]["pricing"] is None
-    assert "已剥离" in msg.content                            # 模型被告知数据不完整
+    assert "提交成功" in msg.content
+    assert len(msg.artifact["profile"]["dimensions"]) == 1     # 维度保住，不再 husk
+    assert msg.artifact["profile"]["dimensions"][0]["category"] == ""
+
+
+def test_finalize_profile_normalizes_fact_text_under_any_key() -> None:
+    """模型把事实正文放在任意非 statement key（content/value/snippet/没见过的 key）→ 取最长字符串
+    归一到 statement，保住正文不 husk。不靠别名白名单，换产品也泛化。"""
+    long = "这是一段足够长的事实正文描述用于被识别为 statement"
+    raw = {
+        "product_name": "V",
+        "product_type": "SaaS",
+        "dimensions": [{
+            "name": "AI", "category": "功能",
+            "facts": [
+                {"content": f"content {long}", "evidence": [{"source_url": "https://a.com"}]},
+                {"value": f"value {long}", "evidence": [{"source_url": "https://b.com"}]},
+                {"snippet": f"snippet {long}", "evidence": [{"source_url": "https://c.com"}]},
+                {"某个没见过的key": f"novel {long}", "evidence": [{"source_url": "https://d.com"}]},
+            ],
+        }],
+    }
+    profile = _finalize("V", json.dumps(raw)).artifact["profile"]
+    facts = profile["dimensions"][0]["facts"]
+    assert len(facts) == 4                                  # 4 条都没被当成空 fact 丢掉
+    assert all(long in f["statement"] for f in facts)       # 任意 key 的正文都被归一回 statement
+
+
+def test_finalize_profile_coerces_invalid_pricing_model() -> None:
+    """放松后：非法 pricing_model 归 unknown，pricing 整段保住，不再被剥。"""
+    raw = {
+        "product_name": "W",
+        "product_type": "SaaS",
+        "pricing": {"has_free_tier": True, "pricing_model": "非法枚举值"},
+    }
+    msg = _finalize("W", json.dumps(raw))
+    assert "提交成功" in msg.content
+    assert msg.artifact["profile"]["pricing"]["pricing_model"] == "unknown"
 
 
 def test_request_product_replacement_constructs_data_gap_signal() -> None:

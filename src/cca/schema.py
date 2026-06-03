@@ -5,16 +5,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 def _now_iso() -> str:
     """当前时刻 ISO 8601 UTC 时间戳，供 default_factory 用。"""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 # 三家族标识，用于 debate 类型约束
 AgentFamily = Literal["gpt-5", "deepseek", "doubao"]
@@ -45,7 +45,7 @@ class Dimension(BaseModel):
     """
 
     name: str = Field(description="维度名称，如'视频会议人数上限'、'移动端离线能力'")
-    category: str
+    category: str = ""  # 采集期放松：开放分类、模型常漏，缺失不该毁掉整个维度
     facts: list[Fact] = Field(default_factory=list)
     cross_product_note: str | None = Field(
         None,
@@ -56,8 +56,7 @@ class Dimension(BaseModel):
 class PricingTier(BaseModel):
     """单个定价档位，数据来自官网或公开定价页。
 
-    若官方未公开数字价格（仅"联系销售/咨询报价"），**不要为该档建 tier** ——
-    把信息写进对应 Dimension.facts。tier 一旦建立必须至少含一个具体价格数字。
+    采集期宽松：无价格数字的档位也允许（报告边界再决定是否纳入成本对比）。
     """
 
     name: str
@@ -68,27 +67,19 @@ class PricingTier(BaseModel):
     included_features: list[str] = Field(default_factory=list)
     source: Evidence | None = None
 
-    @model_validator(mode="after")
-    def _at_least_one_price(self) -> "PricingTier":
-        """禁止"光有 tier 名字没有价格"——这种 tier 对下游 Reporter 做成本对比毫无价值。"""
-        if self.price_per_user_monthly is None and self.price_per_user_yearly is None:
-            raise ValueError(
-                f"PricingTier '{self.name}' 必须填 price_per_user_monthly 或 "
-                f"price_per_user_yearly 至少一个数字。"
-                f"若该档官方仅显示'联系销售/咨询报价'未公开数字，请删除该 tier，"
-                f"把信息写进 Dimension.facts 而不是 PricingInfo.tiers。"
-            )
-        return self
-
 
 class PricingInfo(BaseModel):
-    """产品完整定价结构。"""
+    """产品完整定价结构。采集期放松：has_free_tier 可缺省，非法 pricing_model 归 unknown。"""
 
-    has_free_tier: bool
-    pricing_model: Literal["per_user", "per_team", "custom", "unknown"] = Field(
-        description="定价模式，如按用户数、按团队规模、自定义报价等",
-    )
+    has_free_tier: bool | None = None
+    pricing_model: Literal["per_user", "per_team", "custom", "unknown"] = "unknown"
     tiers: list[PricingTier] = Field(default_factory=list)
+
+    @field_validator("pricing_model", mode="before")
+    @classmethod
+    def _coerce_unknown_model(cls, v: object) -> object:
+        """模型常给枚举外的值；归一到 unknown，不让单字段毁掉整段 pricing。"""
+        return v if v in {"per_user", "per_team", "custom", "unknown"} else "unknown"
 
 
 class ReviewSample(BaseModel):
