@@ -206,16 +206,6 @@
         <span class="eyebrow-dot"></span>
         <span id="t-gallery-label">报告样本展示</span>
       </div>
-      <div class="gallery-controls">
-        <button class="gallery-arrow" id="gallery-prev" onclick="galleryNav(-1)" aria-label="Prev" disabled>‹</button>
-        <div class="gallery-nav-dots" id="gallery-nav-dots">
-          <div class="gallery-nav-dot active"></div>
-          <div class="gallery-nav-dot"></div>
-          <div class="gallery-nav-dot"></div>
-          <div class="gallery-nav-dot"></div>
-        </div>
-        <button class="gallery-arrow" id="gallery-next" onclick="galleryNav(1)" aria-label="Next">›</button>
-      </div>
     </div>
 
     <div class="gallery-viewport">
@@ -224,6 +214,16 @@
       </div>
     </div>
 
+    <div class="gallery-footer">
+      <button class="gallery-arrow" id="gallery-prev" onclick="galleryNav(-1)" aria-label="Prev" disabled>‹</button>
+      <div class="gallery-nav-dots" id="gallery-nav-dots">
+        <div class="gallery-nav-dot active"></div>
+        <div class="gallery-nav-dot"></div>
+        <div class="gallery-nav-dot"></div>
+        <div class="gallery-nav-dot"></div>
+      </div>
+      <button class="gallery-arrow" id="gallery-next" onclick="galleryNav(1)" aria-label="Next">›</button>
+    </div>
     <p class="gallery-hint" id="gallery-hint">点击圆点或箭头切换图表</p>
   </div>
 </section>

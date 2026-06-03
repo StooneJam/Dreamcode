@@ -46,7 +46,7 @@
   --footer-border: rgba(255,255,255,.07);
 }
 
-html { scroll-behavior: smooth; scroll-snap-type: y mandatory; }
+html { scroll-behavior: smooth; }
 
 body {
   font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
@@ -84,7 +84,6 @@ body {
    SCROLL SNAP
 ══════════════════════════════════ */
 #hero, #product, #gallery, #agents, #analyze, #pdf-section {
-  scroll-snap-align: start;
   scroll-margin-top: 68px;
   min-height: calc(100dvh - 68px);
   position: relative; z-index: 1;
@@ -865,7 +864,6 @@ section.snap-in { animation: sec-enter 1.1s ease forwards; }
    FOOTER
 ══════════════════════════════════ */
 footer {
-  scroll-snap-align: start;
   scroll-margin-top: 68px;
   background: var(--footer-bg);
   border-top: 1px solid var(--footer-border);
@@ -972,28 +970,32 @@ footer {
 }
 
 .gallery-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center;
   width: 100%; max-width: 1000px;
 }
 
-.gallery-controls { display: flex; align-items: center; gap: 10px; }
+.gallery-footer {
+  display: flex; align-items: center; justify-content: center;
+  gap: 16px; width: 100%; max-width: 1000px;
+  padding-top: 4px;
+}
 .gallery-arrow {
-  width: 30px; height: 30px; border-radius: 50%;
-  border: 1px solid var(--border); background: transparent;
-  color: var(--muted); font-size: 18px; line-height: 1;
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 1.5px solid var(--border); background: transparent;
+  color: var(--fg); font-size: 24px; line-height: 1;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   transition: border-color .2s, color .2s, background .2s;
   flex-shrink: 0;
 }
-.gallery-arrow:hover:not(:disabled){ border-color:var(--teal); color:var(--teal); background:rgba(64,196,208,.06); }
-.gallery-arrow:disabled { opacity: .3; cursor: default; }
-.gallery-nav-dots { display: flex; gap: 9px; }
+.gallery-arrow:hover:not(:disabled){ border-color:var(--teal); color:var(--teal); background:rgba(64,196,208,.1); }
+.gallery-arrow:disabled { opacity: .25; cursor: default; }
+.gallery-nav-dots { display: flex; gap: 12px; align-items: center; }
 .gallery-nav-dot {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 10px; height: 10px; border-radius: 50%;
   background: var(--border); cursor: pointer;
   transition: background .3s, transform .3s;
 }
-.gallery-nav-dot.active { background: var(--teal); transform: scale(1.5); }
+.gallery-nav-dot.active { background: var(--teal); transform: scale(1.6); }
 
 .gallery-viewport {
   width: 100%; max-width: 1000px;

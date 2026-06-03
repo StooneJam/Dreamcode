@@ -196,8 +196,6 @@ let uploadedFile = null;
 let pdfPath = null;
 let eventSource = null;
 let navJumping   = false;
-let lastWheelTime = 0;        // timestamp-based cooldown — replaces scrollLocked
-let currentSnapIdx = 0;       // authoritative section tracker
 let heroScrollTl = null;
 let galleryIdx = 0;
 let apiOption = 'key';
@@ -229,27 +227,16 @@ function jumpTo(id){
   const el = document.getElementById(id);
   if(!el) return false;
   const veil = $('page-veil');
-  const html = document.documentElement;
   updateNavActive(id);
   navJumping = true;
-  veil.classList.add('visible');
-  // Sync section index so wheel handler stays coherent
-  const els = getSnapElements();
-  const idx = els.findIndex(e=>e.id===id || e===el);
-  if(idx>=0) currentSnapIdx = idx;
   if(id==='gallery'){ galleryIdx=0; _resetGalleryToFirst(); }
+  veil.classList.add('visible');
   setTimeout(()=>{
-    html.style.setProperty('scroll-snap-type','none');
     el.scrollIntoView({block:'start',behavior:'instant'});
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{
-      html.style.setProperty('scroll-behavior','auto');
-      html.style.removeProperty('scroll-snap-type');
-      requestAnimationFrame(()=>html.style.removeProperty('scroll-behavior'));
-      veil.classList.remove('visible');
-      triggerSnapIn(el);
-    }));
-    setTimeout(()=>{ navJumping=false; },1200);
-  },650);
+    veil.classList.remove('visible');
+    triggerSnapIn(el);
+    setTimeout(()=>{ navJumping=false; },400);
+  },300);
   return false;
 }
 function getAuthToken(){ return (localStorage.getItem('dc-token')||'').trim(); }
@@ -852,8 +839,8 @@ function buildLineChartSVG(l='zh'){
     // End dot
     const [ex,ey]=pt(N-1,vals[N-1]);
     s+=`<circle class="ldot" cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="4" fill="${colors[pi]}" opacity="0"/>`;
-    // End value label
-    s+=`<text class="lval" x="${(ex+7).toFixed(1)}" y="${ey.toFixed(1)}" dominant-baseline="middle" font-size="10" font-weight="600" fill="${colors[pi]}" opacity="0">${vals[N-1]}</text>`;
+    // End value label — render left of dot to avoid right-edge clipping
+    s+=`<text class="lval" x="${ex.toFixed(1)}" y="${(ey-12).toFixed(1)}" text-anchor="middle" dominant-baseline="auto" font-size="10" font-weight="600" fill="${colors[pi]}" opacity="0">${vals[N-1]}</text>`;
   });
 
   // Legend
@@ -937,8 +924,8 @@ function buildRadarGallerySVG(l='zh'){
 /* ── Chart 4: Donut — 2026 Q1 国内市场份额 ── */
 function buildDonutSVG(l='zh'){
   const zh=l==='zh';
-  const W=560, H=330;
-  const cx=210, cy=162, Ro=120, Ri=70;
+  const W=560, H=360;
+  const cx=210, cy=192, Ro=120, Ri=70;
   // Source: estimated 2026 Q1 China enterprise messaging market
   const segs= zh ? [
     {label:'钉钉',   sub:'Alibaba',  v:41,c:'#49bf8a'},
@@ -1704,55 +1691,6 @@ function continueSimulateAfterPhase1(){
   steps.forEach(([d,fn])=>{ delay+=d; setTimeout(fn,delay); });
 }
 
-/* ══════════════════════════════════════
-   Wheel scroll — section snap (no gallery intercept)
-══════════════════════════════════════ */
-function easeInOutCubic(t){ return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2; }
-
-function getSnapElements(){
-  return [...document.querySelectorAll('#hero,#product,#gallery,#agents,#analyze,#pdf-section'),document.querySelector('footer')].filter(Boolean);
-}
-
-function scrollToEl(el){
-  const html=document.documentElement;
-  const navH=document.querySelector('.navbar').offsetHeight;
-  const startY=window.scrollY, endY=Math.max(0,el.offsetTop-navH), dist=endY-startY;
-  if(Math.abs(dist)<4) return;
-  html.style.setProperty('scroll-snap-type','none');
-  html.style.setProperty('scroll-behavior','auto');
-  const t0=performance.now();
-  (function tick(now){
-    const t=Math.min((now-t0)/1400,1);
-    window.scrollTo(0,startY+dist*easeInOutCubic(t));
-    if(t<1){ requestAnimationFrame(tick); }
-    else{
-      html.style.removeProperty('scroll-snap-type');
-      html.style.removeProperty('scroll-behavior');
-      updateNavActive(el.id||'');
-    }
-  })(performance.now());
-}
-
-/* Timestamp cooldown replaces scrollLocked — no race condition,
-   no gallery wheel intercept needed (gallery uses click/swipe).   */
-function handleWheel(e){
-  if(navJumping){ e.preventDefault(); return; }
-  if(Math.abs(e.deltaY)<25) return;
-  e.preventDefault();
-  const now=performance.now();
-  if(now-lastWheelTime<700) return;
-
-  const els=getSnapElements();
-  const down=e.deltaY>0;
-  const next=Math.max(0,Math.min(els.length-1,currentSnapIdx+(down?1:-1)));
-  if(next===currentSnapIdx) return;
-
-  if(els[currentSnapIdx]?.id==='gallery') _resetGalleryToFirst();
-
-  lastWheelTime=now;
-  currentSnapIdx=next;
-  scrollToEl(els[next]);
-}
 
 function _resetGalleryToFirst(){
   galleryIdx=0;
@@ -1784,7 +1722,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   initGallery();
   initAgentAnimations();
   $('analyze-form').addEventListener('submit',handleSubmit);
-  window.addEventListener('wheel',handleWheel,{passive:false});
   // Enter to send Q&A (Shift+Enter for newline)
   $('qa-input')?.addEventListener('keydown',e=>{
     if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendReportQuestion(); }
