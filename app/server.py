@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
-import re
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -118,6 +117,7 @@ async def _run_job(
     creds: dict[AgentFamily, LLMCredential] | None,
     tavily: str | None,
     owner: str,
+    report_language: str = "zh",
 ) -> None:
     queue: asyncio.Queue = _jobs[job_id]["queue"]
     loop = asyncio.get_event_loop()
@@ -146,6 +146,7 @@ async def _run_job(
 
     try:
         initial_state = empty_state(user_query, target_product, user_files)
+        initial_state["report_language"] = report_language
 
         # ── Phase 1：跑到 human_gate interrupt ──────────────────────────
         result = await loop.run_in_executor(None, ctx.run, _invoke, initial_state)
@@ -223,6 +224,7 @@ async def analyze(
     deepseek_key: str | None = Form(None),
     doubao_key: str | None = Form(None),
     tavily_key: str | None = Form(None),
+    report_language: str = Form("zh"),
     owner: str = Depends(_resolve_owner),
 ) -> dict:
     job_id = str(uuid.uuid4())
@@ -243,6 +245,7 @@ async def analyze(
         job_id, target_product,
         user_query or target_product,
         user_files, creds, tavily_key, owner,
+        report_language=report_language,
     ))
     return {"job_id": job_id}
 
@@ -363,28 +366,32 @@ async def report_detail(report_id: str, owner: str = Depends(_resolve_owner)):
 # ── Auth endpoints ─────────────────────────────────────────────────────────
 
 
-@app.post("/auth/phone/send-otp")
-async def phone_send_otp(body: dict) -> dict:
-    phone = (body.get("phone") or "").strip()
-    if not re.match(r"^\d{11}$", phone):
-        return JSONResponse({"error": "手机号格式不正确"}, status_code=400)
-    from cca.auth.sms_otp import send_otp
-    try:
-        send_otp(phone)
-    except Exception as exc:
-        return JSONResponse({"error": f"短信发送失败：{exc}"}, status_code=502)
-    return {"ok": True}
-
-
-@app.post("/auth/phone/verify")
-async def phone_verify(body: dict) -> dict:
-    phone = (body.get("phone") or "").strip()
-    code = (body.get("code") or "").strip()
-    from cca.auth.sms_otp import verify_otp
-    if not verify_otp(phone, code):
-        return JSONResponse({"error": "验证码错误或已过期"}, status_code=400)
+@app.post("/auth/register")
+async def register(username: str = Form(...), password: str = Form(...)) -> dict:
+    username = username.strip()
+    if len(username) < 2:
+        return JSONResponse({"error": "用户名至少 2 个字符"}, status_code=400)
+    if len(password) < 6:
+        return JSONResponse({"error": "密码至少 6 位"}, status_code=400)
+    from cca.auth.password_auth import hash_password
     from cca.auth.session import create_session
-    user_id, display_name = db.get_or_create_user("phone", phone, f"用户{phone[-4:]}")
+    try:
+        user_id, display_name = db.create_password_user(username, hash_password(password))
+    except ValueError:
+        return JSONResponse({"error": "用户名已被注册"}, status_code=409)
+    token = create_session(user_id)
+    return {"token": token, "display_name": display_name}
+
+
+@app.post("/auth/password/login")
+async def password_login(username: str = Form(...), password: str = Form(...)) -> dict:
+    username = username.strip()
+    from cca.auth.password_auth import verify_password
+    from cca.auth.session import create_session
+    row = db.get_password_user(username)
+    if not row or not verify_password(password, row[2]):
+        return JSONResponse({"error": "用户名或密码错误"}, status_code=401)
+    user_id, display_name, _ = row
     token = create_session(user_id)
     return {"token": token, "display_name": display_name}
 

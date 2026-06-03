@@ -32,6 +32,7 @@ const I18N = {
     ag4Role:'报告生成', ag4Desc:'SWOT 分析<br>横向评分对比<br>输出 PDF 报告',
     navLinks:['首页','产品介绍','智能体','开始分析'], navLoginBtn:'登录',
     formTitle:'开始分析', lblProduct:'目标产品名称', phProduct:'例如：飞书、DingTalk、Slack',
+    lblReportLang:'报告输出语言',
     lblQuery:'分析需求描述', phQuery:'请描述您的分析需求，例如：分析飞书与钉钉、Slack 的视频会议功能差异...',
     upMain:'点击上传或拖拽文件至此处', upSub:'支持 PDF、Word、TXT，仅限 1 个文件，最大 20MB',
     submitBtn:'开始分析', navDlBtn:'报告生成与下载', optionalTag:'可选',
@@ -48,11 +49,17 @@ const I18N = {
     footerCopy:'© 2026 Dreamcode · 保留所有权利',
     errNoProduct:'请输入目标产品名称', errFiletype:'仅支持 PDF、Word、TXT 格式',
     errFilesize:'文件不能超过 20MB', loginMsg:'登录功能即将上线',
-    loginTitle:'登录 Dreamcode', loginTabPhone:'手机号登录', loginTabGoogle:'Google 登录',
-    loginPhoneLabel:'手机号', loginPhonePh:'请输入 11 位手机号',
-    loginPhoneHint:'仅支持中国大陆手机号（+86），境外用户请使用 Google 登录',
-    loginSendOtp:'发送验证码', loginOtpLabel:'验证码', loginOtpPh:'输入 6 位验证码',
-    loginVerify:'登录', loginGoogleNote:'在中国大陆需能访问 Google 服务（VPN）',
+    loginTitle:'登录 Dreamcode', loginTabAccount:'账号登录', loginTabGoogle:'Google 登录',
+    loginUsernameLabel:'用户名', loginUsernamePh:'请输入用户名',
+    loginPasswordLabel:'密码', loginPasswordPh:'请输入密码',
+    loginSubmit:'登录', loginToRegisterPrefix:'没有账号？', loginToRegister:'立即注册',
+    regUsernameLabel:'用户名', regUsernamePh:'2-32 个字符',
+    regPasswordLabel:'密码', regPasswordPh:'至少 6 位',
+    regConfirmLabel:'确认密码', regConfirmPh:'再次输入密码',
+    regSubmit:'注册', regToLoginPrefix:'已有账号？', regToLogin:'立即登录',
+    errLoginFill:'请填写用户名和密码', errPwdMismatch:'两次输入的密码不一致',
+    errLoginFail:'用户名或密码错误', errRegFail:'注册失败，请稍后重试',
+    loginGoogleNote:'在中国大陆需能访问 Google 服务（VPN）',
     loginGoogleBtn:'使用 Google 账号登录', loginLogout:'退出登录',
     myReportsBtn:'我的报告', myReportsTitle:'历史报告',
     myReportsEmpty:'暂无历史报告', myReportsLoading:'加载中...',
@@ -91,6 +98,7 @@ const I18N = {
     ag4Role:'Report Gen', ag4Desc:'SWOT analysis<br>Cross-product scoring<br>Outputs PDF report',
     navLinks:['Home','Product','Agents','Analyze'], navLoginBtn:'Login',
     formTitle:'Start Analysis', lblProduct:'Target Product', phProduct:'e.g. Feishu, DingTalk, Slack',
+    lblReportLang:'Report Language',
     lblQuery:'Analysis Request', phQuery:'Describe needs, e.g. Compare video conferencing between Feishu and DingTalk...',
     upMain:'Click to upload or drag file here', upSub:'PDF, Word, TXT · 1 file max · 20 MB limit',
     submitBtn:'Start Analysis', navDlBtn:'Report Generation', optionalTag:'Optional',
@@ -107,11 +115,17 @@ const I18N = {
     footerCopy:'© 2026 Dreamcode · All rights reserved',
     errNoProduct:'Please enter a target product name', errFiletype:'Only PDF, Word, TXT supported',
     errFilesize:'File must be under 20 MB', loginMsg:'Login coming soon',
-    loginTitle:'Log in to Dreamcode', loginTabPhone:'Phone Login', loginTabGoogle:'Google Login',
-    loginPhoneLabel:'Phone', loginPhonePh:'Enter 11-digit phone number',
-    loginPhoneHint:'China mainland only (+86). Use Google login for other regions.',
-    loginSendOtp:'Send Code', loginOtpLabel:'Code', loginOtpPh:'Enter 6-digit code',
-    loginVerify:'Log In', loginGoogleNote:'Requires access to Google services',
+    loginTitle:'Log in to Dreamcode', loginTabAccount:'Account', loginTabGoogle:'Google Login',
+    loginUsernameLabel:'Username', loginUsernamePh:'Enter username',
+    loginPasswordLabel:'Password', loginPasswordPh:'Enter password',
+    loginSubmit:'Log In', loginToRegisterPrefix:'No account? ', loginToRegister:'Register',
+    regUsernameLabel:'Username', regUsernamePh:'2-32 characters',
+    regPasswordLabel:'Password', regPasswordPh:'At least 6 characters',
+    regConfirmLabel:'Confirm Password', regConfirmPh:'Re-enter password',
+    regSubmit:'Register', regToLoginPrefix:'Have an account? ', regToLogin:'Log In',
+    errLoginFill:'Please enter username and password', errPwdMismatch:'Passwords do not match',
+    errLoginFail:'Invalid username or password', errRegFail:'Registration failed, please retry',
+    loginGoogleNote:'Requires access to Google services',
     loginGoogleBtn:'Sign in with Google', loginLogout:'Log Out',
     myReportsBtn:'My Reports', myReportsTitle:'Report History',
     myReportsEmpty:'No reports yet', myReportsLoading:'Loading...',
@@ -260,49 +274,51 @@ function openLoginModal(){
 }
 function closeLoginModal(){ $('login-modal').style.display='none'; }
 function switchLoginTab(tab){
-  ['phone','google'].forEach(t=>{
+  ['account','google'].forEach(t=>{
     const c=$(`login-tab-${t}`); if(c) c.style.display=t===tab?'flex':'none';
     const btn=document.querySelector(`.login-tab[data-tab="${t}"]`);
     if(btn) btn.classList.toggle('active',t===tab);
   });
 }
 
-async function sendOtp(){
-  const phone=($('login-phone')?.value||'').trim();
-  if(!/^\d{11}$/.test(phone)){
-    alert(lang==='zh'?'请输入正确的 11 位手机号':'Enter a valid 11-digit phone number'); return;
-  }
-  const btn=$('send-otp-btn'); btn.disabled=true;
-  try{
-    const resp=await fetch('/auth/phone/send-otp',{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({phone}),
-    });
-    if(!resp.ok){ const d=await resp.json(); alert(d.error); btn.disabled=false; return; }
-    const row=$('login-otp-row'); if(row) row.style.display='flex';
-    let sec=60;
-    const timer=setInterval(()=>{
-      btn.textContent=lang==='zh'?`${sec}s 后重发`:`Resend in ${sec}s`;
-      if(--sec<0){ clearInterval(timer); btn.disabled=false; btn.textContent=T('loginSendOtp'); }
-    },1000);
-  } catch{ btn.disabled=false; }
+function switchAuthMode(mode){
+  const lf=$('auth-login-form'), rf=$('auth-register-form');
+  if(lf) lf.style.display=mode==='login'?'flex':'none';
+  if(rf) rf.style.display=mode==='register'?'flex':'none';
 }
 
-async function verifyOtp(){
-  const phone=($('login-phone')?.value||'').trim();
-  const code=($('login-otp')?.value||'').trim();
-  if(!code) return;
+async function loginWithPassword(){
+  const username=($('login-username')?.value||'').trim();
+  const password=$('login-password')?.value||'';
+  if(!username||!password){ alert(T('errLoginFill')); return; }
+  const fd=new FormData();
+  fd.append('username',username); fd.append('password',password);
   try{
-    const resp=await fetch('/auth/phone/verify',{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({phone,code}),
-    });
-    if(!resp.ok){ const d=await resp.json(); alert(d.error); return; }
+    const resp=await fetch('/auth/password/login',{method:'POST',body:fd,headers:{...authHeaders()}});
+    if(!resp.ok){ const d=await resp.json().catch(()=>({})); alert(d.error||T('errLoginFail')); return; }
     const {token,display_name}=await resp.json();
     localStorage.setItem('dc-token',token);
     localStorage.setItem('dc-display-name',display_name);
     setAuthDisplay(); closeLoginModal();
-  } catch{ alert(lang==='zh'?'验证失败，请重试':'Verification failed, please retry'); }
+  } catch{ alert(T('errLoginFail')); }
+}
+
+async function registerUser(){
+  const username=($('reg-username')?.value||'').trim();
+  const password=$('reg-password')?.value||'';
+  const confirm=$('reg-confirm')?.value||'';
+  if(!username||!password){ alert(T('errLoginFill')); return; }
+  if(password!==confirm){ alert(T('errPwdMismatch')); return; }
+  const fd=new FormData();
+  fd.append('username',username); fd.append('password',password);
+  try{
+    const resp=await fetch('/auth/register',{method:'POST',body:fd});
+    if(!resp.ok){ const d=await resp.json().catch(()=>({})); alert(d.error||T('errRegFail')); return; }
+    const {token,display_name}=await resp.json();
+    localStorage.setItem('dc-token',token);
+    localStorage.setItem('dc-display-name',display_name);
+    setAuthDisplay(); closeLoginModal();
+  } catch{ alert(T('errRegFail')); }
 }
 
 async function logout(){
@@ -465,7 +481,8 @@ function applyLang(){
   set('t-ag3-role',t.ag3Role); setH('t-ag3-desc',t.ag3Desc);
   set('t-ag4-role',t.ag4Role); setH('t-ag4-desc',t.ag4Desc);
   set('t-form-title',t.formTitle); set('t-lbl-product',t.lblProduct);
-  setA('input-product','placeholder',t.phProduct); set('t-lbl-query',t.lblQuery);
+  setA('input-product','placeholder',t.phProduct); set('t-lbl-report-lang',t.lblReportLang);
+  set('t-lbl-query',t.lblQuery);
   setA('input-query','placeholder',t.phQuery); set('t-up-main',t.upMain);
   set('t-up-sub',t.upSub); set('submit-btn',t.submitBtn);
   set('t-stream-title',t.streamTitle); set('think-text',t.thinkText);
@@ -497,11 +514,17 @@ function applyLang(){
   const warnEl=$('api-warn'); if(warnEl) warnEl.textContent=t.keyWarn;
   setAuthDisplay();
   // 登录弹窗 i18n
-  set('t-login-title',t.loginTitle); set('t-login-tab-phone',t.loginTabPhone);
-  set('t-login-tab-google',t.loginTabGoogle); set('t-login-phone-label',t.loginPhoneLabel);
-  setA('login-phone','placeholder',t.loginPhonePh); set('t-login-phone-hint',t.loginPhoneHint);
-  set('send-otp-btn',t.loginSendOtp); set('t-login-otp-label',t.loginOtpLabel);
-  setA('login-otp','placeholder',t.loginOtpPh); set('t-login-verify',t.loginVerify);
+  set('t-login-title',t.loginTitle); set('t-login-tab-account',t.loginTabAccount);
+  set('t-login-tab-google',t.loginTabGoogle);
+  set('t-login-username-label',t.loginUsernameLabel); setA('login-username','placeholder',t.loginUsernamePh);
+  set('t-login-password-label',t.loginPasswordLabel); setA('login-password','placeholder',t.loginPasswordPh);
+  set('t-login-submit',t.loginSubmit);
+  set('t-login-to-register-prefix',t.loginToRegisterPrefix); set('t-login-to-register',t.loginToRegister);
+  set('t-reg-username-label',t.regUsernameLabel); setA('reg-username','placeholder',t.regUsernamePh);
+  set('t-reg-password-label',t.regPasswordLabel); setA('reg-password','placeholder',t.regPasswordPh);
+  set('t-reg-confirm-label',t.regConfirmLabel); setA('reg-confirm','placeholder',t.regConfirmPh);
+  set('t-reg-submit',t.regSubmit);
+  set('t-reg-to-login-prefix',t.regToLoginPrefix); set('t-reg-to-login',t.regToLogin);
   set('t-login-google-note',t.loginGoogleNote); set('t-login-google-btn',t.loginGoogleBtn);
   set('t-login-logout',t.loginLogout);
 }
@@ -1392,6 +1415,7 @@ async function startAnalysis(){
   const fd=new FormData();
   fd.append('target_product',product);
   fd.append('user_query',$('input-query').value.trim()||product);
+  fd.append('report_language',$('report-lang')?.value||'zh');
   if(uploadedFile) fd.append('file',uploadedFile);
   ['gpt5','deepseek','doubao'].forEach(fam=>{
     const key=$(`${fam}-key`)?.value.trim();
