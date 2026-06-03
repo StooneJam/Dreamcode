@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlencode
 
 import httpx
 
@@ -17,8 +18,7 @@ def build_auth_url(redirect_uri: str) -> str:
         "scope": "openid email profile",
         "access_type": "online",
     }
-    qs = "&".join(f"{k}={v}" for k, v in params.items())
-    return f"{_AUTH_ENDPOINT}?{qs}"
+    return f"{_AUTH_ENDPOINT}?{urlencode(params)}"
 
 
 async def fetch_userinfo(code: str, redirect_uri: str) -> dict:

@@ -322,7 +322,8 @@ async def question(
     async with _qa_locks[key]:
         conv_id = db.get_or_create_conversation(job_id, owner)
         history = db.get_messages(conv_id)
-        # 凭证优先用请求携带的浏览器 key（支持重启后回看再答疑），回退到内存 job
+        # 凭证优先级：请求体浏览器 key（重启后回看也能答）→ 内存 job → 项目 .env key。
+        # 末级回退是有意的：付费按次模式下用户不传 key，由项目自有 key 兜底计费。
         creds = _build_creds(
             body.get("gpt5_key"), body.get("deepseek_key"), body.get("doubao_key")
         ) or (job.get("creds") if job else None)
@@ -409,6 +410,8 @@ async def google_callback(request: Request, code: str = "", error: str = "") -> 
         )
         token = create_session(user_id)
     except Exception:
+        from loguru import logger
+        logger.exception("Google OAuth callback failed")
         return RedirectResponse("/?auth_error=google")
     encoded_name = quote(display_name, safe="")
     return RedirectResponse(f"/?token={token}&display_name={encoded_name}")
