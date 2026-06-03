@@ -6,28 +6,43 @@
 3. 调用 analyze_sentiment_bert 对评论文本做 BERT 三分类情感标注
 4. 对每个产品调用 finalize_sentiment 提交分析结论
 
-## 数据源路由（按 product_type 决定，先判断再采集）
+## 数据源路由（渠道已由 product_type 预先分配，必须遵守）
 
-上下文会给出 product_type。**不要假设产品一定是 App，也不要无脑爬 App Store。** 先判断形态再选源：
+消息里会给出本次的 **评论抓取渠道** 和候选平台。这个渠道按 product_type 选定，
+target 与全部竞品**统一用同一个渠道**——对比的是同一类对象（如「连锁咖啡品牌」），
+评价必须来自同一种来源才可比。
 
-### A. App / 软件 / SaaS / 移动应用类
+**关键原则：产品恰好有 App ≠ 应该用 App Store 评分。** App Store 评分量的是 App 体验
+（登录 / 积分 / 崩溃），不是咖啡、不是香水。只有分配到的渠道本身就是 App Store 时才抓它。
+
+按分配到的渠道采集：
+
+### 渠道 = App Store / 应用商店
 - scrape_app_store(product_name, country="cn", max_reviews=50)：拿 rating / review_count / reviews
-- 把 reviews 的 text 提取为文本列表供 BERT
-- 再用 web_search 补充知乎 / 微博等评价
+- reviews 的 text 提取为文本列表供 BERT；再用 web_search 补充知乎 / 微博
 - aggregate_rating 填 App Store 评分，rating_source 填 "appstore_cn"（美区 "appstore_us"）
 
-### B. 非 App 类（实体商品 / 美妆 / 香水 / FMCG / 硬件 / 服务 / 报告 / 任意其它）
-- **不要调 scrape_app_store**——这类产品没有 App 条目，只会 app_not_found
-- 用 web_search 至少 3 次，按产品所在领域选渠道（下面是示例，不是穷举，自行判断该产品口碑沉淀在哪）：
-  1. 电商 / 销售渠道评论：如 "{产品名} 评价 京东" / "{产品名} 怎么样 天猫" / "{product} review amazon"
-  2. 垂类社区 / 专业测评：如 "{产品名} 测评 小红书"；香水可搜 "Fragrantica {product} reviews" / "香水时代 {产品名}"；其它领域用该领域的权威评测源
-  3. 负面视角：如 "{产品名} 缺点 差评 踩雷"
-- aggregate_rating 取主要渠道的聚合星级（归一到 1–5），rating_source 填该渠道名（如 "tmall"/"jd"/"amazon"/"fragrantica"）；无统一评分则留 None
-- representative_reviews 的 platform 按实际来源填，开放字符串，没有合适值就填 "other"
+### 渠道 = 本地生活（大众点评/美团）
+- **不要调 scrape_app_store**（哪怕该品牌有自己的 App）
+- web_search 至少 3 次：到店口碑（"{品牌} 大众点评 评价" / "{品牌} 美团 怎么样"）、
+  种草测评（"{品牌} 小红书"）、负面（"{品牌} 难喝 踩雷 缺点"）
+- aggregate_rating 取大众点评 / 美团聚合星级（归一 1–5），rating_source 填 "dianping" / "meituan"
+
+### 渠道 = 电商（天猫/京东/亚马逊）
+- **不要调 scrape_app_store**
+- web_search 至少 3 次：电商评价（"{产品} 评价 京东" / "{产品} 天猫 怎么样" / "{product} review amazon"）、
+  垂类测评（"{产品} 小红书 测评"；香水可搜 "Fragrantica {product} reviews" / "香水时代 {产品}"）、负面（"{产品} 差评 缺点"）
+- aggregate_rating 取主渠道聚合星级（归一 1–5），rating_source 填 "tmall" / "jd" / "amazon" / "fragrantica"
+
+### 渠道 = 通用联网搜索
+- product_type 未命中已知渠道时走这里。**默认不抓 App Store。**
+- 先用 web_search 判断该产品口碑沉淀在哪（电商 / 社区 / 专业测评站），再按那个来源采集，至少 3 次、兼顾正反
+- 仅当你联网确认该产品主要形态就是 App / 软件时，才可改用 scrape_app_store
 
 ### 通用
-- 拿不准 product_type 时，可先 scrape_app_store 试一次；返回 app_not_found 即转 B 路径
 - web_search 务必兼顾正反面，避免单一来源的选择性偏差
+- representative_reviews 的 platform 按实际来源填，开放字符串，没有合适值就填 "other"
+- aggregate_rating 无统一评分则留 None
 
 ## 工具调用顺序（每个产品）
 1. 按上面路由采集评论文本
@@ -49,7 +64,7 @@
 - **强制安装型**（B 端强推 / 政务 / 教育强制，如钉钉、企业微信）：App Store 评分主要反映被动用户抵触情绪，非产品竞争力；评论量大只说明强制覆盖广。
 - **管理工具型**（管理员与员工体验不同）：评分多来自被管理方。
 - **出海 / 全球产品**：区域差异大，国区与美区来源不同，不可直接比。
-- **跨渠道评分**（A 类 App Store 评分 vs B 类电商星级）：来源人群与打分习惯不同，不可直接横比，须注明 rating_source。
+- **跨渠道评分**（App Store 评分 vs 电商 / 本地生活星级）：来源人群与打分习惯不同，不可直接横比，须注明 rating_source。正常情况下同次分析全部产品已统一渠道；若个别产品确实只能取到异渠道评分，必须在此注明。
 
 标注示例：`"注：钉钉为强制安装型，App Store 低分主要来自被动用户，不直接反映竞争力，与自选型产品评分不可横比。"`
 

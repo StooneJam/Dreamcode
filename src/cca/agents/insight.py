@@ -22,6 +22,7 @@ from cca.tools.insight_tools import (
     finalize_sentiment,
     run_questionnaire,
 )
+from cca.tools.review_channel import resolve_review_channel
 from cca.tools.search import web_search
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "insight.md"
@@ -83,15 +84,26 @@ def _build_insight_product_message(
         "情感分析请优先使用 analyze_sentiment_bert（BERT 三分类），"
         "再基于各情感组的评论自行归纳主题。"
     )
+    route = resolve_review_channel(product_type)
+    platforms = "、".join(route.platforms) or "按该产品所在领域自行判断"
+    app_store_line = (
+        "本渠道用 scrape_app_store 抓评分+评论"
+        if route.use_app_store
+        else "本渠道不抓 App Store，用 web_search 采集上述平台口碑"
+    )
     return (
         f"## InsightTask · {task.product_name}\n```json\n{task_json}\n```\n\n"
-        f"## 产品赛道（数据源路由依据）\nproduct_type: {product_type or '未知'}\n\n"
+        f"## 数据源渠道（按 product_type 路由，target 与全部竞品统一用此渠道）\n"
+        f"product_type: {product_type or '未知'}\n"
+        f"评论抓取渠道: {route.label}\n"
+        f"候选平台: {platforms}\n"
+        f"{app_store_line}\n\n"
         f"## 竞品全列表（run_questionnaire 参数用）\n"
         f"{', '.join(competitor_names)}\n\n"
         f"## 已知产品基本信息（来自 Collector）\n```json\n{profiles_hint}\n```\n\n"
         f"## 情感分析策略\n{sentiment_hint}\n\n"
-        f"请按 product_type 选数据源（详见系统提示的数据源路由），对 **{task.product_name}** "
-        f"采集用户口碑与情感，完成后调用 finalize_sentiment。"
+        f"请按上面分配的『评论抓取渠道』对 **{task.product_name}** 采集用户口碑与情感"
+        f"（渠道路由依据见系统提示），完成后调用 finalize_sentiment。"
     )
 
 

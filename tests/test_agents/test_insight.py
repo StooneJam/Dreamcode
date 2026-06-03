@@ -150,6 +150,32 @@ class TestInsightOneProduct:
 
 
 # ---------------------------------------------------------------------------
+# _build_insight_product_message：product_type → 数据源渠道注入
+# ---------------------------------------------------------------------------
+
+class TestInsightProductMessage:
+    def _build(self, product_type: str):
+        from cca.agents.insight import _build_insight_product_message
+        from cca.schema import InsightTask
+        return _build_insight_product_message(
+            InsightTask(product_name="幸运咖"), {}, ["星巴克", "瑞幸", "Manner"], product_type,
+        )
+
+    def test_coffee_routes_to_local_life_channel(self):
+        msg = self._build("连锁咖啡")
+        assert "大众点评" in msg and "美团" in msg
+
+    def test_coffee_message_excludes_app_store(self):
+        # 幸运咖有 App，但赛道是咖啡 → 消息必须明确不抓 App Store
+        msg = self._build("连锁咖啡")
+        assert "不抓 App Store" in msg
+
+    def test_software_routes_to_app_store_channel(self):
+        msg = self._build("协同办公软件")
+        assert "scrape_app_store" in msg
+
+
+# ---------------------------------------------------------------------------
 # 问卷缓存（get_or_create_questionnaire）
 # ---------------------------------------------------------------------------
 
