@@ -108,6 +108,16 @@ def _stream_iter(agent: Any, messages: list, recursion_limit: int):
         yield chunk
 
 
+def _sum_usage(messages: list) -> dict[str, int]:
+    inp = out = 0
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            meta = getattr(msg, "usage_metadata", None) or {}
+            inp += meta.get("input_tokens", 0)
+            out += meta.get("output_tokens", 0)
+    return {"input": inp, "output": out, "total": inp + out}
+
+
 def _run_real(agent: Any, messages: list, label: str, recursion_limit: int) -> list:
     """真跑 ReAct：优先 .stream，失败 fallback .invoke。"""
     from langgraph.errors import GraphRecursionError
@@ -188,6 +198,11 @@ def stream_react(
     sys.stdout.flush()
     final_messages = _run_real(agent, messages, label, recursion_limit)
     _print(label, f"done ({len(final_messages)} messages)")
+
+    usage = _sum_usage(final_messages)
+    if usage["total"] > 0:
+        _print(label, f"tokens: in={usage['input']} out={usage['output']} total={usage['total']}")
+        _emit({"type": "token_usage", "agent": label, **usage})
 
     # ── write / auto 写缓存 ──
     if use_cache and mode in ("write", "auto"):

@@ -5,6 +5,7 @@ ReAct agent 看到 error 自行换 URL，不在工具内重试。
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from functools import lru_cache
 from urllib import robotparser
@@ -16,6 +17,37 @@ from langchain_core.tools import tool
 
 _TIMEOUT = 15.0
 _USER_AGENT = "Mozilla/5.0 (compatible; CCA-Collector/0.1)"
+_MAX_TEXT = 12_000
+
+
+def _score_paragraph(para: str) -> float:
+    if len(para) < 10:
+        return 0.0
+    score = len(re.findall(r"\d", para)) * 0.2
+    if re.match(r"^\s*[-•·*]|\d+\.", para):
+        score += 1.5
+    length = len(para)
+    if 30 < length < 300:
+        score += 1.0
+    elif 300 <= length < 600:
+        score += 0.5
+    return score
+
+
+def _smart_truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    print(f"  [fetch_url] truncate {len(text)} → {limit} chars (saved {len(text)-limit})", flush=True)
+    paragraphs = [p for p in re.split(r"\n+", text) if p.strip()]
+    scored = sorted(enumerate(paragraphs), key=lambda x: _score_paragraph(x[1]), reverse=True)
+    selected: set[int] = set()
+    total = 0
+    for idx, para in scored:
+        if total + len(para) + 1 > limit:
+            continue
+        selected.add(idx)
+        total += len(para) + 1
+    return "\n".join(p for i, p in enumerate(paragraphs) if i in selected)
 
 
 @lru_cache(maxsize=256)
@@ -95,6 +127,6 @@ def fetch_url(url: str) -> dict:
     return {
         "url": url,
         "title": title,
-        "text": extracted,
+        "text": _smart_truncate(extracted, _MAX_TEXT),
         "fetched_at": now,
     }
