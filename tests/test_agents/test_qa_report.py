@@ -231,6 +231,23 @@ class TestSerializeProfiles:
         assert "_低置信度来源" in data["企业微信"]
         assert "_低置信度来源" not in data["钉钉"]
 
+    def test_key_events_slimmed_to_statement_and_url(self):
+        profiles = {"蜜雪冰城": {
+            "product_name": "蜜雪冰城",
+            "key_events": [{
+                "statement": "推 1 元冰杯，加盟商抵制",
+                "evidence": [{
+                    "source_url": "https://news.example.com/x",
+                    "snippet": "应被剔除的长正文片段",
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                }],
+            }],
+        }}
+        ke = json.loads(_serialize_profiles(profiles, set()))["蜜雪冰城"]["key_events"][0]
+        assert ke["statement"] == "推 1 元冰杯，加盟商抵制"
+        assert ke["url"] == ["https://news.example.com/x"]
+        assert "snippet" not in ke  # 瘦身省 token
+
 
 class TestBuildInitialMessage:
     def _call(self, mock_state, *, with_context: bool = False) -> str:

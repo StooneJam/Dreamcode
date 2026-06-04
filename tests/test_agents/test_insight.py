@@ -107,6 +107,13 @@ class TestInsightOneProduct:
         )
         return json.dumps({"product_name": product_name, "sentiment": s.model_dump()})
 
+    def _fake_events(self, product_name: str) -> str:
+        events = [{
+            "statement": f"{product_name} 推出某活动，部分加盟商称亏损抵制",
+            "evidence": [{"source_url": "https://news.example.com/x", "snippet": "原文片段"}],
+        }]
+        return json.dumps({"product_name": product_name, "key_events": events})
+
     def _invoke(self, mock_state, product_name="钉钉", extra_msgs=None):
         from cca.schema import InsightTask
         msgs = [self._make_tool_message("finalize_sentiment", self._fake_sentiment(product_name))]
@@ -147,6 +154,19 @@ class TestInsightOneProduct:
         # fanout worker 无 signal 时不带 agent_signals key（精简增量契约）
         result = self._invoke(mock_state)
         assert "agent_signals" not in result
+
+    def test_key_events_written_to_profiles(self, mock_state):
+        msg = self._make_tool_message("record_key_events", self._fake_events("钉钉"))
+        result = self._invoke(mock_state, extra_msgs=[msg])
+        events = result["profiles"]["钉钉"]["key_events"]
+        assert len(events) == 1 and "抵制" in events[0]["statement"]
+        assert result["audit_log"][0]["key_events_written"] is True
+
+    def test_key_events_absent_when_not_recorded(self, mock_state):
+        # 未调 record_key_events 时不写 key_events，sentiment 仍在
+        result = self._invoke(mock_state)
+        assert "key_events" not in result["profiles"]["钉钉"]
+        assert result["audit_log"][0]["key_events_written"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +424,16 @@ class TestFinalizeSentimentTool:
         assert "UserSentiment 校验失败" in result
         assert "aggregate_rating" in result
 
+    def test_string_themes_are_tolerated(self):
+        # 豆包高频错填：positive_themes 填成顿号分隔的串 → 应切成数组一次过，不再 retry
+        from cca.tools.insight_tools import finalize_sentiment
+        bad = json.dumps({
+            "positive_themes": "性价比高、出餐快",
+            "negative_themes": ["口味偏甜"],
+        }, ensure_ascii=False)
+        result = json.loads(finalize_sentiment.invoke({"product_name": "X", "sentiment_json": bad}))
+        assert result["sentiment"]["positive_themes"] == ["性价比高", "出餐快"]
+
     def test_schema_fields_preserved(self):
         from cca.tools.insight_tools import finalize_sentiment
         from cca.schema import UserSentiment
@@ -422,6 +452,52 @@ class TestFinalizeSentimentTool:
         assert sent["rating_review_count"] == 1000
         assert sent["rating_source"] == "appstore_cn"
         assert sent["positive_themes"] == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# record_key_events 工具：list[Fact] 校验 + LLM-friendly 错误
+# ---------------------------------------------------------------------------
+
+class TestRecordKeyEventsTool:
+    def _valid_events_json(self) -> str:
+        return json.dumps([{
+            "statement": "总部推 1 元冰杯引流，多地加盟商称单杯亏损拒绝执行",
+            "evidence": [{"source_url": "https://news.example.com/a", "snippet": "原文"}],
+        }])
+
+    def test_valid_events_pass_through(self):
+        from cca.tools.insight_tools import record_key_events
+        result = json.loads(record_key_events.invoke({
+            "product_name": "蜜雪冰城", "events_json": self._valid_events_json(),
+        }))
+        assert result["product_name"] == "蜜雪冰城"
+        assert "加盟商" in result["key_events"][0]["statement"]
+
+    def test_missing_evidence_returns_error(self):
+        # Fact.evidence min_length=1：无证据应返回 LLM 可自修的错误串，不 raise
+        from cca.tools.insight_tools import record_key_events
+        bad = json.dumps([{"statement": "无证据事件"}])
+        result = record_key_events.invoke({"product_name": "X", "events_json": bad})
+        assert "evidence" in result
+
+    def test_non_array_returns_error(self):
+        from cca.tools.insight_tools import record_key_events
+        result = record_key_events.invoke({"product_name": "X", "events_json": "{}"})
+        assert "数组" in result
+
+    def test_bare_url_evidence_is_tolerated(self):
+        # 豆包高频错填：evidence 填成裸 URL 字符串 → 应归一后一次过，不再 retry
+        from cca.tools.insight_tools import record_key_events
+        bad_shape = json.dumps([{"statement": "事件", "evidence": ["https://x.com/a"]}])
+        result = json.loads(record_key_events.invoke({"product_name": "X", "events_json": bad_shape}))
+        assert result["key_events"][0]["evidence"][0]["source_url"] == "https://x.com/a"
+
+    def test_events_passed_as_list_is_tolerated(self):
+        # 豆包有时直接传数组而非 JSON 串 → 应被容忍
+        from cca.tools.insight_tools import record_key_events
+        events = [{"statement": "事件", "evidence": [{"source_url": "https://x.com"}]}]
+        result = json.loads(record_key_events.invoke({"product_name": "X", "events_json": events}))
+        assert result["key_events"][0]["statement"] == "事件"
 
 
 # ---------------------------------------------------------------------------

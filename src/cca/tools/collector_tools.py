@@ -15,7 +15,7 @@ from cca.schema import (
     CollectorExplorationResult,
     ProductProfile,
 )
-from cca.tools._validation import safe_load_validate
+from cca.tools._validation import repair_llm_json, safe_load_validate
 
 
 def _now() -> str:
@@ -157,13 +157,16 @@ def finalize_profile(product_name: str, profile_json: str) -> tuple[str, dict]:
     """提交单产品 ProductProfile，结束当前产品 ReAct 循环。每个 CollectTask 完成后**必须调用一次**。
 
     Collector 该填字段：product_name / product_type / target_users / website /
-    dimensions（每个 Dimension.facts 每条 Fact.evidence min_length=1，每条 Evidence 必填 source_url）/
-    pricing / sources。**不要**填 sentiment（Insight owner）。
+    dimensions（每个 Dimension.facts 每条 Fact.evidence min_length=1，每条 Evidence 是含
+    source_url 的对象，不要直接填 URL 字符串）/ pricing（tiers[].source 同样是含 source_url 的对象）/
+    sources。**不要**填 sentiment（Insight owner）。
 
-    工具会主动清洗常见 schema 偏差（无 source_url 的 Evidence 会被剔除；无证据的 Fact 会被剔除）。
-    清洗后仍不合规会返回错误字符串带具体字段路径，ReAct 看到后修 JSON 重试。
+    工具会主动归一常见错填（裸 URL 串 / {url:...} 自动补成 {source_url:...}；无 source_url 的
+    Evidence 才剔除；无证据的 Fact 才剔除）。清洗后仍不合规会返错误字符串带字段路径，ReAct 自修重试。
     """
     def _clean(d: dict) -> dict:
+        # 先归一裸 URL / {url} → {source_url}（豆包高频错填），再走既有清洗
+        d = repair_llm_json(d)
         # 无论模型是否传入 product_name，都用外层参数覆盖，避免 Field required 循环
         d = _clean_profile(d)
         d["product_name"] = product_name

@@ -158,6 +158,16 @@ def test_product_profile_has_no_swot_field() -> None:
     assert "swot" not in ProductProfile.model_fields
 
 
+def test_product_profile_key_events_default_empty() -> None:
+    p = ProductProfile(product_name="蜜雪冰城")
+    assert p.key_events == []
+
+
+def test_product_profile_accepts_key_events(fact: Fact) -> None:
+    p = ProductProfile(product_name="蜜雪冰城", key_events=[fact])
+    assert p.key_events[0].statement == fact.statement
+
+
 def test_qa_result_valid() -> None:
     r = QAResult(product_name="飞书", passed=True)
     assert r.passed is True

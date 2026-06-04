@@ -6,11 +6,60 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 T = TypeVar("T", bound=BaseModel)
+
+# LLM（尤其豆包）反复错填的结构修复，按 key 名约定，不新增/篡改语义数据。
+_EVIDENCE_URL_ALIASES = ("source_url", "url", "link", "href", "uri")
+_EVIDENCE_KEYS = ("evidence", "sources")
+_THEME_LIST_KEYS = ("positive_themes", "negative_themes", "included_features")
+_SPLIT_RE = re.compile(r"[,，、;；\n]+")
+
+
+def _coerce_evidence(item: object) -> object:
+    """『该填 Evidence 的地方』归一成含 source_url 的对象。
+
+    URL 字符串 / {url|link|href:...} → {source_url:...}；已含 source_url 的对象原样返回。
+    这是豆包最高频的错填（把 Evidence 填成裸 URL），归一后第一次就过校验、免去 retry。
+    """
+    if isinstance(item, str):
+        return {"source_url": item}
+    if isinstance(item, dict) and not item.get("source_url"):
+        for alias in _EVIDENCE_URL_ALIASES:
+            val = item.get(alias)
+            if isinstance(val, str) and val:
+                return {**item, "source_url": val}
+    return item
+
+
+def repair_llm_json(raw: object) -> object:
+    """递归修复 LLM 常见结构错填（按 key 名），让 Pydantic 第一次就过、减少 ReAct retry：
+
+    - evidence / sources：Evidence 列表 —— 元素是裸 URL 串或 {url:...} → {source_url:...}；
+      误填成单个对象（非列表）→ 包成列表
+    - source：单个 Evidence —— 同上归一
+    - positive_themes / negative_themes / included_features：误填成单串 → 按分隔符切成列表
+    """
+    if isinstance(raw, list):
+        return [repair_llm_json(x) for x in raw]
+    if not isinstance(raw, dict):
+        return raw
+    out: dict = {}
+    for key, val in raw.items():
+        if key in _EVIDENCE_KEYS:
+            items = val if isinstance(val, list) else [val]
+            out[key] = [_coerce_evidence(repair_llm_json(it)) for it in items]
+        elif key == "source":
+            out[key] = _coerce_evidence(val) if val is not None else None
+        elif key in _THEME_LIST_KEYS and isinstance(val, str):
+            out[key] = [t.strip() for t in _SPLIT_RE.split(val) if t.strip()]
+        else:
+            out[key] = repair_llm_json(val)
+    return out
 
 
 def _format_decode_error(json_str: str, e: json.JSONDecodeError) -> str:
@@ -145,11 +194,18 @@ def safe_load_validate(
         return None, msg
 
 
-def safe_load_list(json_str: str, item_schema: type[T]) -> tuple[list[T] | None, str | None]:
-    """parse JSON 数组 → 每项 Pydantic validate；任一失败返回错误字符串。"""
+def safe_load_list(
+    json_str: str,
+    item_schema: type[T],
+    *,
+    pre_clean: Callable[[object], object] | None = None,
+) -> tuple[list[T] | None, str | None]:
+    """parse JSON 数组 → 可选清洗 → 每项 Pydantic validate；任一失败返回错误字符串。"""
     raw, err = _try_parse_lenient(json_str)
     if err:
         return None, err
+    if pre_clean is not None:
+        raw = pre_clean(raw)
     if not isinstance(raw, list):
         return None, f"参数必须是 JSON 数组，实际为 {type(raw).__name__}。"
 

@@ -169,6 +169,10 @@ class ProductProfile(BaseModel):
 
     # Insight Agent 填写
     sentiment: UserSentiment | None = None
+    key_events: list[Fact] = Field(
+        default_factory=list,
+        description="关键事件与经营矛盾/利益冲突语料，客观陈述+证据；因果定性交 Report",
+    )
 
     # PM debate-review 填写
     qa_flags: list[str] = Field(

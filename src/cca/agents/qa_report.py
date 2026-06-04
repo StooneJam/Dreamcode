@@ -70,6 +70,14 @@ def _slim_profile(profile: dict) -> dict:
         result["dimensions"] = slimmed
     if sources := result.get("sources"):
         result["sources"] = [s.get("source_url", "") for s in sources]
+    if key_events := result.get("key_events"):
+        result["key_events"] = [
+            {
+                "statement": f.get("statement", ""),
+                "url": [e.get("source_url", "") for e in (f.get("evidence") or [])],
+            }
+            for f in key_events
+        ]
     if sentiment := result.get("sentiment"):
         sentiment = dict(sentiment)
         if s_sources := sentiment.get("sources"):

@@ -276,6 +276,28 @@ def test_finalize_profile_autofills_sources_from_evidence() -> None:
     assert urls == {"https://a.com", "https://b.com", "https://c.com/pricing"}
 
 
+def test_finalize_profile_tolerates_url_string_evidence_and_tier_source() -> None:
+    """豆包高频错填：fact.evidence / tier.source 填成裸 URL 字符串 → 归一后一次过，不再 retry。
+    回归保护：蜜雪冰城那轮 'pricing.tiers.0.source should be a valid dict' 超时的根因。"""
+    raw = {
+        "product_name": "Z",
+        "product_type": "SaaS",
+        "dimensions": [{
+            "name": "定价", "category": "定价",
+            "facts": [{"statement": "入门价 10 元", "evidence": ["https://a.com/price"]}],
+        }],
+        "pricing": {
+            "pricing_model": "per_user",
+            "tiers": [{"name": "Pro", "price_per_user_monthly": 10.0,
+                       "source": "https://a.com/price"}],
+        },
+        "sources": [],
+    }
+    profile = _finalize("Z", json.dumps(raw)).artifact["profile"]
+    assert profile["dimensions"][0]["facts"][0]["evidence"][0]["source_url"] == "https://a.com/price"
+    assert profile["pricing"]["tiers"][0]["source"]["source_url"] == "https://a.com/price"
+
+
 def test_finalize_profile_autofill_dedupes_against_existing_sources() -> None:
     """LLM 已经填了部分 sources 时，autofill 不重复添加。"""
 

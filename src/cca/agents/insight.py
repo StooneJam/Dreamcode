@@ -20,6 +20,7 @@ from cca.tools.insight_tools import (
     analyze_sentiment_bert,
     challenge_pm,
     finalize_sentiment,
+    record_key_events,
     run_questionnaire,
 )
 from cca.tools.places import scrape_local_life
@@ -51,6 +52,15 @@ def _extract_sentiments(messages: list) -> dict[str, dict]:
     for data in _extract_tool_jsons(messages, "finalize_sentiment"):
         if "product_name" in data and "sentiment" in data:
             results[data["product_name"]] = data["sentiment"]
+    return results
+
+
+def _extract_events(messages: list) -> dict[str, list[dict]]:
+    """record_key_events 各次结果 → {product_name: key_events}。"""
+    results: dict[str, list[dict]] = {}
+    for data in _extract_tool_jsons(messages, "record_key_events"):
+        if "product_name" in data and "key_events" in data:
+            results[data["product_name"]] = data["key_events"]
     return results
 
 
@@ -124,7 +134,7 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
     agent = create_react_agent(
         model=get_llm("deepseek"),
         tools=[scrape_app_store, scrape_local_life, web_search, run_questionnaire,
-               analyze_sentiment_bert, finalize_sentiment, challenge_pm],
+               analyze_sentiment_bert, finalize_sentiment, record_key_events, challenge_pm],
     )
     messages = stream_react(
         agent,
@@ -141,21 +151,28 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
         # 流式打印仍然保留（stream_react 在 cache_key=None 时走纯真跑路径）。
     )
     sentiments = _extract_sentiments(messages)
+    events = _extract_events(messages)
     signals = _extract_signals(messages)
 
     name = task.product_name
     result: dict = {}
     # Send fanout dispatch 时 context["profiles"] 是 task_plan 后的 snapshot（Collector 尚未跑完），
     # 所以**不能用 `name in profiles` 守卫** —— _merge_profiles reducer (D-031) 会自动按 key 合并字段，
-    # Insight 写 {sentiment: ...} 不论 Collector 是否已写过该产品都安全。
+    # Insight 写 {sentiment / key_events} 不论 Collector 是否已写过该产品都安全。
+    profile_update: dict = {}
     if name in sentiments:
-        result["profiles"] = {name: {"sentiment": sentiments[name]}}
+        profile_update["sentiment"] = sentiments[name]
+    if name in events:
+        profile_update["key_events"] = events[name]
+    if profile_update:
+        result["profiles"] = {name: profile_update}
     if signals:
         result["agent_signals"] = signals
     result["audit_log"] = [{
         "agent": "insight", "event": "sentiment_analyzed",
         "product": name,
         "sentiment_written": name in sentiments,
+        "key_events_written": name in events,
         "signals_raised": len(signals),
     }]
     return result

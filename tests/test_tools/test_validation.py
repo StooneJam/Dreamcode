@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from cca.tools._validation import safe_load_list, safe_load_validate
+from cca.tools._validation import repair_llm_json, safe_load_list, safe_load_validate
 
 
 class _Sample(BaseModel):
@@ -92,3 +92,53 @@ def test_hint_appended_on_validation_failure() -> None:
     )
     assert obj is None
     assert "字段规则提示" in err
+
+
+# ---------------------------------------------------------------------------
+# repair_llm_json：豆包高频结构错填的容忍式修复
+# ---------------------------------------------------------------------------
+
+class TestRepairLLMJson:
+    def test_bare_url_string_in_evidence_becomes_object(self) -> None:
+        fixed = repair_llm_json({"evidence": ["https://x.com/a"]})
+        assert fixed["evidence"] == [{"source_url": "https://x.com/a"}]
+
+    def test_url_key_in_evidence_mapped_to_source_url(self) -> None:
+        fixed = repair_llm_json({"evidence": [{"url": "https://x.com", "snippet": "s"}]})
+        assert fixed["evidence"][0]["source_url"] == "https://x.com"
+        assert fixed["evidence"][0]["snippet"] == "s"
+
+    def test_single_evidence_object_wrapped_into_list(self) -> None:
+        fixed = repair_llm_json({"evidence": {"source_url": "https://x.com"}})
+        assert fixed["evidence"] == [{"source_url": "https://x.com"}]
+
+    def test_source_url_string_becomes_object(self) -> None:
+        fixed = repair_llm_json({"source": "https://x.com"})
+        assert fixed["source"] == {"source_url": "https://x.com"}
+
+    def test_none_source_stays_none(self) -> None:
+        assert repair_llm_json({"source": None})["source"] is None
+
+    def test_themes_string_split_into_list(self) -> None:
+        fixed = repair_llm_json({"positive_themes": "性价比高、出餐快,雪王亲民"})
+        assert fixed["positive_themes"] == ["性价比高", "出餐快", "雪王亲民"]
+
+    def test_valid_object_untouched(self) -> None:
+        valid = {"evidence": [{"source_url": "https://x.com", "snippet": "s"}]}
+        assert repair_llm_json(valid)["evidence"][0]["source_url"] == "https://x.com"
+
+    def test_nested_under_dimensions(self) -> None:
+        raw = {"dimensions": [{"facts": [{"statement": "s", "evidence": ["https://x.com"]}]}]}
+        fixed = repair_llm_json(raw)
+        assert fixed["dimensions"][0]["facts"][0]["evidence"] == [{"source_url": "https://x.com"}]
+
+
+def test_safe_load_list_applies_pre_clean() -> None:
+    """pre_clean=repair_llm_json：evidence 裸 URL 串第一次就过校验。"""
+    from cca.schema import Fact
+    items, err = safe_load_list(
+        '[{"statement": "s", "evidence": ["https://x.com/a"]}]',
+        Fact, pre_clean=repair_llm_json,
+    )
+    assert err is None
+    assert items[0].evidence[0].source_url == "https://x.com/a"

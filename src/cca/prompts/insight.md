@@ -57,6 +57,17 @@ target 与全部竞品**统一用同一个渠道**——对比的是同一类对
 3. analyze_sentiment_bert：把采集到的评论 + 问卷开放回答合并传入，拿 positive/negative/neutral 分组
 4. finalize_sentiment：见下
 
+## 关键事件与经营矛盾采集（record_key_events）
+
+口碑之外，再为每个产品采一批**关键事件 / 经营矛盾 / 利益冲突**语料，供 Report 推因果链
+（如「1元冰杯=总部引流 KPI vs 加盟商拒绝无利润劳动」「食安事件背后的低毛利压力」）：
+
+- web_search 搜 1-2 次：`"{品牌} 争议 事件"` / `"{品牌} 加盟商 矛盾 亏损"` / `"{品牌} 食安 舆情"`
+- 归纳 **2-4 条**，每条调一次 `record_key_events` 前合并成一个 Fact 数组提交
+- **只记客观事实 + 绑 evidence URL，不下因果定性**：写「总部推 X，加盟商反应 Y」，
+  不写「这是结构性冲突」——因果解读是 Report 的活
+- 搜不到就**不记**（宁缺毋滥，不编造）；该产品无明显事件/矛盾，跳过本工具
+
 ## finalize_sentiment 字段
 - **positive_themes**：读 BERT positive 组，归纳 2-4 条核心正面主题，每条 2-8 字（如"留香持久"、"AI 会议纪要"）；样本不足可少于 2 条，不编造
 - **negative_themes**：读 BERT negative 组，归纳 2-4 条核心槽点，每条 2-8 字（如"持香短"、"收费门槛高"）；不编造
