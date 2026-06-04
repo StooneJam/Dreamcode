@@ -8,6 +8,7 @@ from cca.state import CCAState
 REQUIRED_FIELDS = {
     "user_query",
     "target_product",
+    "report_language",       # 报告输出语言 "zh" | "en"，默认 "zh"
     "user_files",            # 上传机制写入的文件路径列表
     "initial_brief",         # PM 阶段一产物
     "domain_seed",           # PM phase 1 文档蒸馏产物
