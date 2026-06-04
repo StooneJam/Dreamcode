@@ -28,7 +28,7 @@ const I18N = {
     aLabel:'智能体功能介绍', aTitle:'多智能体协同工作流',
     ag1Role:'制定计划', ag1Desc:'解析用户需求<br>制定任务简报<br>分配 Collect & Insight 任务',
     ag2Role:'联网采集', ag2Desc:'联网搜索竞品<br>采集定价 / 功能<br>ReAct 多轮探索',
-    ag3Role:'情感分析', ag3Desc:'爬取用户评论<br>BERT 情感分类<br>提炼正负面观点',
+    ag3Role:'情感分析', ag3Desc:'爬取用户评论<br>研判正负面情感<br>提炼正负面观点',
     ag4Role:'报告生成', ag4Desc:'SWOT 分析<br>横向评分对比<br>输出 PDF 报告',
     navLinks:['首页','产品介绍','智能体','开始分析'], navLoginBtn:'登录',
     formTitle:'开始分析', lblProduct:'目标产品名称', phProduct:'例如：飞书、DingTalk、Slack',
@@ -94,7 +94,7 @@ const I18N = {
     aLabel:'Agent Features', aTitle:'Multi-agent Collaboration',
     ag1Role:'Planning', ag1Desc:'Parses user needs<br>Creates task briefs<br>Assigns Collect & Insight tasks',
     ag2Role:'Scraping', ag2Desc:'Web searches competitors<br>Collects pricing & features<br>ReAct multi-round',
-    ag3Role:'Sentiment', ag3Desc:'Crawls user reviews<br>BERT sentiment analysis<br>Extracts themes',
+    ag3Role:'Sentiment', ag3Desc:'Crawls user reviews<br>LLM sentiment analysis<br>Extracts themes',
     ag4Role:'Report Gen', ag4Desc:'SWOT analysis<br>Cross-product scoring<br>Outputs PDF report',
     navLinks:['Home','Product','Agents','Analyze'], navLoginBtn:'Login',
     formTitle:'Start Analysis', lblProduct:'Target Product', phProduct:'e.g. Feishu, DingTalk, Slack',
@@ -1644,7 +1644,7 @@ function simulate(btn,product){
     [900,()=>{ setThink(false); appendLog('Insight',zh?'App Store 情感分析，抓取用户评论...':'App Store sentiment, crawling reviews...'); setProgress(56); }],
     [600,()=>appendLog('Insight','→ appstore_search({ product: "...", region: "cn" })',true)],
     [900,()=>{ appendLog('Insight','← appstore_search (3.2KB) 320 reviews',true); setProgress(68); }],
-    [600,()=>appendLog('Insight',zh?'BERT 情感分类完成...':'BERT classification done...')],
+    [600,()=>appendLog('Insight',zh?'情感研判完成...':'Sentiment analysis done...')],
     [700,()=>{
       setProgress(75);
       // PM 评审结果

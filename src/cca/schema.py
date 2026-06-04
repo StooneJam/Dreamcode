@@ -112,11 +112,11 @@ class UserSentiment(BaseModel):
     )
     positive_themes: list[str] = Field(
         default_factory=list,
-        description="用户好评的主题归纳，由 LLM 基于 BERT positive 分组评论自由归纳",
+        description="用户好评的主题归纳，由 LLM 直接研判正面评论后归纳",
     )
     negative_themes: list[str] = Field(
         default_factory=list,
-        description="用户槽点的主题归纳，由 LLM 基于 BERT negative 分组评论自由归纳",
+        description="用户槽点的主题归纳，由 LLM 直接研判负面评论后归纳",
     )
     representative_reviews: list[ReviewSample] = Field(default_factory=list)
     sources: list[Evidence] = Field(default_factory=list)

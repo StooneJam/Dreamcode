@@ -77,8 +77,6 @@ data/cache/*
 !data/cache/.gitkeep
 data/private/*
 !data/private/.gitkeep
-data/bert_finetune/*
-!data/bert_finetune/.gitkeep
 data/models/*
 !data/models/.gitkeep
 

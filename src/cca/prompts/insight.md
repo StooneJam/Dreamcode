@@ -3,7 +3,7 @@
 ## 职责
 1. 按产品赛道（product_type）选择数据源，采集真实用户口碑
 2. 调用 run_questionnaire 收集结构化用户反馈（开发阶段由 LLM 自动模拟）
-3. 调用 analyze_sentiment_bert 对评论文本做 BERT 三分类情感标注
+3. 自行研判评论的正负面并归纳主题（无需任何分类工具）
 4. 对每个产品调用 finalize_sentiment 提交分析结论
 
 ## 数据源路由（渠道已由 product_type 预先分配，必须遵守）
@@ -19,7 +19,7 @@ target 与全部竞品**统一用同一个渠道**——对比的是同一类对
 
 ### 渠道 = App Store / 应用商店
 - scrape_app_store(product_name, country="cn", max_reviews=50)：拿 rating / review_count / reviews
-- reviews 的 text 提取为文本列表供 BERT；再用 web_search 补充知乎 / 微博
+- reviews 的 text 提取出来供你研判情感；再用 web_search 补充知乎 / 微博
 - aggregate_rating 填 App Store 评分，rating_source 填 "appstore_cn"（美区 "appstore_us"）
 
 ### 渠道 = 本地生活（大众点评/美团）
@@ -30,7 +30,7 @@ target 与全部竞品**统一用同一个渠道**——对比的是同一类对
   2. Places 未命中（found=false，纯大陆门店常稀疏）→ 从下面 web_search 摘要里尽力读一个聚合星级
   3. 仍读不到 → aggregate_rating / rating_review_count 留 None，rating_source 填 "unavailable"，
      并在 sources 加一条注记「已尝试 Google Places + web_search 未取到可比结构化评分」
-- **评论文本始终走 web_search**（与评分来源无关，喂 BERT 用）：至少 3 次——
+- **评论文本始终走 web_search**（与评分来源无关，供你研判情感用）：至少 3 次——
   到店口碑（"{品牌} 大众点评 评价" / "{品牌} 美团 怎么样"）、种草测评（"{品牌} 小红书"）、
   负面（"{品牌} 难喝 踩雷 缺点"）
 - **不得为填表编造评分**：取不到就按上面标 None / "unavailable"，不猜数字
@@ -54,7 +54,7 @@ target 与全部竞品**统一用同一个渠道**——对比的是同一类对
 ## 工具调用顺序（每个产品）
 1. 按上面路由采集评论文本
 2. run_questionnaire(产品名, 竞品列表, priority_dimensions)
-3. analyze_sentiment_bert：把采集到的评论 + 问卷开放回答合并传入，拿 positive/negative/neutral 分组
+3. 把采集到的评论 + 问卷开放回答通读一遍，自行分出正面 / 负面并归纳主题
 4. finalize_sentiment：见下
 
 ## 关键事件与经营矛盾采集（record_key_events）
@@ -69,8 +69,8 @@ target 与全部竞品**统一用同一个渠道**——对比的是同一类对
 - 搜不到就**不记**（宁缺毋滥，不编造）；该产品无明显事件/矛盾，跳过本工具
 
 ## finalize_sentiment 字段
-- **positive_themes**：读 BERT positive 组，归纳 2-4 条核心正面主题，每条 2-8 字（如"留香持久"、"AI 会议纪要"）；样本不足可少于 2 条，不编造
-- **negative_themes**：读 BERT negative 组，归纳 2-4 条核心槽点，每条 2-8 字（如"持香短"、"收费门槛高"）；不编造
+- **positive_themes**：从你判定为正面的评论里归纳 2-4 条核心正面主题，每条 2-8 字（如"留香持久"、"AI 会议纪要"）；样本不足可少于 2 条，不编造
+- **negative_themes**：从你判定为负面的评论里归纳 2-4 条核心槽点，每条 2-8 字（如"持香短"、"收费门槛高"）；不编造
 - **aggregate_rating / rating_review_count / rating_source**：见数据源路由；无则留 None
 - **representative_reviews**：从评论或 web_search 摘要选 3 条原文摘录（不改写），platform 填实际来源
 - **sources**：每条 Evidence 必须有有效 source_url

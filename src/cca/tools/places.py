@@ -67,7 +67,7 @@ def scrape_local_life(brand: str, region: str = "", language: str = "zh-CN") -> 
     """从 Google Maps 取本地生活品牌的聚合口碑评分（大众点评/美团 类对象用此）。
 
     返回 JSON，含 aggregate_rating（1–5）/ rating_review_count / store_count / source_url。
-    只回评分与评论数，不回评论正文——评论文本请另用 web_search 采集喂 BERT。
+    只回评分与评论数，不回评论正文——评论文本请另用 web_search 采集后自行研判情感。
     region 可填 ISO 国家码（如 "us"/"sg"）做地域偏置，留空为全球搜索。
     取不到（无 key / 该品牌 Google 上无门店数据 / API 错误）会返 {"found": false, ...}，
     调用方应降级 web_search，多次尝试仍无则按缺失诚信标注。

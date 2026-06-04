@@ -14,7 +14,7 @@
 | LLM（采集/分析） | DeepSeek V4 Pro |
 | LLM（仲裁/终审） | 豆包（火山方舟 Ark） |
 | 联网搜索 | Tavily Search API |
-| 情感分析 | BERT + transformers |
+| 情感分析 | LLM 直接研判正负面 + 主题归纳 |
 | 报告渲染 | WeasyPrint（Linux/Mac）/ ReportLab（Windows）|
 | 前端 | Vanilla JS + HTML/CSS（无框架） |
 
@@ -29,7 +29,7 @@ Dreamcode/
 ├── src/cca/                # 核心 Python 包
 │   ├── agents/             # PM / Collector / Insight / Reporter
 │   ├── tools/              # 搜索 / 图表 / PDF / AppStore 等工具
-│   ├── skills/             # Debate / Reroute / BERT 微调等可复用技能
+│   ├── skills/             # Debate / Reroute / 问卷等可复用技能
 │   ├── llm/                # LLM 客户端工厂与运行时 Key 注入
 │   ├── prompts/            # Agent system prompts（Markdown）
 │   ├── graph.py            # LangGraph 主图编排
@@ -42,7 +42,7 @@ Dreamcode/
 ├── tests/                  # 单元测试（pytest）
 ├── docs/                   # 架构文档 / 决策记录
 ├── config/config.yaml      # 模型定价 / 任务参数等配置
-└── data/                   # 运行时数据（上传文件 / 缓存 / BERT 数据）
+└── data/                   # 运行时数据（上传文件 / 缓存）
 ```
 
 ---
@@ -165,7 +165,7 @@ print(result["report_pdf_path"])
 
 ## 核心特性
 
-- **四 Agent 流水线**：PM 制定计划 → Collector 联网深采集 → Insight BERT 情感分析 → Reporter 生成报告，全程 LangGraph 自动编排
+- **四 Agent 流水线**：PM 制定计划 → Collector 联网深采集 → Insight 情感分析 → Reporter 生成报告，全程 LangGraph 自动编排
 - **跨模型辩论（Debate）**：PM 规划、报告终审阶段引入多家族 LLM 相互质疑，减少单一模型自我偏好
 - **人在环审查（Human-in-the-Loop）**：Collector + Insight 完成后暂停，用户可提交自由文本修订意见，PM 自动解析并重新规划
 - **运行时 Key 注入**：每次分析使用用户自己的 API Key，服务器不存储任何凭证，通过 `contextvars` 线程安全传递

@@ -38,24 +38,6 @@ questionnaire:
   fill_mode: llm          # llm = LLM 自动模拟填写；real = 真实分发（仅生成展示文本）
   n_llm_responses: 5      # llm 模式下模拟回答份数
 
-# NLP 配置
-nlp:
-  bert_model: lxyuan/distilbert-base-multilingual-cased-sentiments-student
-  fine_tune:
-    enabled: true                        # true = 若 model_output_dir 存在则使用微调模型；微调本身需手动运行 scripts/finetune_bert.py
-    domain: office_software
-    domain_apps:
-      - 钉钉
-      - 企业微信
-      - 飞书
-      - 腾讯会议
-      - WPS Office
-    country: cn
-    min_samples: 200                      # 少于此数时报 warning 但仍继续
-    epochs: 3
-    batch_size: 16
-    model_output_dir: data/models/bert_fine_tuned
-
 # 路径
 paths:
   store_db: data/memory/store.db          # react_cache + 问卷缓存共用的 SQLite

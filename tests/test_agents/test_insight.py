@@ -1,7 +1,6 @@
 """Insight Agent 测试。
 
 覆盖：
-- BERT 情感分类（mock transformers）
 - 问卷缓存（mock SQLite 路径）
 - 问卷 fill_mode（real 模式返回空列表）
 - 问卷设计 / 格式化 / 匿名化（mock LLM）
@@ -292,56 +291,6 @@ class TestCollectResponsesFillMode:
 
 
 # ---------------------------------------------------------------------------
-# BERT 情感分类
-# ---------------------------------------------------------------------------
-
-class TestBertSentiment:
-    def test_empty_texts_returns_empty(self):
-        from cca.utils.nlp_utils import _bert_sentiment
-        result = _bert_sentiment([], "fake-model")
-        assert result == {"positive": [], "negative": [], "neutral": []}
-
-    def test_groups_texts_by_label(self):
-        import sys
-        from unittest.mock import MagicMock, patch
-        from cca.utils.nlp_utils import _bert_sentiment
-
-        mock_classifier = MagicMock(return_value=[
-            [{"label": "positive", "score": 0.9}],
-            [{"label": "negative", "score": 0.85}],
-            [{"label": "neutral", "score": 0.7}],
-        ])
-        fake_transformers = MagicMock()
-        fake_transformers.pipeline.return_value = mock_classifier
-        with patch.dict(sys.modules, {"transformers": fake_transformers}):
-            # 清除缓存避免测试间干扰
-            import cca.utils.nlp_utils as nlp_mod
-            nlp_mod._bert_pipeline_cache.clear()
-            result = _bert_sentiment(["好用", "卡顿", "一般"], "fake-model")
-
-        assert "好用" in result["positive"]
-        assert "卡顿" in result["negative"]
-        assert "一般" in result["neutral"]
-
-    def test_unknown_label_falls_back_to_neutral(self):
-        import sys
-        from unittest.mock import MagicMock, patch
-        from cca.utils.nlp_utils import _bert_sentiment
-
-        mock_classifier = MagicMock(return_value=[
-            [{"label": "LABEL_99", "score": 0.6}],
-        ])
-        fake_transformers = MagicMock()
-        fake_transformers.pipeline.return_value = mock_classifier
-        with patch.dict(sys.modules, {"transformers": fake_transformers}):
-            import cca.utils.nlp_utils as nlp_mod
-            nlp_mod._bert_pipeline_cache.clear()
-            result = _bert_sentiment(["模糊评价"], "fake-model")
-
-        assert "模糊评价" in result["neutral"]
-
-
-# ---------------------------------------------------------------------------
 # challenge_pm 工具：AgentSignal 结构与 schema 对齐
 # ---------------------------------------------------------------------------
 
@@ -498,42 +447,3 @@ class TestRecordKeyEventsTool:
         events = [{"statement": "事件", "evidence": [{"source_url": "https://x.com"}]}]
         result = json.loads(record_key_events.invoke({"product_name": "X", "events_json": events}))
         assert result["key_events"][0]["statement"] == "事件"
-
-
-# ---------------------------------------------------------------------------
-# _effective_bert_model：微调模型自动切换
-# ---------------------------------------------------------------------------
-
-class TestEffectiveBertModel:
-    def test_returns_config_model_when_no_finetune_dir(self, tmp_path):
-        from unittest.mock import patch
-        from cca.tools import insight_tools as it_mod
-
-        with patch.object(it_mod, "PROJECT_ROOT", tmp_path):
-            with patch.object(it_mod, "load_config", return_value={
-                "nlp": {
-                    "bert_model": "lxyuan/distilbert",
-                    "fine_tune": {"enabled": True, "model_output_dir": "data/models/ft"},
-                }
-            }):
-                model = it_mod._effective_bert_model()
-        assert model == "lxyuan/distilbert"
-
-    def test_returns_finetuned_path_when_dir_exists(self, tmp_path):
-        from unittest.mock import patch
-        from cca.tools import insight_tools as it_mod
-
-        ft_dir = tmp_path / "data" / "models" / "ft"
-        ft_dir.mkdir(parents=True)
-
-        with patch.object(it_mod, "PROJECT_ROOT", tmp_path):
-            with patch.object(it_mod, "load_config", return_value={
-                "nlp": {
-                    "bert_model": "lxyuan/distilbert",
-                    "fine_tune": {"enabled": True, "model_output_dir": "data/models/ft"},
-                }
-            }):
-                model = it_mod._effective_bert_model()
-        assert model == str(ft_dir)
-
-

@@ -1,7 +1,6 @@
-"""Insight Agent —— 问卷 + 评论采集 + BERT 情感分析，写 profiles.sentiment。
+"""Insight Agent —— 问卷 + 评论采集 + 情感分析，写 profiles.sentiment。
 
-与 Collector phase 2 并发。BERT 三分类分组，主题由 LLM 基于分组评论自由归纳。
-若 fine_tune.enabled 且本地有微调模型，BERT 工具自动切换；微调脚本离线跑。
+与 Collector phase 2 并发。情感正负面判定与主题归纳都由 LLM 基于采集到的评论直接完成。
 """
 from __future__ import annotations
 
@@ -17,7 +16,6 @@ from cca.schema import InsightTask
 from cca.state import CCAState
 from cca.tools.appstore import scrape_app_store
 from cca.tools.insight_tools import (
-    analyze_sentiment_bert,
     challenge_pm,
     finalize_sentiment,
     record_key_events,
@@ -92,8 +90,8 @@ def _build_insight_product_message(
         ensure_ascii=False,
     )
     sentiment_hint = (
-        "情感分析请优先使用 analyze_sentiment_bert（BERT 三分类），"
-        "再基于各情感组的评论自行归纳主题。"
+        "情感分析直接由你完成：读采集到的评论，自行判定正负面并归纳正负面主题，"
+        "无需调用任何分类工具。"
     )
     route = resolve_review_channel(product_type)
     platforms = "、".join(route.platforms) or "按该产品所在领域自行判断"
@@ -102,7 +100,7 @@ def _build_insight_product_message(
     elif route.channel == "local_life":
         source_line = (
             "本渠道先用 scrape_local_life(品牌) 取 Google Maps 聚合评分+评论数，"
-            "再用 web_search 采上述平台评论文本喂 BERT"
+            "再用 web_search 采上述平台评论文本供你判定情感"
         )
     else:
         source_line = "本渠道不抓 App Store，用 web_search 采集上述平台口碑"
@@ -134,7 +132,7 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
     agent = create_react_agent(
         model=get_llm("deepseek"),
         tools=[scrape_app_store, scrape_local_life, web_search, run_questionnaire,
-               analyze_sentiment_bert, finalize_sentiment, record_key_events, challenge_pm],
+               finalize_sentiment, record_key_events, challenge_pm],
     )
     messages = stream_react(
         agent,

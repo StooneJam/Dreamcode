@@ -37,9 +37,6 @@ dependencies = [
     "scikit-learn>=1.4.0",           # Insight NMF 主题提取 + 词云 TF-IDF 词频
     "jieba>=0.42.1",                 # NMF 预处理中文分词
     "wordcloud>=1.9.0",              # 用户口碑词云渲染
-    # NLP 推理（Insight BERT 情感分类；CPU 即可）
-    "transformers>=4.40.0",
-    "torch>=2.1.0",
     # 前端 / 服务器
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
@@ -62,9 +59,6 @@ dev = [
     "pre-commit>=3.7.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-]
-finetune = [
-    "datasets>=2.18.0",             # BERT 离线微调（scripts/finetune_bert.py）
 ]
 
 [tool.setuptools.packages.find]

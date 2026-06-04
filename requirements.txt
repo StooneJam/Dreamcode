@@ -8,5 +8,4 @@
 #
 # 可选扩展（按需）：
 #   pip install -e ".[dev]"        # 开发/测试工具
-#   pip install -e ".[finetune]"   # BERT 离线微调
 -e .

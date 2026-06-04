@@ -142,7 +142,7 @@ def render_wordcloud(title: str, word_freq_json: str, filename: str) -> str:
     """
     freq = json.loads(word_freq_json)
     if not freq:
-        return "词频为空（样本不足或未跑 BERT 分组），跳过词云渲染。"
+        return "词频为空（样本不足或未做情感分组），跳过词云渲染。"
 
     font_path = _cjk_font_path()
     if font_path is None:
