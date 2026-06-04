@@ -23,6 +23,11 @@ def _fmt_num(v: float) -> str:
     return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
+def _plot_value(v: float | None) -> float:
+    """缺失值 → nan，让 matplotlib 自然留缺口（柱不画、折线断开），不伪装成 0。"""
+    return float("nan") if v is None else float(v)
+
+
 def _apply_style() -> None:
     import matplotlib
     matplotlib.use("Agg")
@@ -316,31 +321,42 @@ def _dual_axis_bar(title: str, data: dict) -> "plt.Figure":
     ax2.set_facecolor("none")
     ax2.grid(False)
 
-    left_vals = [v if v is not None else 0 for v in left["values"]]
+    left_vals = [_plot_value(v) for v in left["values"]]
     bars = ax1.bar(x, left_vals, width, color=_PALETTE[0],
                    edgecolor="white", linewidth=1.5, label=left["name"], alpha=0.85)
-    # Show full integer without scientific notation
-    bar_labels = [f"{int(round(v))}" for v in left_vals]
+    # 缺失（None→nan）不画柱、不标 0；标签留空，缺口下面单独标「数据缺失」
+    bar_labels = ["" if not np.isfinite(v) else f"{int(round(v))}" for v in left_vals]
     ax1.bar_label(bars, labels=bar_labels, padding=5, fontsize=9, fontweight="bold")
     ax1.set_ylabel(left["name"], color=_PALETTE[0], fontsize=11)
     ax1.tick_params(axis="y", labelcolor=_PALETTE[0])
-    ax1.set_ylim(0, (max(left_vals) or 1) * 1.3)
+    finite_left = [v for v in left_vals if np.isfinite(v)]
+    top = (max(finite_left) if finite_left else 1) * 1.3
+    ax1.set_ylim(0, top)
     ax1.spines["top"].set_visible(False)
 
-    right_vals = [v if v is not None else 0 for v in right["values"]]
+    right_vals = [_plot_value(v) for v in right["values"]]
     ax2.plot(x, right_vals, color=_PALETTE[1], marker="o",
              linewidth=2.5, markersize=8, label=right["name"], zorder=5)
     for xi, yi in zip(x, right_vals):
+        if not np.isfinite(yi):
+            continue
         ax2.annotate(_fmt_num(yi), (xi, yi), textcoords="offset points",
                      xytext=(0, 10), ha="center", fontsize=9, fontweight="bold",
                      color=_PALETTE[1])
     ax2.set_ylabel(right["name"], color=_PALETTE[1], fontsize=11)
     ax2.tick_params(axis="y", labelcolor=_PALETTE[1])
-    rmin = min(right_vals)
-    rmax = max(right_vals)
-    margin = (rmax - rmin) * 0.5 or 0.5
-    ax2.set_ylim(max(0, rmin - margin), rmax + margin)
+    finite_right = [v for v in right_vals if np.isfinite(v)]
+    if finite_right:
+        rmin, rmax = min(finite_right), max(finite_right)
+        margin = (rmax - rmin) * 0.5 or 0.5
+        ax2.set_ylim(max(0, rmin - margin), rmax + margin)
     ax2.spines["top"].set_visible(False)
+
+    # 评分与评论量都缺的类目在基线标「数据缺失」，替代误导性的 0 柱
+    for xi, lv, rv in zip(x, left_vals, right_vals):
+        if not np.isfinite(lv) and not np.isfinite(rv):
+            ax1.annotate("数据缺失", (xi, top * 0.02), ha="center", va="bottom",
+                         fontsize=8, color="#999999")
 
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels, fontsize=11)

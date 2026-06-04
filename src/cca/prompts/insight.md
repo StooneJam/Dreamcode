@@ -24,9 +24,16 @@ target 与全部竞品**统一用同一个渠道**——对比的是同一类对
 
 ### 渠道 = 本地生活（大众点评/美团）
 - **不要调 scrape_app_store**（哪怕该品牌有自己的 App）
-- web_search 至少 3 次：到店口碑（"{品牌} 大众点评 评价" / "{品牌} 美团 怎么样"）、
-  种草测评（"{品牌} 小红书"）、负面（"{品牌} 难喝 踩雷 缺点"）
-- aggregate_rating 取大众点评 / 美团聚合星级（归一 1–5），rating_source 填 "dianping" / "meituan"
+- **评分按降级链取，多次尝试后仍无才标缺失**：
+  1. `scrape_local_life(品牌)` 取 Google Maps 聚合星级 + 评论数（aggregate_rating 填其 aggregate_rating，
+     rating_review_count 填其 rating_review_count，rating_source 填 "google_maps"）
+  2. Places 未命中（found=false，纯大陆门店常稀疏）→ 从下面 web_search 摘要里尽力读一个聚合星级
+  3. 仍读不到 → aggregate_rating / rating_review_count 留 None，rating_source 填 "unavailable"，
+     并在 sources 加一条注记「已尝试 Google Places + web_search 未取到可比结构化评分」
+- **评论文本始终走 web_search**（与评分来源无关，喂 BERT 用）：至少 3 次——
+  到店口碑（"{品牌} 大众点评 评价" / "{品牌} 美团 怎么样"）、种草测评（"{品牌} 小红书"）、
+  负面（"{品牌} 难喝 踩雷 缺点"）
+- **不得为填表编造评分**：取不到就按上面标 None / "unavailable"，不猜数字
 
 ### 渠道 = 电商（天猫/京东/亚马逊）
 - **不要调 scrape_app_store**

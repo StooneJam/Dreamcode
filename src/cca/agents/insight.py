@@ -22,6 +22,7 @@ from cca.tools.insight_tools import (
     finalize_sentiment,
     run_questionnaire,
 )
+from cca.tools.places import scrape_local_life
 from cca.tools.review_channel import resolve_review_channel
 from cca.tools.search import web_search
 
@@ -86,18 +87,22 @@ def _build_insight_product_message(
     )
     route = resolve_review_channel(product_type)
     platforms = "、".join(route.platforms) or "按该产品所在领域自行判断"
-    app_store_line = (
-        "本渠道用 scrape_app_store 抓评分+评论"
-        if route.use_app_store
-        else "本渠道不抓 App Store，用 web_search 采集上述平台口碑"
-    )
+    if route.use_app_store:
+        source_line = "本渠道用 scrape_app_store 抓评分+评论"
+    elif route.channel == "local_life":
+        source_line = (
+            "本渠道先用 scrape_local_life(品牌) 取 Google Maps 聚合评分+评论数，"
+            "再用 web_search 采上述平台评论文本喂 BERT"
+        )
+    else:
+        source_line = "本渠道不抓 App Store，用 web_search 采集上述平台口碑"
     return (
         f"## InsightTask · {task.product_name}\n```json\n{task_json}\n```\n\n"
         f"## 数据源渠道（按 product_type 路由，target 与全部竞品统一用此渠道）\n"
         f"product_type: {product_type or '未知'}\n"
         f"评论抓取渠道: {route.label}\n"
         f"候选平台: {platforms}\n"
-        f"{app_store_line}\n\n"
+        f"{source_line}\n\n"
         f"## 竞品全列表（run_questionnaire 参数用）\n"
         f"{', '.join(competitor_names)}\n\n"
         f"## 已知产品基本信息（来自 Collector）\n```json\n{profiles_hint}\n```\n\n"
@@ -118,7 +123,7 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
 
     agent = create_react_agent(
         model=get_llm("deepseek"),
-        tools=[scrape_app_store, web_search, run_questionnaire,
+        tools=[scrape_app_store, scrape_local_life, web_search, run_questionnaire,
                analyze_sentiment_bert, finalize_sentiment, challenge_pm],
     )
     messages = stream_react(

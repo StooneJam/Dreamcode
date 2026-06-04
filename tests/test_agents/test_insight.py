@@ -166,9 +166,14 @@ class TestInsightProductMessage:
         assert "大众点评" in msg and "美团" in msg
 
     def test_coffee_message_excludes_app_store(self):
-        # 幸运咖有 App，但赛道是咖啡 → 消息必须明确不抓 App Store
+        # 幸运咖有 App，但赛道是咖啡 → 消息不得引导抓 App Store
         msg = self._build("连锁咖啡")
-        assert "不抓 App Store" in msg
+        assert "scrape_app_store" not in msg
+
+    def test_coffee_message_uses_scrape_local_life(self):
+        # 本地生活渠道结构化评分走 Google Places 工具
+        msg = self._build("连锁咖啡")
+        assert "scrape_local_life" in msg
 
     def test_software_routes_to_app_store_channel(self):
         msg = self._build("协同办公软件")
