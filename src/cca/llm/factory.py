@@ -75,11 +75,17 @@ SLOT_DEFAULTS: dict[AgentFamily, dict] = {
 }
 
 
-def _make_doubao(temperature: float) -> ChatOpenAI:
-    """构造一个 Doubao 客户端。dev override 时三个家族都用它。"""
+def _make_doubao(temperature: float, *, no_thinking: bool = False) -> ChatOpenAI:
+    """构造一个 Doubao 客户端。dev override 时三个家族都用它。
+
+    no_thinking=True 强制不传 thinking 参数（用于 tool_choice 兼容场景）。
+    Doubao API 限制：extra_body 中带任何 thinking 键时，不支持 tool_choice。
+    """
+    thinking_type = "disabled" if no_thinking else _DOUBAO_THINKING
     extra: dict = {}
-    if _DOUBAO_THINKING in ("disabled", "enabled", "auto"):
-        extra["extra_body"] = {"thinking": {"type": _DOUBAO_THINKING}}
+    # disabled 时不传 extra_body，避免与 tool_choice 冲突；只有明确启用时才传
+    if thinking_type in ("enabled", "auto"):
+        extra["extra_body"] = {"thinking": {"type": thinking_type}}
     return ChatOpenAI(
         model=os.getenv("DOUBAO_MODEL", SLOT_DEFAULTS["doubao"]["model"]),
         api_key=os.getenv("DOUBAO_API_KEY"),
@@ -93,16 +99,17 @@ def _make_doubao(temperature: float) -> ChatOpenAI:
 
 
 if _DEV_OVERRIDE == "doubao":
-    # 开发期全部走豆包，含 Reporter。
+    # dev override 下所有 agent（含 ReAct 工具调用）都走豆包。
+    # 思考模式与 tool_choice 不兼容，强制关闭，保证 ReAct loop 正常运行。
     print(
         "[factory] DEV OVERRIDE active: 全部 LLM 走 Doubao；"
         "流程稳定后 unset CCA_DEV_MODEL_OVERRIDE 切回原配置。",
         flush=True,
     )
-    gpt = _make_doubao(temperature=0.2)
-    deepseek = _make_doubao(temperature=0.3)
-    doubao = _make_doubao(temperature=0.2)
-    report_llm = _make_doubao(temperature=0.8)
+    gpt = _make_doubao(temperature=0.2, no_thinking=True)
+    deepseek = _make_doubao(temperature=0.3, no_thinking=True)
+    doubao = _make_doubao(temperature=0.2, no_thinking=True)
+    report_llm = _make_doubao(temperature=0.8, no_thinking=True)
 else:
     # Report Agent 专用 GPT-5 客户端。temperature=0.8 提升语言组织与表达质量。
     report_llm = ChatOpenAI(
