@@ -126,3 +126,42 @@ def test_robots_check_allows_when_robots_unreadable(
 
     err = fetcher._robots_check("https://nodejs.example.com/page")
     assert err is None
+
+
+# ── distill None 降级 ─────────────────────────────────────────────────
+
+
+def test_distill_returns_verbatim_when_structured_output_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """function_calling 返 None → 原文当单条片段兜底，不崩。"""
+    from cca.tools import _distill
+
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = None
+    mock_bound = MagicMock()
+    mock_bound.with_structured_output.return_value = mock_llm
+    monkeypatch.setattr(_distill, "get_llm", lambda _family: mock_bound)
+
+    result = _distill.distill("飞书 Pro 版 30 元每月", "定价")
+
+    assert result == ["飞书 Pro 版 30 元每月"]
+
+
+def test_distill_results_returns_per_result_when_structured_output_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """批量 function_calling 返 None → 每条按原文兜底，保 url↔snippet 绑定。"""
+    from cca.tools import _distill
+
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = None
+    mock_bound = MagicMock()
+    mock_bound.with_structured_output.return_value = mock_llm
+    monkeypatch.setattr(_distill, "get_llm", lambda _family: mock_bound)
+
+    contents = ["原文A", "原文B", "原文C"]
+    result = _distill.distill_results(contents, "竞品")
+
+    assert result == [["原文A"], ["原文B"], ["原文C"]]
+    assert len(result) == 3  # 长度对齐，不丢结果
