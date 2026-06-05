@@ -68,6 +68,9 @@ def _run_graph(args: argparse.Namespace) -> None:
         else:
             result = graph.invoke(state, config=config)
 
+    if result.get("domain_seed"):
+        # 仅在读到并蒸馏了用户上传文档时存在 —— 出现即证明 PDF 被吃进来了
+        dump_json("domain_seed", result["domain_seed"])
     if result.get("exploration_result"):
         dump_json("exploration_result", result["exploration_result"])
     if result.get("task_plan"):

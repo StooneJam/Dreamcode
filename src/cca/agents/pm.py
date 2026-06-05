@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, cast
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import interrupt
 from pydantic import ValidationError
@@ -110,6 +111,7 @@ def _load_user_file(state: CCAState) -> tuple[str | None, str | None, list[dict]
             "original_chars": len(text), "kept_chars": _MAX_FILE_CHARS,
         })
         text = text[:_MAX_FILE_CHARS]
+    audit.append({"agent": "pm", "event": "file_read_ok", "path": path, "chars": len(text)})
     return path, text, audit
 
 
@@ -129,6 +131,8 @@ def _invoke_structured(
 
     ValidationError —— LLM 漏 required 字段：回灌错误详情让其修。
     返 None —— LLM 没发 function_call（Doubao/Ark 偶发不兑现 forced tool_choice）：强调必须调函数。
+    OutputParserException —— Doubao 把 tool name 填成嵌套类型名（如 InitialBrief 而非
+        InitialBriefOutput），parser 查不到。重试同样翻车，直接结束结构化通道交 JSON 直出兜底。
     """
     llm = get_llm(PM_FAMILY).with_structured_output(output_type, method="function_calling")
     last_error: str | None = None
@@ -136,6 +140,9 @@ def _invoke_structured(
         messages = base_messages if last_error is None else base_messages + [HumanMessage(content=last_error)]
         try:
             result = llm.invoke(messages)
+        except OutputParserException as e:
+            print(f"  [pm:{phase_label}] WARN: tool name 不匹配（{e}），转 JSON 直出兜底", flush=True)
+            return None, str(e)
         except ValidationError as e:
             last_error = (
                 f"上一次输出有 schema 错误，请严格按 {output_type.__name__} schema 重新输出。\n"
@@ -169,7 +176,11 @@ def _invoke_json_fallback(output_type, base_messages: list):
     ))
     raw = get_llm(PM_FAMILY).invoke(base_messages + [instruction])
     content = raw.content if isinstance(raw.content, str) else str(raw.content)
-    return output_type.model_validate_json(_extract_json_block(content))
+    try:
+        return output_type.model_validate_json(_extract_json_block(content))
+    except (ValidationError, ValueError):
+        print(f"  [pm] JSON 直出失败，豆包原始返回（前 1000 字）：\n{content[:1000]}", flush=True)
+        raise
 
 
 def _invoke_pm(output_type, phase_label: str, payload: dict, *, max_attempts: int | None = None):
@@ -194,7 +205,8 @@ def _invoke_pm(output_type, phase_label: str, payload: dict, *, max_attempts: in
     except (ValidationError, ValueError) as e:
         raise RuntimeError(
             f"PM {phase_label} 节点 function_calling + JSON 直出均失败。"
-            f"最后错误：{last_error or e}。检查 model id 的 function_calling 支持或 prompt 是否过长。"
+            f"function_calling 错误：{last_error}；JSON 直出错误：{e}。"
+            f"检查 model id 的 function_calling 支持或 prompt 是否过长。"
         ) from e
 
 
