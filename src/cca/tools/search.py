@@ -13,6 +13,8 @@ from langchain_core.tools import tool
 from tavily import TavilyClient
 from tavily import errors as tavily_errors
 
+from cca.tools._distill import distill_results
+
 # 前端上传的 per-run Tavily key；None 时回落 .env 里项目自己的 key。
 # 与 llm/factory.py 的 _run_creds 同一范式：key 走 contextvar，不进 state（state 会被
 # audit_log 记录、被前端 stream 订阅，密钥进 state 等于泄漏）。
@@ -69,7 +71,9 @@ def web_search(query: str, max_results: int = 5) -> list[dict] | str:
         max_results: Max results to return (1–10, default 5).
 
     Returns:
-        List of {title, url, content}. Empty list if nothing found.
+        List of {title, url, snippets}. snippets are verbatim passages copied from
+        each result, distilled down to what's relevant to the query (bind directly
+        as Evidence.snippet). Empty list if nothing found.
     """
     client = TavilyClient(api_key=_run_tavily_key.get() or os.getenv("TAVILY_API_KEY"))
     try:
@@ -79,4 +83,13 @@ def web_search(query: str, max_results: int = 5) -> list[dict] | str:
             f"web_search 暂不可用（{type(e).__name__}: {e}）。"
             f"不要重试本次查询；请基于已采集到的信息继续，或对已知 URL 调 fetch_url 直接抓取。"
         )
-    return response.get("results", [])
+    results = response.get("results", [])
+    if not results:
+        return []
+    # 把每条结果的整段 content 蒸成与 query 相关的逐字片段（一次调用），
+    # 只让片段进 ReAct history；title/url 全保留供导航与 Evidence 溯源。
+    per_result = distill_results([r.get("content", "") for r in results], query)
+    return [
+        {"title": r.get("title"), "url": r.get("url"), "snippets": snips}
+        for r, snips in zip(results, per_result)
+    ]

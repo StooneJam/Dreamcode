@@ -15,6 +15,8 @@ import httpx
 import trafilatura
 from langchain_core.tools import tool
 
+from cca.tools._distill import distill
+
 _TIMEOUT = 15.0
 _USER_AGENT = "Mozilla/5.0 (compatible; CCA-Collector/0.1)"
 _MAX_TEXT = 12_000
@@ -84,20 +86,25 @@ def _robots_check(url: str) -> str | None:
 
 
 @tool
-def fetch_url(url: str) -> dict:
-    """Fetch a URL and return the main text content for evidence extraction.
+def fetch_url(url: str, extract_for: str) -> dict:
+    """Fetch a URL and return verbatim snippets relevant to extract_for.
 
-    Use this tool AFTER web_search when you need the full text of a specific page
-    (e.g., pricing tables, feature lists, official product pages) to extract
+    Use this AFTER web_search when you need the content of a specific page
+    (pricing tables, feature lists, official product pages) to extract
     precise snippets for Fact.evidence binding.
 
     Args:
         url: Full URL to fetch.
+        extract_for: What you are looking for on this page, e.g.
+            "价格档位与货币 / 会员体系 / 二手保值率". The page text is distilled
+            into verbatim snippets relevant to this; put every dimension you care
+            about for this page here so nothing relevant gets dropped.
 
     Returns:
-        Success: {"url", "title", "text", "fetched_at"} with main text extracted.
+        Success: {"url", "title", "snippets": [...], "fetched_at"} — snippets are
+        verbatim passages copied from the page; bind them directly as Evidence.snippet.
         Failure: {"url", "error", "fetched_at"} — switch to a different URL or
-        rely on web_search summaries instead.
+        rely on web_search snippets instead.
     """
     now = datetime.now(timezone.utc).isoformat()
 
@@ -131,9 +138,10 @@ def fetch_url(url: str) -> dict:
     metadata = trafilatura.extract_metadata(response.text)
     title = metadata.title if metadata else None
 
+    snippets = distill(_smart_truncate(extracted, _MAX_TEXT), extract_for)
     return {
         "url": url,
         "title": title,
-        "text": _smart_truncate(extracted, _MAX_TEXT),
+        "snippets": snippets,
         "fetched_at": now,
     }

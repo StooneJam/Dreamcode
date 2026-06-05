@@ -10,19 +10,36 @@ from cca.tools import search
 from cca.tools.search import web_search
 
 
-def test_web_search_returns_results_list(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_web_search_returns_results_with_distilled_snippets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     mock_client = MagicMock()
     mock_client.search.return_value = {
         "results": [
-            {"title": "飞书官网", "url": "https://feishu.cn", "content": "..."},
+            {"title": "飞书官网", "url": "https://feishu.cn", "content": "原始正文 A"},
+            {"title": "飞书定价", "url": "https://feishu.cn/pricing", "content": "原始正文 B"},
         ]
     }
     monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
+    # 蒸馏 mock：按输入顺序回片段，校验 query→focus 透传，且不打真 LLM
+    captured = {}
+
+    def fake_distill_results(contents: list[str], focus: str) -> list[list[str]]:
+        captured["contents"] = contents
+        captured["focus"] = focus
+        return [["片段A"], ["片段B"]]
+
+    monkeypatch.setattr(search, "distill_results", fake_distill_results)
 
     results = web_search.invoke({"query": "飞书 主要竞品", "max_results": 3})
 
-    assert len(results) == 1
-    assert results[0]["url"] == "https://feishu.cn"
+    assert results == [
+        {"title": "飞书官网", "url": "https://feishu.cn", "snippets": ["片段A"]},
+        {"title": "飞书定价", "url": "https://feishu.cn/pricing", "snippets": ["片段B"]},
+    ]
+    assert "content" not in results[0]  # 原文不再进结果，只留片段
+    assert captured["contents"] == ["原始正文 A", "原始正文 B"]
+    assert captured["focus"] == "飞书 主要竞品"
     mock_client.search.assert_called_once_with("飞书 主要竞品", max_results=3)
 
 
