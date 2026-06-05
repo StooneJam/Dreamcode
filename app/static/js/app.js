@@ -1467,7 +1467,26 @@ function openSSE(jobId,btn){
         eventSource.close(); setThink(false); stopTimer(); btn.disabled=false; appendLog('Error',msg.message,false); break;
     }
   };
-  eventSource.onerror=()=>{ eventSource.close(); btn.disabled=false; };
+  eventSource.onerror=()=>{
+    eventSource.close(); btn.disabled=false;
+    // SSE 断线后去 DB 查一次，捞回已完成但没送达的报告
+    _tryRecoverReport(jobId);
+  };
+}
+
+async function _tryRecoverReport(jobId){
+  try{
+    const token=localStorage.getItem('auth_token')||'';
+    const res=await fetch(`/api/reports/${jobId}`,{headers:token?{Authorization:`Bearer ${token}`}:{}});
+    if(!res.ok) return;
+    const {report}=await res.json();
+    if(!report) return;
+    setThink(false); setProgress(100); stopTimer();
+    const pdf=report.pdf_path||'';
+    if(pdf) showPdf(pdf, (report.target_product||'report')+'_竞品分析报告.pdf');
+    showQaBox();
+    appendLog('System', lang==='zh'?'SSE 连接中断，已从数据库恢复报告':'SSE disconnected — report recovered from database', false);
+  }catch(e){}
 }
 
 function showPdf(path,filename){

@@ -281,7 +281,17 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
         if job_id not in _jobs:
             yield f'data: {json.dumps({"type":"error","message":"job not found"})}\n\n'
             return
-        queue: asyncio.Queue = _jobs[job_id]["queue"]
+        job = _jobs[job_id]
+        # 重连时 job 已完成：直接补发 done 事件，不等 queue
+        if job.get("status") == "done":
+            result = job.get("result") or {}
+            pdf = result.get("report_pdf_path") or ""
+            yield f'data: {json.dumps({"type":"done","pdf_path":pdf,"filename":Path(pdf).name if pdf else ""},ensure_ascii=False)}\n\n'
+            return
+        if job.get("status") == "error":
+            yield f'data: {json.dumps({"type":"error","message":"job failed"})}\n\n'
+            return
+        queue: asyncio.Queue = job["queue"]
         while True:
             try:
                 msg = await asyncio.wait_for(queue.get(), timeout=20.0)
