@@ -1101,6 +1101,33 @@ def _stable_product_brief(brief):
 
 ---
 
+## D-041 · fetch_url robots.txt 检查无超时死挂修复
+**Status**: Accepted · **Date**: 2026-06-05
+**Closes**: DP-008（robots.txt timeout 部分）
+
+**Context**：三家族（非豆包 override）真跑 runner 时整条流水线在 Collector/Insight fanout 后**静默卡死、需手动 kill**。表象像卡在 PM 阶段 2.5 review，但日志无 `[pm:阶段2.5]` 字样 → review 根本没启动。逐分支数 `done`/`finalize`/`(cache write)` 发现唯一没收尾的是 `Collector·Gucci`，LangSmith 显示其最后停在一次 `fetch_url(https://www.gucci.com/...)`：同轮并行的 `web_search` 已返回，但 ToolNode 要等齐所有工具才交回 model，于是下一次 LLM 调用永不触发，分支卡死，fanout 屏障过不去。
+
+根因在 `tools/fetcher.py`：`_robots_check` → `_load_robots` 用标准库 `urllib.robotparser` 的 **`rp.read()`，其内部 `urllib.request.urlopen` 无超时**；模块的 `_TIMEOUT=15` 只作用于后面的 `httpx.get`，管不到 robots 读取。gucci.com 走 Akamai，对 urllib 默认 UA `Python-urllib/*` 做 tar-pit（连上永不回）→ 无限阻塞。
+
+**与 LLM provider 无关**：曾误判为 DeepSeek 限流/超时——但 deepseek-v4-pro 账号级并发上限 500，10 路 fanout 远不触限；且 DeepSeek 调用有 180s 超时会自己了结，而本现象需手动 kill = 无限挂。豆包 override 没暴露纯属 ReAct 路径碰巧没抓到那个会挂的 URL。
+
+**Decision**：`_load_robots` 改用带 `_TIMEOUT` 的 httpx 取 robots.txt + 项目自有 `_USER_AGENT`，再 `rp.parse(resp.text.splitlines())`，替换无超时的 `rp.read()`。
+
+**Why**：
+- 把 robots 读取卡进 15s，与正文抓取同一超时口径，杜绝无限挂
+- 顺带绕开 UA tar-pit：用 `Mozilla/...` UA，gucci robots 从无限挂 → 0.3s 返回
+- 单工具无硬超时会拖死整个 fanout 屏障，是"伪装成 PM/review 挂起"的一类隐患，须根除
+
+**Trade-offs**：
+- **403 语义变化**：原 `rp.read()` 对 robots.txt 返 403 时 `disallow_all`（整站禁抓）；新版 `raise_for_status()` 让 403 落到 `except → None → 保守允许`。与项目既有"读不到 robots 保守允许"方向一致，但严格合规场景需补回 401/403→禁抓分支（暂未做）
+
+**Implementation**：
+- `src/cca/tools/fetcher.py` `_load_robots`：httpx.get(timeout=_TIMEOUT, UA, follow_redirects) + raise_for_status + `rp.parse(splitlines())`
+- 验证：`_robots_check` 对 gucci.com 0.3s 返回（原无限挂）；python.org robots 解析与 `can_fetch` 仍正确
+- 排查心法记入 memory [[reference_fetch_robots_hang]]：fanout 后卡死先逐分支数 `done` 找没收尾的那个，再看它停在哪个工具——工具无硬超时是头号嫌疑，不是 LLM
+
+---
+
 ## 待决（Pending）
 
 - **DP-001**：domain_seed yaml 与 long-term `semantic_patterns` 命中策略
@@ -1110,4 +1137,4 @@ def _stable_product_brief(brief):
 - **DP-005**：debate 不收敛率 > 阈值时是否打断流程（v1 走 forced，v2 可加 alert）
 - ~~**DP-006**~~：由 D-039 关闭（撤回方向）
 - ~~**DP-007**~~：已完成，主图 `graph.py` 已接通（Send fanout + report 串行）
-- **DP-008**：fetch_url 优化（robots.txt timeout、httpx 连接复用）
+- **DP-008**：fetch_url 优化——robots.txt timeout 部分由 D-041 关闭；剩 httpx 连接复用未做

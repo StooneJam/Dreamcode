@@ -56,7 +56,14 @@ def _load_robots(robots_url: str) -> robotparser.RobotFileParser | None:
     rp = robotparser.RobotFileParser()
     rp.set_url(robots_url)
     try:
-        rp.read()
+        # 不用 rp.read()：其内部 urllib.urlopen 无超时，遇到慢吐/挂起的 robots 服务会无限阻塞，
+        # 卡死整个 ReAct 分支（gucci.com 即此情况）。改用带 _TIMEOUT 的 httpx 取回再 parse。
+        resp = httpx.get(
+            robots_url, timeout=_TIMEOUT,
+            headers={"User-Agent": _USER_AGENT}, follow_redirects=True,
+        )
+        resp.raise_for_status()
+        rp.parse(resp.text.splitlines())
         return rp
     except Exception:
         return None
