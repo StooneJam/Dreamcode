@@ -52,11 +52,11 @@ _DOUBAO_MAX_TOKENS = int(os.getenv("DOUBAO_MAX_TOKENS", "32768"))
 _DOUBAO_THINKING = (os.getenv("DOUBAO_THINKING", "disabled") or "").lower()
 
 # 各角色槽位的默认 temperature。creds 路径建客户端时复用，保持与 .env 单例一致。
-_FAMILY_TEMP: dict[AgentFamily, float] = {"gpt-4o": 0.2, "deepseek": 0.3, "doubao": 0.2}
+_FAMILY_TEMP: dict[AgentFamily, float] = {"gpt-5": 0.2, "deepseek": 0.3, "doubao": 0.2}
 _REPORT_TEMP = 0.8
 
 # 缺失家族的 fallback 优先级（用户只填 1-2 槽时，空槽借这个顺序里已填的）
-_FALLBACK_ORDER: tuple[AgentFamily, ...] = ("gpt-4o", "deepseek", "doubao")
+_FALLBACK_ORDER: tuple[AgentFamily, ...] = ("gpt-5", "deepseek", "doubao")
 
 
 class LLMCredential(BaseModel):
@@ -69,7 +69,7 @@ class LLMCredential(BaseModel):
 
 # 三个槽位的固定默认值，服务器层按槽位名 + 用户 api_key 构造 LLMCredential 时使用。
 SLOT_DEFAULTS: dict[AgentFamily, dict] = {
-    "gpt-4o":    {"model": "gpt-4o",                      "base_url": None},
+    "gpt-5":     {"model": "gpt-5",                       "base_url": None},
     "deepseek": {"model": "deepseek-v4-pro",             "base_url": "https://api.deepseek.com"},
     "doubao":   {"model": "ep-20260514111325-xjmj7",     "base_url": "https://ark.cn-beijing.volces.com/api/v3"},
 }
@@ -106,7 +106,7 @@ if _DEV_OVERRIDE == "doubao":
 else:
     # Report Agent 专用 GPT-5 客户端。temperature=0.8 提升语言组织与表达质量。
     report_llm = ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+        model=os.getenv("OPENAI_MODEL", "gpt-5"),
         api_key=os.getenv("OPENAI_API_KEY"),
         timeout=_GPT_TIMEOUT,
         temperature=0.8,
@@ -116,7 +116,7 @@ else:
     # temperature=0.2：稍偏低保证规划稳定性，同时保留 PM 在竞品选择 / 维度优先级 /
     # 章节组织等判断点上的灵活度。D-039 撤回原 temperature=0（扼杀分析创造性）。
     gpt = ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+        model=os.getenv("OPENAI_MODEL", "gpt-5"),
         api_key=os.getenv("OPENAI_API_KEY"),
         timeout=_GPT_TIMEOUT,
         temperature=0.2,
@@ -140,7 +140,7 @@ else:
 
 # 离线 .env 路径的角色 → 单例映射。creds 缺省时返回这些。
 _ENV_CLIENTS: dict[AgentFamily, ChatOpenAI] = {
-    "gpt-4o": gpt,
+    "gpt-5": gpt,
     "deepseek": deepseek,
     "doubao": doubao,
 }
@@ -221,7 +221,7 @@ def get_report_llm() -> ChatOpenAI:
     creds = _run_creds.get()
     if creds is None:
         return report_llm
-    return _build_from_cred(_resolve_cred(creds, "gpt-4o"), _REPORT_TEMP)
+    return _build_from_cred(_resolve_cred(creds, "gpt-5"), _REPORT_TEMP)
 
 
 def cross_family_enabled() -> bool:
