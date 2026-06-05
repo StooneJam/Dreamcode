@@ -15,8 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY . .
 
-# pip install 后立即重建 matplotlib 字体缓存，使 Noto CJK 生效
 RUN pip install --no-cache-dir . && \
-    python -c "import matplotlib.font_manager as fm; fm._rebuild()"
+    python -c "import matplotlib, shutil; shutil.rmtree(matplotlib.get_cachedir(), ignore_errors=True)"
 
 CMD ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8080"]
