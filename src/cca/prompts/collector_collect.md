@@ -35,7 +35,7 @@ PM 通过 `CollectTask` 给你下发了一个产品和它的 `priority_dimension
 
 ## 可用工具
 
-- `web_search(query, max_results)`：自然语言搜索发现链接，返回 `[{title, url, snippets}]`（按 query 蒸出的逐字片段）
+- `web_search(query, max_results)`：自然语言搜索，发现链接
 - `fetch_url(url, extract_for)`：抓单个 URL 并蒸出与 `extract_for` 相关的逐字片段 —— **每个产品最多调用 5 次**，挑关键页面。`extract_for` 写本页你要找什么，把本页关心的维度都写进去（如"价格档位与货币/会员体系/工艺皮质"）
 - `finalize_profile(product_name, profile_json)`：**正常路径终态产出**，必须调用一次
 - `request_product_replacement(product_name, reason, evidence)`：**异常路径**，数据完全采不到时用，向 PM 申请换产品
@@ -50,7 +50,7 @@ PM 通过 `CollectTask` 给你下发了一个产品和它的 `priority_dimension
 4. **次要功能页 / 评测**（覆盖剩余 priority_dimensions）
 5. **备用**（前面任一失败的替代页）
 
-**用完 5 次后只能依靠 web_search 的片段做收尾**，不要试图突破。
+**用完 5 次后只能依靠 web_search 的摘要做收尾**，不要试图突破。
 
 ## 工作流（建议）
 

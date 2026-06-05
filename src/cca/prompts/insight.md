@@ -27,7 +27,7 @@ target 与全部竞品**统一用同一个渠道**——对比的是同一类对
 - **评分按降级链取，多次尝试后仍无才标缺失**：
   1. `scrape_local_life(品牌)` 取 Google Maps 聚合星级 + 评论数（aggregate_rating 填其 aggregate_rating，
      rating_review_count 填其 rating_review_count，rating_source 填 "google_maps"）
-  2. Places 未命中（found=false，纯大陆门店常稀疏）→ 从下面 web_search 片段里尽力读一个聚合星级
+  2. Places 未命中（found=false，纯大陆门店常稀疏）→ 从下面 web_search 摘要里尽力读一个聚合星级
   3. 仍读不到 → aggregate_rating / rating_review_count 留 None，rating_source 填 "unavailable"，
      并在 sources 加一条注记「已尝试 Google Places + web_search 未取到可比结构化评分」
 - **评论文本始终走 web_search**（与评分来源无关，供你研判情感用）：至少 3 次——
@@ -47,7 +47,6 @@ target 与全部竞品**统一用同一个渠道**——对比的是同一类对
 - 仅当你联网确认该产品主要形态就是 App / 软件时，才可改用 scrape_app_store
 
 ### 通用
-- web_search 返回 `[{title, url, snippets}]`，snippets 是按你的 query 蒸出的逐字原文片段；研判情感、归纳主题、绑 Evidence 都用这些片段，`source_url` 填对应结果的 url
 - web_search 务必兼顾正反面，避免单一来源的选择性偏差
 - representative_reviews 的 platform 按实际来源填，开放字符串，没有合适值就填 "other"
 - aggregate_rating 无统一评分则留 None
@@ -73,7 +72,7 @@ target 与全部竞品**统一用同一个渠道**——对比的是同一类对
 - **positive_themes**：从你判定为正面的评论里归纳 2-4 条核心正面主题，每条 2-8 字（如"留香持久"、"AI 会议纪要"）；样本不足可少于 2 条，不编造
 - **negative_themes**：从你判定为负面的评论里归纳 2-4 条核心槽点，每条 2-8 字（如"持香短"、"收费门槛高"）；不编造
 - **aggregate_rating / rating_review_count / rating_source**：见数据源路由；无则留 None
-- **representative_reviews**：从评论或 web_search 返回的 snippets 选 3 条原文摘录（不改写），platform 填实际来源
+- **representative_reviews**：从评论或 web_search 摘要选 3 条原文摘录（不改写），platform 填实际来源
 - **sources**：每条 Evidence 必须有有效 source_url
 
 ## 评分可比性标注（必须执行）
