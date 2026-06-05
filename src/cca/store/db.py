@@ -12,7 +12,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-_DB_PATH = Path(__file__).resolve().parents[3] / "data" / "cca.db"
+_DB_PATH = Path(
+    __import__("os").getenv("DB_PATH", "")
+    or Path(__file__).resolve().parents[3] / "data" / "cca.db"
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS reports (
