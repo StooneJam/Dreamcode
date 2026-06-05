@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
-from cca.agents._streaming import set_sse_emitter
+from cca.agents._streaming import JobCancelled, set_sse_emitter
 from cca.agents.qa_chat import answer_question
 from cca.graph import build_graph, empty_state
 from cca.llm.factory import SLOT_DEFAULTS, LLMCredential, get_report_llm, use_credentials
@@ -47,6 +47,12 @@ _jobs: dict[str, dict] = {}
 _qa_locks: dict[str, asyncio.Lock] = {}
 
 _JOB_TTL = 3600  # 完成 1h 后清理内存（MemorySaver + queue 占用大）
+
+
+def _cancel_job(job_id: str) -> None:
+    job = _jobs.get(job_id)
+    if job and job.get("status") in ("pending", "running"):
+        job["cancelled"] = True
 
 
 def _evict_old_jobs() -> None:
@@ -134,8 +140,11 @@ async def _run_job(
     queue: asyncio.Queue = _jobs[job_id]["queue"]
     loop = asyncio.get_event_loop()
 
-    # emit_fn 把结构化 SSE 事件从线程安全地送入 asyncio 队列
+    # emit_fn 把结构化 SSE 事件从线程安全地送入 asyncio 队列；
+    # 若 job 已被取消（客户端断开），抛 JobCancelled 中止图执行。
     def emit_fn(event: dict) -> None:
+        if _jobs.get(job_id, {}).get("cancelled"):
+            raise JobCancelled(job_id)
         try:
             loop.call_soon_threadsafe(queue.put_nowait, event)
         except Exception:
@@ -254,6 +263,7 @@ async def analyze(
     _jobs[job_id] = {
         "status": "pending", "queue": asyncio.Queue(),
         "result": None, "creds": creds, "owner": owner,
+        "cancelled": False,
     }
 
     asyncio.create_task(_run_job(
@@ -266,7 +276,7 @@ async def analyze(
 
 
 @app.get("/api/stream/{job_id}")
-async def stream(job_id: str) -> StreamingResponse:
+async def stream(job_id: str, request: Request) -> StreamingResponse:
     async def _generate():
         if job_id not in _jobs:
             yield f'data: {json.dumps({"type":"error","message":"job not found"})}\n\n'
@@ -276,6 +286,9 @@ async def stream(job_id: str) -> StreamingResponse:
             try:
                 msg = await asyncio.wait_for(queue.get(), timeout=20.0)
             except asyncio.TimeoutError:
+                if await request.is_disconnected():
+                    _cancel_job(job_id)
+                    return
                 # 空闲心跳：阻止 Railway/Nginx 代理因无数据而断开连接
                 yield ": keepalive\n\n"
                 continue

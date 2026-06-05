@@ -39,6 +39,10 @@ _TOOL_RESP_PREVIEW = 80
 _sse_emit: ContextVar[Callable[[dict], None] | None] = ContextVar("cca_sse_emit", default=None)
 
 
+class JobCancelled(RuntimeError):
+    """由 emit_fn 抛出，在节点间隙中止图执行（客户端已断开）。"""
+
+
 @contextmanager
 def set_sse_emitter(fn: Callable[[dict], None]):
     """在 with 块内把所有流式日志也发往 SSE 队列。fn 必须是线程安全的。"""
@@ -54,6 +58,8 @@ def _emit(event: dict) -> None:
     if fn is not None:
         try:
             fn(event)
+        except JobCancelled:
+            raise  # 让取消信号穿透图执行，停止后续 LLM 调用
         except Exception:
             pass
 
