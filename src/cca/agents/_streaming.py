@@ -114,14 +114,26 @@ def _stream_iter(agent: Any, messages: list, recursion_limit: int):
         yield chunk
 
 
+def _cache_read_tokens(msg: AIMessage) -> int:
+    """缓存命中的 input token。OpenAI/Doubao 走 input_token_details.cache_read，
+    DeepSeek 走 response_metadata.token_usage.prompt_cache_hit_tokens；都缺 → 0。"""
+    meta = getattr(msg, "usage_metadata", None) or {}
+    hit = (meta.get("input_token_details") or {}).get("cache_read")
+    if hit is None:
+        rm = getattr(msg, "response_metadata", None) or {}
+        hit = (rm.get("token_usage") or {}).get("prompt_cache_hit_tokens")
+    return hit or 0
+
+
 def _sum_usage(messages: list) -> dict[str, int]:
-    inp = out = 0
+    inp = out = cached = 0
     for msg in messages:
         if isinstance(msg, AIMessage):
             meta = getattr(msg, "usage_metadata", None) or {}
             inp += meta.get("input_tokens", 0)
             out += meta.get("output_tokens", 0)
-    return {"input": inp, "output": out, "total": inp + out}
+            cached += _cache_read_tokens(msg)
+    return {"input": inp, "output": out, "cached": cached, "total": inp + out}
 
 
 def _run_real(agent: Any, messages: list, label: str, recursion_limit: int) -> list:
@@ -207,7 +219,11 @@ def stream_react(
 
     usage = _sum_usage(final_messages)
     if usage["total"] > 0:
-        _print(label, f"tokens: in={usage['input']} out={usage['output']} total={usage['total']}")
+        _print(
+            label,
+            f"tokens: in={usage['input']} (cached={usage['cached']}) "
+            f"out={usage['output']} total={usage['total']}",
+        )
         _emit({"type": "token_usage", "agent": label, **usage})
 
     # ── write / auto 写缓存 ──

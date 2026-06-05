@@ -1442,7 +1442,7 @@ function openSSE(jobId,btn){
       case 'tool_call': setThink(false); appendLog(msg.agent,`→ ${msg.tool}(${msg.args})`,true); break;
       case 'tool_result': appendLog(msg.agent,`← ${msg.tool} (${msg.size}) ${msg.preview}`,true); break;
       case 'log': appendLog(msg.agent,msg.text,false); break;
-      case 'token_usage': appendLog(msg.agent,`tokens  in=${msg.input}  out=${msg.output}  total=${msg.total}`,true); break;
+      case 'token_usage': appendLog(msg.agent,`tokens  in=${msg.input} (cached=${msg.cached})  out=${msg.output}  total=${msg.total}`,true); break;
       case 'progress': setProgress(msg.pct); break;
       case 'phase1_checkpoint':
         setThink(false); showPhase1Box(msg.summary); break;
