@@ -439,11 +439,15 @@ async def password_login(username: str = Form(...), password: str = Form(...)) -
     return {"token": token, "display_name": display_name}
 
 
+def _google_redirect_uri(request: Request) -> str:
+    """Railway 代理做 SSL 终止，url_for 可能生成 http://。优先用显式配置的环境变量。"""
+    return os.getenv("GOOGLE_REDIRECT_URI") or str(request.url_for("google_callback"))
+
+
 @app.get("/auth/google")
 async def google_login(request: Request) -> RedirectResponse:
     from cca.auth.google_oauth import build_auth_url
-    redirect_uri = str(request.url_for("google_callback"))
-    return RedirectResponse(build_auth_url(redirect_uri))
+    return RedirectResponse(build_auth_url(_google_redirect_uri(request)))
 
 
 @app.get("/auth/google/callback", name="google_callback")
@@ -453,7 +457,7 @@ async def google_callback(request: Request, code: str = "", error: str = "") -> 
     try:
         from cca.auth.google_oauth import fetch_userinfo
         from cca.auth.session import create_session
-        redirect_uri = str(request.url_for("google_callback"))
+        redirect_uri = _google_redirect_uri(request)
         userinfo = await fetch_userinfo(code, redirect_uri)
         user_id, display_name = db.get_or_create_user(
             "google", userinfo["sub"], userinfo.get("name") or userinfo.get("email", "用户")
