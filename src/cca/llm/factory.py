@@ -47,7 +47,7 @@ _DEV_OVERRIDE = (os.getenv("CCA_DEV_MODEL_OVERRIDE") or "").lower()
 # 三家族原路径下保留 json_mode / response_format=json_object（DeepSeek/GPT-5 容错更好）。
 DEV_DOUBAO_OVERRIDE: bool = _DEV_OVERRIDE == "doubao"
 
-_DOUBAO_MAX_TOKENS = int(os.getenv("DOUBAO_MAX_TOKENS", "16384"))
+_DOUBAO_MAX_TOKENS = int(os.getenv("DOUBAO_MAX_TOKENS", "32768"))
 
 _DOUBAO_THINKING = (os.getenv("DOUBAO_THINKING", "disabled") or "").lower()
 
@@ -181,19 +181,27 @@ def _resolve_cred(
     raise ValueError("run creds 为空，不应走到 _resolve_cred")
 
 
+def _is_doubao_endpoint(base_url: str | None) -> bool:
+    return bool(base_url and ("volces.com" in base_url or "ark.cn-beijing" in base_url))
+
+
 def _build_from_cred(cred: LLMCredential, temperature: float) -> ChatOpenAI:
-    """按用户 endpoint 现建客户端（缓存）。不加 provider 专属 quirk——模型由用户决定。"""
+    """按用户 endpoint 现建客户端（缓存）。豆包 endpoint 自动应用 max_tokens 与超时。"""
     key = (cred.api_key, cred.base_url, cred.model, temperature)
     client = _creds_client_cache.get(key)
     if client is None:
-        client = ChatOpenAI(
+        is_doubao = _is_doubao_endpoint(cred.base_url)
+        kwargs: dict = dict(
             model=cred.model,
             api_key=cred.api_key,
             base_url=cred.base_url,
-            timeout=_GPT_TIMEOUT,
+            timeout=_DOUBAO_TIMEOUT if is_doubao else _GPT_TIMEOUT,
             temperature=temperature,
             max_retries=_MAX_RETRIES,
         )
+        if is_doubao:
+            kwargs["max_tokens"] = _DOUBAO_MAX_TOKENS
+        client = ChatOpenAI(**kwargs)
         _creds_client_cache[key] = client
     return client
 

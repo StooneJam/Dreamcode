@@ -268,6 +268,13 @@ def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
     return out
 
 
+def _is_truncated(report_md: str) -> bool:
+    """报告是否被截断：缺少结尾章节（结论/数据来源）则视为不完整。"""
+    tail = report_md[-800:]
+    end_markers = ("结论", "建议", "数据来源", "参考", "sources", "conclusion", "references")
+    return not any(m in tail.lower() for m in end_markers)
+
+
 def _fallback_generate_report(
     messages: list, task: ReportTask, profiles_json: str
 ) -> str:
@@ -388,9 +395,9 @@ def report_node(state: CCAState) -> dict:
     pdf_path = _extract_pdf_path(messages)
     report_md = _extract_final_md(messages)
 
-    # Doubao 等长上下文下可能截断、未输出报告正文：Python 侧一次性 LLM 补救
-    if not report_md:
-        report_md = _fallback_generate_report(messages, report_task, profiles_json)
+    # Doubao 等长上下文下可能截断（无报告 or 报告不完整）：Python 侧一次性 LLM 补救
+    if not report_md or _is_truncated(report_md):
+        report_md = _fallback_generate_report(messages, report_task, profiles_json) or report_md
 
     # LLM 未调 render_pdf 时，Python 侧兜底渲染
     if report_md and not pdf_path:
