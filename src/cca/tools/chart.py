@@ -33,7 +33,7 @@ def _apply_style() -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     plt.rcParams.update({
-        "font.sans-serif": ["Microsoft YaHei", "SimHei", "DejaVu Sans"],
+        "font.sans-serif": ["Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", "SimHei", "DejaVu Sans"],
         "axes.unicode_minus": False,
         "figure.facecolor": "white",
         "axes.facecolor": "#f8f9fa",

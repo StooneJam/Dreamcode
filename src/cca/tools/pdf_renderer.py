@@ -45,7 +45,7 @@ def _try_weasyprint(md: str, output_path: Path) -> bool:
         body = MarkdownIt().enable("table").render(md)
         html = (
             '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/><style>'
-            'body{font-family:"Microsoft YaHei","SimHei",sans-serif;font-size:11pt;'
+            'body{font-family:"Noto Sans CJK SC","Noto Serif CJK SC","Microsoft YaHei","SimHei",sans-serif;font-size:11pt;'
             'line-height:1.75;margin:48px 56px;}'
             'h1{font-size:18pt;border-bottom:2px solid #2E86AB;padding-bottom:6px;}'
             'h2{font-size:14pt;border-left:4px solid #2E86AB;padding-left:10px;margin-top:24px;}'

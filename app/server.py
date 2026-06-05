@@ -300,8 +300,8 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     _cancel_job(job_id)
                     return
-                # 空闲心跳：阻止 Railway/Nginx 代理因无数据而断开连接
-                yield ": keepalive\n\n"
+                # 空闲心跳：发真实 data 帧，防止代理因无数据关闭连接
+                yield 'data: {"type":"heartbeat"}\n\n'
                 continue
             if msg is None:
                 break

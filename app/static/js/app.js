@@ -1446,6 +1446,7 @@ function openSSE(jobId,btn){
       case 'progress': setProgress(msg.pct); break;
       case 'phase1_checkpoint':
         setThink(false); showPhase1Box(msg.summary); break;
+      case 'heartbeat': break;
       case 'done':
         eventSource.close(); setThink(false); setProgress(100); btn.disabled=false;
         stopTimer();
@@ -1467,16 +1468,21 @@ function openSSE(jobId,btn){
         eventSource.close(); setThink(false); stopTimer(); btn.disabled=false; appendLog('Error',msg.message,false); break;
     }
   };
+  // 断线后让 EventSource 自动重连（不立即关闭），容忍 LLM 长文生成期间的网络抖动；
+  // 连续 20 次（约 60s）仍失败才放弃并从 DB 捞报告
+  let _errCount=0;
   eventSource.onerror=()=>{
-    eventSource.close(); btn.disabled=false;
-    // SSE 断线后去 DB 查一次，捞回已完成但没送达的报告
-    _tryRecoverReport(jobId);
+    _errCount++;
+    if(_errCount>20){
+      eventSource.close(); btn.disabled=false;
+      _tryRecoverReport(jobId);
+    }
   };
 }
 
 async function _tryRecoverReport(jobId){
   try{
-    const token=localStorage.getItem('auth_token')||'';
+    const token=getAuthToken();
     const res=await fetch(`/api/reports/${jobId}`,{headers:token?{Authorization:`Bearer ${token}`}:{}});
     if(!res.ok) return;
     const {report}=await res.json();
