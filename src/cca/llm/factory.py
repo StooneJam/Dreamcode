@@ -36,10 +36,9 @@ _GPT_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "180"))
 _DEEPSEEK_TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT", "180"))
 _DOUBAO_TIMEOUT = int(os.getenv("DOUBAO_TIMEOUT", "300"))
 
-# 单次 LLM 调用网络层 retry。OpenAI SDK 内置 exponential backoff，
-# 主要应对 Doubao Ark 在 Send fanout 并发下偶发的 TCP reset（WinError 10054）
-# 与瞬时 TLS 握手失败。默认 2 次扛不住，调到 5。
-_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))
+# 单次 LLM 调用网络层 retry。1 次重试 = 最坏情况 timeout × 2；
+# 改大会让整个 job 挂更久，Railway 上宁可快速失败让用户重跑。
+_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "1"))
 
 _DEV_OVERRIDE = (os.getenv("CCA_DEV_MODEL_OVERRIDE") or "").lower()
 

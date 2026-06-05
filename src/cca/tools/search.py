@@ -73,7 +73,7 @@ def web_search(query: str, max_results: int = 5) -> list[dict] | str:
     """
     client = TavilyClient(api_key=_run_tavily_key.get() or os.getenv("TAVILY_API_KEY"))
     try:
-        response = client.search(query, max_results=max_results)
+        response = client.search(query, max_results=max_results, timeout=30)
     except _TRANSIENT_SEARCH_ERRORS as e:
         return (
             f"web_search 暂不可用（{type(e).__name__}: {e}）。"

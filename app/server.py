@@ -13,6 +13,7 @@ import asyncio
 import contextvars
 import json
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -40,10 +41,21 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 _UPLOAD_DIR = _PROJECT_ROOT / "data" / "uploads"
 _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# job_id → {status, queue, result, creds, checkpointer, thread_config, feedback_event, feedback_data}
+# job_id → {status, queue, result, creds, checkpointer, thread_config, feedback_event, feedback_data, finished_at}
 _jobs: dict[str, dict] = {}
 # 按 (job_id, owner) 串行化同会话问答，避免历史交错与重复建会话
 _qa_locks: dict[str, asyncio.Lock] = {}
+
+_JOB_TTL = 3600  # 完成 1h 后清理内存（MemorySaver + queue 占用大）
+
+
+def _evict_old_jobs() -> None:
+    now = time.monotonic()
+    dead = [jid for jid, j in _jobs.items()
+            if j.get("finished_at") and now - j["finished_at"] > _JOB_TTL]
+    for jid in dead:
+        _jobs.pop(jid, None)
+        _qa_locks.pop(f"{jid}:{_jobs.get(jid, {}).get('owner','')}", None)
 
 
 # ── Owner 解析（从 session token） ────────────────────────────────────────
@@ -183,6 +195,7 @@ async def _run_job(
         pdf = result.get("report_pdf_path") or ""
         _jobs[job_id]["result"] = result
         _jobs[job_id]["status"] = "done"
+        _jobs[job_id]["finished_at"] = time.monotonic()
         db.save_report(job_id, owner, target_product, result.get("report_md") or "", pdf)
         await queue.put({
             "type": "done",
@@ -192,9 +205,11 @@ async def _run_job(
 
     except Exception as exc:
         _jobs[job_id]["status"] = "error"
+        _jobs[job_id]["finished_at"] = time.monotonic()
         await queue.put({"type": "error", "message": str(exc)})
     finally:
         await queue.put(None)  # 终止 SSE 生成器
+        _evict_old_jobs()
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────
@@ -258,7 +273,12 @@ async def stream(job_id: str) -> StreamingResponse:
             return
         queue: asyncio.Queue = _jobs[job_id]["queue"]
         while True:
-            msg = await queue.get()
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=20.0)
+            except asyncio.TimeoutError:
+                # 空闲心跳：阻止 Railway/Nginx 代理因无数据而断开连接
+                yield ": keepalive\n\n"
+                continue
             if msg is None:
                 break
             yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
