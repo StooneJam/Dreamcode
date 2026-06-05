@@ -1,9 +1,10 @@
 """测试 CCAState 字段契约 + Annotated reducer 行为。"""
 from __future__ import annotations
 
+from functools import reduce
 from operator import add
 
-from cca.state import CCAState
+from cca.state import CCAState, _merge_profiles
 
 REQUIRED_FIELDS = {
     "user_query",
@@ -71,3 +72,58 @@ def test_qa_notes_reducer_appends_strings() -> None:
     """qa_notes 是 list[str]，add 应做字符串列表拼接。"""
     merged = add(["note1"], ["note2", "note3"])
     assert merged == ["note1", "note2", "note3"]
+
+
+# ── _merge_profiles：fanout 并发安全（空值不覆盖真数据）────────────────────
+
+_FULL = {"瑞幸": {"product_name": "瑞幸",
+                  "dimensions": [{"name": "门店"}], "sources": ["url1"]}}
+# _skip_result 崩溃占位：带空 dimensions/sources，绝不能覆盖同 key 的 collector 真数据
+_EMPTY_SHELL = {"瑞幸": {"product_name": "瑞幸", "company": None,
+                        "dimensions": [], "sources": []}}
+
+
+def test_merge_profiles_empty_list_never_clobbers_populated() -> None:
+    """空 [] 不得覆盖已填 dimensions/sources —— 这条挂掉 = collector 真数据被空壳抹掉的 P0 回归。"""
+    merged = _merge_profiles(_FULL, _EMPTY_SHELL)
+    assert merged["瑞幸"]["dimensions"] == [{"name": "门店"}]
+    assert merged["瑞幸"]["sources"] == ["url1"]
+
+
+def test_merge_profiles_clobber_is_fold_order_independent() -> None:
+    """无论 collector(full) 与崩溃 worker(shell) 谁先 fold，真数据都保留。"""
+    full_then_shell = reduce(_merge_profiles, [_FULL, _EMPTY_SHELL], {})
+    shell_then_full = reduce(_merge_profiles, [_EMPTY_SHELL, _FULL], {})
+    assert full_then_shell == shell_then_full
+    assert full_then_shell["瑞幸"]["dimensions"] == [{"name": "门店"}]
+
+
+def test_merge_profiles_none_does_not_clobber() -> None:
+    """保留原契约：右侧 None 不覆盖左侧已有值（防二轮清空 sentiment）。"""
+    left = {"A": {"sentiment": {"score": 0.8}}}
+    right = {"A": {"sentiment": None}}
+    assert _merge_profiles(left, right)["A"]["sentiment"] == {"score": 0.8}
+
+
+def test_merge_profiles_nonempty_overwrites() -> None:
+    """非空 incoming 仍按"最新覆盖"，且 0/False 不被当空值丢弃。"""
+    left = {"A": {"dimensions": [{"name": "旧"}], "flag": True, "n": 5}}
+    right = {"A": {"dimensions": [{"name": "新"}], "flag": False, "n": 0}}
+    out = _merge_profiles(left, right)["A"]
+    assert out["dimensions"] == [{"name": "新"}]
+    assert out["flag"] is False
+    assert out["n"] == 0
+
+
+def test_merge_profiles_cross_agent_fields_coexist() -> None:
+    """collector(dimensions/sources) 与 insight(sentiment) 同 key 各写各的，互不丢。"""
+    collector = {"A": {"product_name": "A", "dimensions": [{"name": "d"}], "sources": ["u"]}}
+    insight = {"A": {"sentiment": {"score": 0.9}}}
+    out = reduce(_merge_profiles, [collector, insight], {})["A"]
+    assert out["dimensions"] == [{"name": "d"}]
+    assert out["sentiment"] == {"score": 0.9}
+
+
+def test_merge_profiles_disjoint_keys_both_kept() -> None:
+    merged = _merge_profiles({"A": {"x": 1}}, {"B": {"y": 2}})
+    assert merged == {"A": {"x": 1}, "B": {"y": 2}}

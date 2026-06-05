@@ -124,6 +124,42 @@ def test_graph_handle_signal_routes_to_all_phase_targets() -> None:
     assert (NODE_HANDLE_SIGNAL, "__end__") in edges
 
 
+def test_crashing_insight_worker_does_not_clobber_collector_profile() -> None:
+    """复现并回归 P0：同一 product key 上 collector 成功 + insight 崩溃，
+    insight 的 _skip_result 空壳（dimensions=[]/sources=[]）经 _merge_profiles fold 后
+    绝不抹掉 collector 真数据——靠 reducer 单层兜底（_skip_result 不做补丁式修复）。
+
+    走真实 _collect_product_node / _insight_product_node / _skip_result / _merge_profiles，
+    只 mock 两个 worker 函数（不调 LLM）。dispatch 顺序 collector 先 insight 后，
+    fold 同序——这正是 log-mixue 里数据丢失的路径。
+    """
+    from functools import reduce
+    from unittest.mock import patch
+
+    from cca.graph import _collect_product_node, _insight_product_node
+    from cca.state import _merge_profiles
+
+    fanout = {"_fanout_task": {"product_name": "瑞幸"}, "_fanout_context": {}}
+    full_profile = {"profiles": {"瑞幸": {
+        "product_name": "瑞幸", "dimensions": [{"name": "门店"}], "sources": ["url1"],
+    }}}
+
+    with patch("cca.graph._collector_mod.collect_one_product", return_value=full_profile), \
+         patch("cca.graph._insight_mod.insight_one_product",
+               side_effect=RuntimeError("doubao 429 rate limit")):
+        collect_out = _collect_product_node(fanout)
+        insight_out = _insight_product_node(fanout)
+
+    # insight 崩溃 → _skip_result 空壳（含 dimensions=[]/sources=[]）
+    assert insight_out["profiles"]["瑞幸"]["dimensions"] == []
+    assert insight_out["review_state"][0]["status"] == "forced"
+
+    # 按 dispatch 顺序 fold：reducer 守卫挡住空壳，collector 真数据必须存活
+    merged = reduce(_merge_profiles, [collect_out["profiles"], insight_out["profiles"]], {})
+    assert merged["瑞幸"]["dimensions"] == [{"name": "门店"}]
+    assert merged["瑞幸"]["sources"] == ["url1"]
+
+
 def test_route_after_review_enters_handle_signal_for_debate_only_signal() -> None:
     """纯主观（requires_debate=True）pending 也要进 handle_signal，不能因门只认 factual 被丢。"""
     from cca.graph import NODE_HANDLE_SIGNAL as H, _route_after_review

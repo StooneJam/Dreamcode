@@ -8,21 +8,30 @@ from operator import add
 from typing import Annotated, Literal, TypedDict
 
 
+def _is_empty(v: object) -> bool:
+    """None / 空容器 / 空串视为"无值"。0、False 是有效值不算空。"""
+    return v is None or v == [] or v == {} or v == ""
+
+
 def _merge_profiles(left: dict[str, dict], right: dict[str, dict]) -> dict[str, dict]:
     """profiles 的 merge reducer：同 key 时右侧字段覆盖左侧，保留双方独有字段。
 
     Collector 写 dimensions/pricing/sources，Insight 写 sentiment。
     并发写入时各自只更新自己的字段，不丢弃对方已写的字段。
 
+    覆盖规则：右侧"无值"（None / [] / {} / ""）永不覆盖左侧已有的非空值。
+    这条守卫是 fanout 并发安全的核心——Collector 真 profile 与崩溃 worker 的
+    空壳占位（_skip_result，dimensions=[]/sources=[]）写到同一 product key 时，
+    无论 fold 先后，空壳都不会把真数据抹成空（旧版只挡 None、不挡 [] 会被覆盖）。
+
     SWOT 不再走 profile —— Reporter 自己产并直接写入正文 MD，不回写 state.profiles。
     """
     merged = dict(left)
     for name, profile in right.items():
         if name in merged:
-            # 右侧 None 不覆盖左侧已有值，防止 Collector 二轮清空 Insight 写入的 sentiment
             base = dict(merged[name])
             for k, v in profile.items():
-                if v is not None or k not in base or base[k] is None:
+                if not _is_empty(v) or k not in base or _is_empty(base.get(k)):
                     base[k] = v
             merged[name] = base
         else:
