@@ -14,6 +14,11 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 _CHART_DIR = Path("output/charts")
 _PALETTE = ["#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#44BBA4", "#E94F37", "#5C4B8A"]
+_CJK_FONT_CANDIDATES = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+]
 
 
 def _fmt_num(v: float) -> str:
@@ -31,9 +36,19 @@ def _plot_value(v: float | None) -> float:
 def _apply_style() -> None:
     import matplotlib
     matplotlib.use("Agg")
+    import matplotlib.font_manager as fm
     import matplotlib.pyplot as plt
+
+    # 动态注册 CJK 字体并获取实际注册名，避免名字匹配失败导致回退到 DejaVu Sans
+    detected: list[str] = []
+    for p in _CJK_FONT_CANDIDATES:
+        if Path(p).exists():
+            fm.fontManager.addfont(p)
+            detected = list({f.name for f in fm.fontManager.ttflist if f.fname == p})
+            break
+
     plt.rcParams.update({
-        "font.sans-serif": ["Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", "SimHei", "DejaVu Sans"],
+        "font.sans-serif": detected + ["Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", "SimHei", "DejaVu Sans"],
         "axes.unicode_minus": False,
         "figure.facecolor": "white",
         "axes.facecolor": "#f8f9fa",
