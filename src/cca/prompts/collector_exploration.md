@@ -18,7 +18,7 @@
 ## 可用工具
 
 - `web_search(query, max_results)`：自然语言搜索，返回 `title / url / content` 摘要。**优先用此工具发现链接**
-- `fetch_url(url, extract_for)`：抓单个 URL 并蒸出与 `extract_for` 相关的逐字片段（`extract_for` 写本页你要找什么）。**自动检查 robots.txt**，禁止域名/超时/404/无法提取均返回 error。**用 web_search 拿到关键链接后再抓**
+- `fetch_url(url)`：抓单个 URL 返回页面正文（`snippets[0]` 为截断后的整页正文，自己从中逐字摘相关片段）。**自动检查 robots.txt**，禁止域名/超时/404/无法提取均返回 error。**用 web_search 拿到关键链接后再抓**
 - `finalize_exploration(result_json)`：**最终产出**。完成调研后**必须调用一次**才能结束节点
 - `challenge_pm(claim, evidence, ...)`：发现 PM 给的 hint 错了 / 产品已停服 → 向 PM 发挑战信号
 

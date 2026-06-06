@@ -35,7 +35,7 @@ def _patch_robots_deny_all(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_fetch_url_robots_denied_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_robots_deny_all(monkeypatch)
 
-    result = fetch_url.invoke({"url": "https://example.com/restricted", "extract_for": "定价"})
+    result = fetch_url.invoke({"url": "https://example.com/restricted"})
 
     assert "error" in result
     assert "robots.txt" in result["error"]
@@ -45,7 +45,7 @@ def test_fetch_url_robots_denied_returns_error(monkeypatch: pytest.MonkeyPatch) 
 
 def test_fetch_url_invalid_url_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """缺少 scheme/netloc 的 URL 直接拒掉，不走 HTTP。"""
-    result = fetch_url.invoke({"url": "not-a-url", "extract_for": "定价"})
+    result = fetch_url.invoke({"url": "not-a-url"})
 
     assert "error" in result
     assert "非法 URL" in result["error"]
@@ -59,7 +59,7 @@ def test_fetch_url_http_error_returns_error(monkeypatch: pytest.MonkeyPatch) -> 
         MagicMock(side_effect=httpx.TimeoutException("timeout")),
     )
 
-    result = fetch_url.invoke({"url": "https://slow.example.com/", "extract_for": "定价"})
+    result = fetch_url.invoke({"url": "https://slow.example.com/"})
 
     assert "error" in result
     assert "TimeoutException" in result["error"]
@@ -74,7 +74,7 @@ def test_fetch_url_extract_returns_none_means_error(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(fetcher.httpx, "get", MagicMock(return_value=mock_response))
     monkeypatch.setattr(fetcher.trafilatura, "extract", lambda *a, **kw: None)
 
-    result = fetch_url.invoke({"url": "https://spa.example.com/", "extract_for": "定价"})
+    result = fetch_url.invoke({"url": "https://spa.example.com/"})
 
     assert "error" in result
     assert "提取正文" in result["error"]
@@ -96,26 +96,16 @@ def test_fetch_url_success_returns_snippets_and_metadata(
     monkeypatch.setattr(
         fetcher.trafilatura, "extract_metadata", lambda _html: mock_meta
     )
-    # 蒸馏 mock：不打真 LLM，并校验抽取正文 + extract_for 透传
-    captured = {}
 
-    def fake_distill(text: str, focus: str) -> list[str]:
-        captured["text"] = text
-        captured["focus"] = focus
-        return ["Pro 30元/月"]
-
-    monkeypatch.setattr(fetcher, "distill", fake_distill)
-
-    result = fetch_url.invoke({"url": "https://feishu.cn/pricing", "extract_for": "定价档位"})
+    result = fetch_url.invoke({"url": "https://feishu.cn/pricing"})
 
     assert "error" not in result
     assert result["url"] == "https://feishu.cn/pricing"
     assert result["title"] == "飞书定价"
+    # 整页正文（_smart_truncate 后）原样进 snippets 单条，无蒸馏
     assert result["snippets"] == ["Pro 30元/月"]
-    assert "text" not in result  # 整页正文不再进结果，只留片段
+    assert "text" not in result  # 仍只留 snippets 字段，不暴露 text
     assert "fetched_at" in result
-    assert captured["focus"] == "定价档位"
-    assert captured["text"] == "Pro 30元/月"  # _smart_truncate 后的正文喂给 distill
 
 
 def test_robots_check_allows_when_robots_unreadable(
@@ -126,23 +116,3 @@ def test_robots_check_allows_when_robots_unreadable(
 
     err = fetcher._robots_check("https://nodejs.example.com/page")
     assert err is None
-
-
-# ── distill None 降级 ─────────────────────────────────────────────────
-
-
-def test_distill_returns_verbatim_when_structured_output_returns_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """function_calling 返 None → 原文当单条片段兜底，不崩。"""
-    from cca.tools import _distill
-
-    mock_llm = MagicMock()
-    mock_llm.invoke.return_value = None
-    mock_bound = MagicMock()
-    mock_bound.with_structured_output.return_value = mock_llm
-    monkeypatch.setattr(_distill, "get_llm", lambda _family: mock_bound)
-
-    result = _distill.distill("飞书 Pro 版 30 元每月", "定价")
-
-    assert result == ["飞书 Pro 版 30 元每月"]

@@ -23,7 +23,48 @@ def test_web_search_returns_results_list(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert len(results) == 1
     assert results[0]["url"] == "https://feishu.cn"
-    mock_client.search.assert_called_once_with("飞书 主要竞品", max_results=3)
+    mock_client.search.assert_called_once_with("飞书 主要竞品", max_results=3, timeout=30)
+
+
+def test_web_search_truncates_long_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    """content 全程驻留 history，超 cap 的本地截断（降本）。"""
+    long_content = "价" * 5000
+    mock_client = MagicMock()
+    mock_client.search.return_value = {
+        "results": [{"title": "x", "url": "https://x.com", "content": long_content}]
+    }
+    monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
+
+    results = web_search.invoke({"query": "x"})
+
+    assert len(results[0]["content"]) == search._MAX_RESULT_CONTENT
+
+
+def test_web_search_caps_max_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLM 传超大 max_results 被服务端夹到 _MAX_RESULTS_CAP。"""
+    mock_client = MagicMock()
+    mock_client.search.return_value = {"results": []}
+    monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
+
+    web_search.invoke({"query": "x", "max_results": 50})
+
+    mock_client.search.assert_called_once_with("x", max_results=search._MAX_RESULTS_CAP, timeout=30)
+
+
+def test_web_search_drops_extraneous_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tavily 结果里的 raw_content / score 等噪声不进 history，只留 title/url/content。"""
+    mock_client = MagicMock()
+    mock_client.search.return_value = {
+        "results": [{
+            "title": "t", "url": "https://x.com", "content": "c",
+            "raw_content": "整页超长正文" * 1000, "score": 0.9,
+        }]
+    }
+    monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
+
+    results = web_search.invoke({"query": "x"})
+
+    assert set(results[0].keys()) == {"title", "url", "content"}
 
 
 def test_web_search_returns_empty_on_missing_results_key(

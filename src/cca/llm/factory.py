@@ -32,9 +32,9 @@ load_dotenv(override=True)
 
 # 单次 LLM 调用超时（秒）。Collector / Insight ReAct 跑到后几轮 context 会膨胀，
 # DeepSeek 高峰期延迟也可能上来；180s 给个宽余量，必要时按家族通过环境变量调。
-_GPT_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "180"))
-_DEEPSEEK_TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT", "180"))
-_DOUBAO_TIMEOUT = int(os.getenv("DOUBAO_TIMEOUT", "300"))
+_GPT_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "600"))
+_DEEPSEEK_TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT", "600"))
+_DOUBAO_TIMEOUT = int(os.getenv("DOUBAO_TIMEOUT", "600"))
 
 # 单次 LLM 调用网络层 retry。1 次重试 = 最坏情况 timeout × 2；
 # 改大会让整个 job 挂更久，Railway 上宁可快速失败让用户重跑。

@@ -13,6 +13,11 @@ from langchain_core.tools import tool
 from tavily import TavilyClient
 from tavily import errors as tavily_errors
 
+# 结果裁剪（缓存安全降本）：Tavily content 全程驻留 ReAct history 逐轮重发，
+# 本地截断只缩每轮新增的料、不动前缀缓存，零额外 LLM。两个旋钮都可 env 调。
+_MAX_RESULTS_CAP = int(os.getenv("WEB_SEARCH_MAX_RESULTS_CAP", "5"))
+_MAX_RESULT_CONTENT = int(os.getenv("WEB_SEARCH_MAX_CONTENT", "600"))
+
 # 前端上传的 per-run Tavily key；None 时回落 .env 里项目自己的 key。
 # 与 llm/factory.py 的 _run_creds 同一范式：key 走 contextvar，不进 state（state 会被
 # audit_log 记录、被前端 stream 订阅，密钥进 state 等于泄漏）。
@@ -53,6 +58,14 @@ _TRANSIENT_SEARCH_ERRORS = (
 )
 
 
+def _trim_result(result: dict) -> dict:
+    """只保留 {title, url, content}，content 截断到 _MAX_RESULT_CONTENT 字。"""
+    content = result.get("content") or ""
+    if len(content) > _MAX_RESULT_CONTENT:
+        content = content[:_MAX_RESULT_CONTENT]
+    return {"title": result.get("title"), "url": result.get("url"), "content": content}
+
+
 @tool
 def web_search(query: str, max_results: int = 5) -> list[dict] | str:
     """
@@ -72,6 +85,7 @@ def web_search(query: str, max_results: int = 5) -> list[dict] | str:
         List of {title, url, content}. Empty list if nothing found.
     """
     client = TavilyClient(api_key=_run_tavily_key.get() or os.getenv("TAVILY_API_KEY"))
+    max_results = min(max_results, _MAX_RESULTS_CAP)
     try:
         response = client.search(query, max_results=max_results, timeout=30)
     except _TRANSIENT_SEARCH_ERRORS as e:
@@ -79,4 +93,4 @@ def web_search(query: str, max_results: int = 5) -> list[dict] | str:
             f"web_search 暂不可用（{type(e).__name__}: {e}）。"
             f"不要重试本次查询；请基于已采集到的信息继续，或对已知 URL 调 fetch_url 直接抓取。"
         )
-    return response.get("results", [])
+    return [_trim_result(r) for r in response.get("results", [])]

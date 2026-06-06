@@ -36,7 +36,7 @@ PM 通过 `CollectTask` 给你下发了一个产品和它的 `priority_dimension
 ## 可用工具
 
 - `web_search(query, max_results)`：自然语言搜索，发现链接
-- `fetch_url(url, extract_for)`：抓单个 URL 并蒸出与 `extract_for` 相关的逐字片段 —— **每个产品最多调用 5 次**，挑关键页面。`extract_for` 写本页你要找什么，把本页关心的维度都写进去（如"价格档位与货币/会员体系/工艺皮质"）
+- `fetch_url(url)`：抓单个 URL 返回页面正文（`snippets[0]` 为截断后的整页正文）—— **每个产品最多调用 5 次**，挑关键页面。你从返回正文里自己逐字摘相关片段绑 Evidence
 - `finalize_profile(product_name, profile_json)`：**正常路径终态产出**，必须调用一次
 - `request_product_replacement(product_name, reason, evidence)`：**异常路径**，数据完全采不到时用，向 PM 申请换产品
 
@@ -65,7 +65,7 @@ PM 通过 `CollectTask` 给你下发了一个产品和它的 `priority_dimension
 **每条 Fact 必须含 evidence (list[Evidence], min_length=1)**，每个 Evidence：
 
 - `source_url`：必须是你**真的 fetch_url 过**的 URL（不要写只在 web_search 里看到、没真抓过的 URL）
-- `snippet`：直接取该 fetch_url 返回的 `snippets` 里的逐字片段（已是原文摘抄）；不要改写 / 不要凭训练知识补全
+- `snippet`：从 fetch_url 返回的 `snippets`（整页正文）里逐字摘抄相关片段；不要改写 / 不要凭训练知识补全
 - `fetched_at`：ISO 8601 时间戳，schema 有 default_factory，可省略
 
 **严禁**：凭训练知识编造 Evidence.snippet，或拿没真 fetch_url 过的 URL 当 source_url。
