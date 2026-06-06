@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from uuid import uuid4
 
 from langchain_core.tools import tool
 
@@ -28,7 +29,8 @@ def render_pdf(markdown_content: str, target_product: str) -> str:
         生成的 PDF 文件的完整路径。
     """
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    pdf_path = _OUTPUT_DIR / f"report_{target_product}.pdf"
+    # uuid 后缀：同产品多份报告不互相覆盖（路径不可猜）
+    pdf_path = _OUTPUT_DIR / f"report_{target_product}_{uuid4().hex[:8]}.pdf"
     if not _try_weasyprint(markdown_content, pdf_path):
         _reportlab_pdf(markdown_content, pdf_path)
     return str(pdf_path)

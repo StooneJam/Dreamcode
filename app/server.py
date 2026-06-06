@@ -206,12 +206,10 @@ async def _run_job(
         _jobs[job_id]["result"] = result
         _jobs[job_id]["status"] = "done"
         _jobs[job_id]["finished_at"] = time.monotonic()
-        db.save_report(job_id, owner, target_product, result.get("report_md") or "", pdf)
-        await queue.put({
-            "type": "done",
-            "pdf_path": pdf,
-            "filename": Path(pdf).name if pdf else "",
-        })
+        # 匿名（未登录）不持久化：报告留在内存 job，登录才入库存历史
+        if owner != "anonymous":
+            db.save_report(job_id, owner, target_product, result.get("report_md") or "", pdf)
+        await queue.put({"type": "done", "has_pdf": bool(pdf)})
 
     except Exception as exc:
         _jobs[job_id]["status"] = "error"
@@ -286,8 +284,7 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
         # 重连时 job 已完成：直接补发 done 事件，不等 queue
         if job.get("status") == "done":
             result = job.get("result") or {}
-            pdf = result.get("report_pdf_path") or ""
-            yield f'data: {json.dumps({"type":"done","pdf_path":pdf,"filename":Path(pdf).name if pdf else ""},ensure_ascii=False)}\n\n'
+            yield f'data: {json.dumps({"type":"done","has_pdf":bool(result.get("report_pdf_path"))})}\n\n'
             return
         if job.get("status") == "error":
             yield f'data: {json.dumps({"type":"error","message":"job failed"})}\n\n'
@@ -314,20 +311,30 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
     )
 
 
+def _resolve_owned_pdf(report_id: str, owner: str) -> str:
+    """本人报告的 PDF 路径：DB 优先，内存 job 兜底（匿名/未持久化场景）。均按 owner 校验。"""
+    report = db.get_report(report_id, owner)
+    if report:
+        return report.get("pdf_path") or ""
+    job = _jobs.get(report_id)
+    if job and job.get("owner") == owner:
+        return (job.get("result") or {}).get("report_pdf_path") or ""
+    return ""
+
+
 @app.get("/api/report/pdf")
-async def get_pdf(path: str, download: int = 0):
-    from urllib.parse import quote
-    p = Path(path)
+async def get_pdf(report_id: str, owner: str = Depends(_resolve_owner)):
+    """按 report_id 取本人报告 PDF；路径只来自服务端记录，不收客户端文件路径。"""
+    pdf_path = _resolve_owned_pdf(report_id, owner)
+    if not pdf_path:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    p = Path(pdf_path)
     if not p.is_absolute():
         p = _PROJECT_ROOT / p
-    if not p.exists() or not p.is_file():
+    if not p.is_file():
         return JSONResponse({"error": "file not found"}, status_code=404)
-    disposition = "attachment" if download else "inline"
-    # RFC 5987：filename* 支持任意 Unicode，兼容中文文件名
-    encoded = quote(p.name, safe="")
-    cd = f'{disposition}; filename="report.pdf"; filename*=UTF-8\'\'{encoded}'
     return FileResponse(p, media_type="application/pdf",
-                        headers={"Content-Disposition": cd})
+                        content_disposition_type="inline")
 
 
 @app.post("/api/jobs/{job_id}/feedback")

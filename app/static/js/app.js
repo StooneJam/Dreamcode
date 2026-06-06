@@ -207,7 +207,8 @@ function buildScrollContent(l) {
 ══════════════════════════════════════ */
 let lang = 'zh';
 let uploadedFile = null;
-let pdfPath = null;
+let pdfBlobUrl = null;
+let pdfFname = '';
 let eventSource = null;
 let navJumping   = false;
 let heroScrollTl = null;
@@ -366,12 +367,6 @@ function togglePanelFullscreen(panelId, btnId){
   }
 }
 function _escHandler(e){ if(e.key==='Escape') document.querySelectorAll('.panel-fullscreen').forEach(p=>{ togglePanelFullscreen(p.id, p.id==='stream-panel'?'log-expand-btn':'pdf-expand-btn'); }); }
-function downloadPdf(){
-  if(!pdfPath){ alert(T('pdfEmpty')); return; }
-  const a = document.createElement('a');
-  a.href=`/api/report/pdf?path=${encodeURIComponent(pdfPath)}&download=1`;
-  a.download=T('pdfFname'); a.click();
-}
 
 /* ══════════════════════════════════════
    历史报告面板
@@ -424,9 +419,8 @@ async function loadReport(id, productName){
     if(!res.ok) throw new Error('HTTP '+res.status);
     const {report, messages}=await res.json();
     currentJobId=id;
-    pdfPath=report.pdf_path||'';
-    if(pdfPath){
-      showPdf(pdfPath, `${productName}_竞品分析报告.pdf`);
+    if(report.pdf_path){
+      showPdf(id, `${productName}_竞品分析报告.pdf`);
     } else {
       if(_pcontent) _pcontent.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'该报告暂无 PDF 文件':'No PDF available for this report'}</p></div>`;
     }
@@ -1450,7 +1444,7 @@ function openSSE(jobId,btn){
       case 'done':
         eventSource.close(); setThink(false); setProgress(100); btn.disabled=false;
         stopTimer();
-        if(msg.pdf_path) showPdf(msg.pdf_path,msg.filename);
+        if(msg.has_pdf) showPdf(currentJobId);
         else{
           const c=$('pdf-content');
           if(c) c.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'报告生成异常，未产出 PDF，请重试':'Report generation failed. Please retry.'}</p></div>`;
@@ -1488,24 +1482,33 @@ async function _tryRecoverReport(jobId){
     const {report}=await res.json();
     if(!report) return;
     setThink(false); setProgress(100); stopTimer();
-    const pdf=report.pdf_path||'';
-    if(pdf) showPdf(pdf, (report.target_product||'report')+'_竞品分析报告.pdf');
+    if(report.pdf_path) showPdf(jobId, (report.target_product||'report')+'_竞品分析报告.pdf');
     showQaBox();
     appendLog('System', lang==='zh'?'SSE 连接中断，已从数据库恢复报告':'SSE disconnected — report recovered from database', false);
   }catch(e){}
 }
 
-function showPdf(path,filename){
-  pdfPath=path;
-  $('pdf-content').innerHTML=`<iframe src="/api/report/pdf?path=${encodeURIComponent(path)}" title="PDF Report" style="width:100%;height:100%;border:none;display:block;"></iframe>`;
-  if(filename) $('pdf-fname').textContent=filename;
+async function showPdf(reportId, fname){
+  pdfFname = fname || '';
+  if(fname) $('pdf-fname').textContent = fname;
+  if(pdfBlobUrl){ URL.revokeObjectURL(pdfBlobUrl); pdfBlobUrl = null; }
+  const c = $('pdf-content');
+  try{
+    // 带 Authorization 头取 PDF 字节（iframe/<a> 发不出自定义头，故走 fetch+blob）
+    const res = await fetch(`/api/report/pdf?report_id=${encodeURIComponent(reportId)}`, {headers:{...authHeaders()}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    pdfBlobUrl = URL.createObjectURL(await res.blob());
+    if(c) c.innerHTML=`<iframe src="${pdfBlobUrl}" title="PDF Report" style="width:100%;height:100%;border:none;display:block;"></iframe>`;
+  }catch(e){
+    if(c) c.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'PDF 加载失败，请重试':'Failed to load PDF, please retry'}</p></div>`;
+  }
 }
 
 function downloadPdf(){
-  if(!pdfPath){ alert(lang==='zh'?'报告尚未生成':'Report not ready yet'); return; }
+  if(!pdfBlobUrl){ alert(lang==='zh'?'报告尚未生成':'Report not ready yet'); return; }
+  const name = (pdfFname || $('pdf-fname')?.textContent || 'report').replace(/\.pdf$/i,'') + '.pdf';
   const a=document.createElement('a');
-  a.href=`/api/report/pdf?path=${encodeURIComponent(pdfPath)}&download=1`;
-  a.download=$('pdf-fname')?.textContent||'report.pdf';
+  a.href=pdfBlobUrl; a.download=name;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
