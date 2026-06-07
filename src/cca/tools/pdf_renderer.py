@@ -61,7 +61,11 @@ def _try_weasyprint(md: str, output_path: Path) -> bool:
             'sup{font-size:8pt;color:#2E86AB;}'
             f'</style></head><body>{body}</body></html>'
         )
-        weasyprint.HTML(string=html).write_pdf(str(output_path))
+        # base_url 必传：图片引用是相对路径 output/charts/*.png（相对 CWD）。
+        # 不给 base_url，weasyprint 无法解析相对 URL，会静默丢弃所有 <img>。
+        # 末尾分隔符不能省，否则 urljoin 会吃掉 CWD 末段。
+        base_url = str(Path.cwd()) + "/"
+        weasyprint.HTML(string=html, base_url=base_url).write_pdf(str(output_path))
         return True
     except (ImportError, OSError):
         return False
