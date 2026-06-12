@@ -151,18 +151,6 @@ print(result["report_pdf_path"])
 
 ---
 
-## 项目截图 / Demo
-
-> 完整运行演示 GIF 待补充
-
-报告样本图表：
-
-| 雷达图（维度竞争力） | 双轴柱状图（评分 vs 评论量） | 定价对比 |
-|---|---|---|
-| ![radar](output/charts/dimension_radar.png) | ![dual](output/charts/rating_review_dual_axis.png) | ![pricing](output/charts/pricing_compare.png) |
-
----
-
 ## 核心特性
 
 - **四 Agent 流水线**：PM 制定计划 → Collector 联网深采集 → Insight 情感分析 → Reporter 生成报告，全程 LangGraph 自动编排
