@@ -1,73 +1,67 @@
-# Dreamcode — AI 竞品分析平台
+# Dreamcode — AI Competitive Analysis Platform
 
-多智能体协同驱动的竞品分析工具：输入目标产品名称，自动完成竞品采集、情感分析、横向对比，生成专业 PDF 报告。
+Dreamcode is a multi-agent platform for automated competitive analysis. Give it a
+target product name and an analysis brief, and a pipeline of cooperating LLM agents
+collects competitor information from the web, runs sentiment analysis on user
+reviews, builds a side-by-side comparison, and produces a professional PDF report.
 
----
+The pipeline is orchestrated with **LangGraph** and served over **FastAPI** with a
+single-page web UI and live SSE streaming of every agent step.
 
-## 技术栈
+### Highlights
 
-| 层 | 技术 |
-|---|---|
-| 后端流程编排 | LangGraph 0.2+ |
-| Web 服务器 | FastAPI + Uvicorn |
-| LLM（规划/报告） | GPT-5（OpenAI 兼容） |
-| LLM（采集/分析） | DeepSeek V4 Pro |
-| LLM（仲裁/终审） | 豆包（火山方舟 Ark） |
-| 联网搜索 | Tavily Search API |
-| 情感分析 | LLM 直接研判正负面 + 主题归纳 |
-| 报告渲染 | WeasyPrint（Linux/Mac）/ ReportLab（Windows）|
-| 前端 | Vanilla JS + HTML/CSS（无框架） |
-
-## 目录结构
-
-```
-Dreamcode/
-├── app/                    # Web 层
-│   ├── server.py           # FastAPI 入口（5 个端点 + SSE）
-│   ├── index.html          # 单页前端
-│   └── static/             # CSS / JS
-├── src/cca/                # 核心 Python 包
-│   ├── agents/             # PM / Collector / Insight / Reporter
-│   ├── tools/              # 搜索 / 图表 / PDF / AppStore 等工具
-│   ├── skills/             # Debate / Reroute / 问卷等可复用技能
-│   ├── llm/                # LLM 客户端工厂与运行时 Key 注入
-│   ├── prompts/            # Agent system prompts（Markdown）
-│   ├── graph.py            # LangGraph 主图编排
-│   ├── schema.py           # Pydantic 领域模型
-│   └── state.py            # LangGraph 共享状态（TypedDict）
-├── scripts/                # 开发脚本
-│   ├── run_server.py       # 启动 FastAPI 服务器
-│   ├── demo/               # 离线 dry-run / demo 运行
-│   └── ...                 # 其他调试脚本
-├── tests/                  # 单元测试（pytest）
-├── docs/                   # 架构文档 / 决策记录
-├── config/config.yaml      # 模型定价 / 任务参数等配置
-└── data/                   # 运行时数据（上传文件 / 缓存）
-```
+- **Four-agent pipeline** — PM plans → Collector searches the web → Insight analyzes
+  sentiment → Reporter writes the report, fully orchestrated by LangGraph.
+- **Cross-model debate** — planning and final review bring in LLMs from different
+  vendors to challenge each other and reduce single-model bias.
+- **Human-in-the-loop** — the run pauses after collection/insight so you can submit
+  free-text revisions; the PM re-plans automatically.
+- **Runtime key injection** — each run uses the caller's own API keys, passed
+  thread-safely via `contextvars`; the server stores no credentials.
+- **Professional PDF output** — SWOT, dimension-competitiveness radar, App Store
+  rating dual-axis charts, pricing comparison, and review-topic summaries.
 
 ---
 
-## 快速开始
+## Getting Started
 
-### 环境要求
+### Dependencies
 
-- Python 3.11+
-- Node.js 18+（仅 AppStore 爬虫脚本需要）
+- **Python 3.11+**
+- **Node.js 18+** — only needed for the optional App Store review scraper
+  (`scripts/node`)
+- A system toolchain for [WeasyPrint](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html)
+  on Linux/macOS (Pango, cairo, etc.). On Windows the report renderer falls back to
+  ReportLab, so WeasyPrint's native libraries are not required.
+- API keys for the LLM and search providers you intend to use:
+  - OpenAI-compatible endpoint (PM / Reporter)
+  - DeepSeek (Collector / Insight)
+  - Doubao / Volcengine Ark (debate judge / final review)
+  - [Tavily](https://app.tavily.com) search API (required)
 
-### 安装
+All Python libraries are declared in `pyproject.toml`. There are no hidden runtime
+dependencies — a clean `pip install` reproduces the full environment.
+
+### Installing
 
 ```bash
 git clone https://github.com/StooneJam/Dreamcode.git
 cd Dreamcode
 
-# 安装 Python 依赖
+# Install the package and its runtime dependencies
+pip install -e .
+
+# Optional: development tooling (ruff, pytest, pre-commit)
 pip install -e ".[dev]"
 
-# 配置环境变量
-cp .env.example .env
+# Configure environment variables
+cp .env.example .env        # then edit .env and fill in your keys
+
+# Optional: App Store scraper (Node.js)
+cd scripts/node && npm install && cd ../..
 ```
 
-编辑 `.env`，填入以下 Key（离线 demo 模式必填，前端注入模式可选）：
+Minimum `.env` keys (also injectable per-run from the web UI):
 
 ```env
 OPENAI_API_KEY=sk-...
@@ -78,52 +72,26 @@ DEEPSEEK_MODEL=deepseek-v4-pro
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 DOUBAO_API_KEY=...
-DOUBAO_MODEL=ep-20260514111325-xjmj7
+DOUBAO_MODEL=ep-...
 DOUBAO_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 
 TAVILY_API_KEY=tvly-...
 ```
 
-### 启动服务器
+### Executing the program
+
+**Run the web server (recommended):**
 
 ```bash
-python scripts/run_server.py
-# 默认监听 http://localhost:8000
-# 可指定端口：python scripts/run_server.py --port 8080
+python scripts/run_server.py            # serves http://localhost:8000
+python scripts/run_server.py --port 8080
 ```
 
-浏览器打开 `http://localhost:8000` 即可使用前端界面。
+Open the URL in a browser, fill in the target product and analysis brief, supply
+the API keys, and watch the agents stream their progress. The finished PDF report
+is displayed on the right when the run completes.
 
-### 离线 Demo（不启动服务器）
-
-```bash
-# 完整流程 dry-run（使用 .env Key）
-python scripts/demo/dry_run.py
-
-# 仅跑 Reporter（已有 profiles 数据时）
-python scripts/run_report_agent.py
-```
-
----
-
-## 使用指南
-
-### 通过 Web 界面
-
-1. 在「开始分析」表单填写目标产品名称和分析需求（可选上传参考文档 PDF/Word）
-2. 点击「开始分析」后配置 API Key：
-
-   | 槽位 | 对应 Agent | Key 来源 |
-   |---|---|---|
-   | GPT-5 槽位 | PM Agent · Reporter | OpenAI 或兼容接口 |
-   | DeepSeek 槽位 | Collector · Insight | DeepSeek API |
-   | Doubao 槽位 | Debate Judge · 终审 | 火山方舟 Ark |
-
-   Tavily Search Key 必填（[免费申请](https://app.tavily.com)）。三个 AI 槽位至少填一个，填多个不同厂商的 Key 可启用跨模型协作。
-
-3. 提交后日志面板实时展示 Agent 运行状态，完成后 PDF 报告自动展示在右侧。
-
-### 通过 Python API 直接调用
+**Run offline (no server) via the Python API:**
 
 ```python
 from cca.graph import build_graph, empty_state
@@ -132,8 +100,8 @@ from cca.tools.search import use_tavily_key
 
 graph = build_graph(checkpointer=None)
 state = empty_state(
-    user_query="分析飞书与钉钉、Slack 的视频会议功能差异和定价策略",
-    target_product="飞书",
+    user_query="Compare Feishu's video-meeting features and pricing against DingTalk and Slack",
+    target_product="Feishu",
 )
 
 creds = {
@@ -142,34 +110,63 @@ creds = {
                               base_url="https://api.deepseek.com"),
 }
 
-with use_credentials(creds):
-    with use_tavily_key("tvly-..."):
-        result = graph.invoke(state)
+with use_credentials(creds), use_tavily_key("tvly-..."):
+    result = graph.invoke(state)
 
 print(result["report_pdf_path"])
 ```
 
----
+**Other entry points:**
 
-## 核心特性
-
-- **四 Agent 流水线**：PM 制定计划 → Collector 联网深采集 → Insight 情感分析 → Reporter 生成报告，全程 LangGraph 自动编排
-- **跨模型辩论（Debate）**：PM 规划、报告终审阶段引入多家族 LLM 相互质疑，减少单一模型自我偏好
-- **人在环审查（Human-in-the-Loop）**：Collector + Insight 完成后暂停，用户可提交自由文本修订意见，PM 自动解析并重新规划
-- **运行时 Key 注入**：每次分析使用用户自己的 API Key，服务器不存储任何凭证，通过 `contextvars` 线程安全传递
-- **信号路由 / 自动重跑**：Agent 发现数据缺口时向 PM 发 Signal，触发定向补采，最多 2 轮防死循环
-- **SSE 流式日志**：分析过程实时推送到前端，工具调用、思考过程、PM 评审结果逐步可见
-- **专业 PDF 报告**：包含 SWOT 分析、维度竞争力雷达图、App Store 评分双轴对比、定价横向比较、用户评价主题汇总
+```bash
+python scripts/demo/dry_run.py          # full pipeline dry-run using .env keys
+python scripts/run_report_agent.py      # run only the Reporter on existing profiles
+pytest                                  # run the test suite (no real API calls)
+```
 
 ---
 
-## 鸣谢与联系方式
+## Project Structure
 
-- [LangGraph](https://github.com/langchain-ai/langgraph) — 多 Agent 图编排框架
-- [FastAPI](https://fastapi.tiangolo.com) — 异步 Web 框架
-- [Tavily](https://tavily.com) — 专为 AI Agent 设计的搜索 API
-- [DeepSeek](https://deepseek.com) / [OpenAI](https://openai.com) / [ByteDance Doubao](https://www.volcengine.com/product/doubao)
+```
+Dreamcode/
+├── app/                       # Web layer
+│   ├── server.py              # FastAPI entrypoint (endpoints + SSE streaming)
+│   ├── index.html             # Single-page front end
+│   └── static/                # CSS / JS
+├── src/cca/                   # Core Python package
+│   ├── agents/                # PM / Collector / Insight / Reporter + Q&A
+│   ├── tools/                 # search, charts, PDF rendering, App Store, etc.
+│   ├── skills/                # reusable skills (debate, reroute, questionnaire)
+│   ├── llm/                   # LLM client factory + runtime key injection
+│   ├── prompts/               # agent system prompts (Markdown)
+│   ├── auth/                  # SMS OTP authentication
+│   ├── store/                 # SQLite persistence for reports and Q&A
+│   ├── memory/                # ReAct result cache
+│   ├── observability/         # tracing / audit helpers
+│   ├── graph.py               # LangGraph orchestration graph
+│   ├── schema.py              # Pydantic domain models
+│   └── state.py               # LangGraph shared state (TypedDict)
+├── scripts/                   # Dev / runner scripts
+│   ├── run_server.py          # launch the FastAPI server
+│   ├── run_report_agent.py    # run the Reporter standalone
+│   ├── demo/                  # offline dry-run / demo runners
+│   └── node/                  # Node.js App Store review scraper
+├── tests/                     # pytest unit tests (use a FakeLLM, never real APIs)
+├── docs/                      # architecture docs / decision records
+├── config/config.yaml         # model pricing / task parameters
+└── data/                      # runtime data (uploads, cache, memory, examples)
+```
 
-**团队**：StooneJam · BAbykiller322
+---
 
-Issues 与建议请提交至 [GitHub Issues](https://github.com/StooneJam/Dreamcode/issues)。
+## Acknowledgements
+
+- [LangGraph](https://github.com/langchain-ai/langgraph) — multi-agent orchestration
+- [FastAPI](https://fastapi.tiangolo.com) — async web framework
+- [Tavily](https://tavily.com) — search API built for AI agents
+- [DeepSeek](https://deepseek.com) / [OpenAI](https://openai.com) / [Doubao](https://www.volcengine.com/product/doubao)
+
+**Team**: StooneJam · BAbykiller322
+
+Issues and suggestions are welcome at [GitHub Issues](https://github.com/StooneJam/Dreamcode/issues).

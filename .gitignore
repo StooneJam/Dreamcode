@@ -2,11 +2,15 @@
 .cursor/
 .vscode/
 .idea/
+
+# 中文 README（仅本地，不随开源发布）
+README.zh.md
 评分标准.png
 1111.md
 devlog_*.md
 晚间修改日志.md
 PROJECT_STORY.md
+二、材料清单.md
 
 .env
 .env.local
