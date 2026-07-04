@@ -1,7 +1,8 @@
-"""Collector 专用 @tool。phase 1：finalize_exploration / challenge_pm；
-phase 2：finalize_profile / request_product_replacement。
+"""Collector-specific @tools. Phase 1: finalize_exploration / challenge_pm;
+phase 2: finalize_profile / request_product_replacement.
 
-from_agent 硬编码为 "collector"。ChallengePayload.evidence min_length=1，零证据会被 Pydantic 拒。
+from_agent is hardcoded to "collector". ChallengePayload.evidence has min_length=1,
+so zero evidence is rejected by Pydantic.
 """
 from __future__ import annotations
 
@@ -23,28 +24,32 @@ def _now() -> str:
 
 
 def _valid_evidence(ev: dict | None) -> bool:
-    """Evidence 至少要有 source_url，否则 Pydantic 校验会拒。"""
+    """Evidence needs at least a source_url, or Pydantic validation rejects it."""
     return isinstance(ev, dict) and bool(ev.get("source_url"))
 
 
 def _clean_profile(raw: dict) -> dict:
-    """主动清洗 LLM 常见 schema 偏差，让 Pydantic validate 通过率更高。
+    """Proactively clean common LLM schema deviations to raise the Pydantic validate pass rate.
 
-    清洗规则（保持其余字段不动）：
-    1. dimensions[].facts[].evidence[] 删除缺 source_url 的项；evidence 列表清空后整条 Fact 删除
-    2. dimensions[] 清完后若 facts 为空也保留（Pydantic 允许，但 cross_product_note 可能没意义）
-    3. pricing.tiers[].source 若 dict 且缺 source_url → 置 None
-    4. sources[] 删除缺 source_url 的项
-    5. sentiment.sources[] 同样清洗；sentiment.representative_reviews[].source 同 tier.source 处理
-    6. **自动从 dimensions/pricing 的 evidence 聚合 URL 补到 ProductProfile.sources** ——
-       LLM 经常漏填顶层 sources，工具兜底确保不为空（不依赖 LLM 自觉）。
+    Cleaning rules (all other fields untouched):
+    1. dimensions[].facts[].evidence[] drops entries missing source_url; a Fact whose evidence list becomes empty is dropped entirely
+    2. after cleaning, a dimensions[] entry with empty facts is still kept (Pydantic allows it, though cross_product_note may not make sense)
+    3. pricing.tiers[].source, if a dict missing source_url, is set to None
+    4. sources[] drops entries missing source_url
+    5. sentiment.sources[] cleaned the same way; sentiment.representative_reviews[].source handled like tier.source
+    6. **automatically aggregates URLs from dimensions/pricing evidence into
+       ProductProfile.sources** -- the LLM often skips the top-level sources field,
+       so the tool backfills it to guarantee it's non-empty (doesn't rely on the LLM remembering)
     """
     for dim in raw.get("dimensions") or []:
         cleaned_facts = []
         for fact in dim.get("facts") or []:
-            # 模型把事实正文放在五花八门的 key（实测豆包用过 content/value/snippet…），schema 要
-            # statement。不维护别名白名单（换产品永远漏下一个）；直接取除 evidence 外最长的字符串
-            # 当正文——事实正文通常最长，泛化到任意 key，配合返错自愈彻底不 husk。
+            # the model puts the fact's body under all sorts of keys (Doubao has used
+            # content/value/snippet...) when the schema wants statement. Rather than
+            # maintain an alias whitelist (always missing one for the next product),
+            # just take the longest string field other than evidence as the body --
+            # the fact body is usually the longest, generalizes to any key, and
+            # pairs with error-driven self-repair so nothing gets silently dropped.
             if not fact.get("statement"):
                 cands = [v for k, v in fact.items() if k != "evidence" and isinstance(v, str) and v]
                 if cands:
@@ -74,8 +79,8 @@ def _clean_profile(raw: dict) -> dict:
 
 
 def _autofill_sources(raw: dict) -> None:
-    """从 dimensions.facts.evidence 和 pricing.tiers.source 聚合 URL 到 raw['sources']。
-    去重 + 保留 LLM 已填的项。原地修改 raw。"""
+    """Aggregate URLs from dimensions.facts.evidence and pricing.tiers.source into raw['sources'].
+    Dedupes + keeps whatever the LLM already filled in. Modifies raw in place."""
     existing_urls = {s["source_url"] for s in raw.get("sources") or [] if _valid_evidence(s)}
     new_sources: list[dict] = list(raw.get("sources") or [])
 
@@ -86,10 +91,10 @@ def _autofill_sources(raw: dict) -> None:
         if url in existing_urls:
             return
         existing_urls.add(url)
-        # 顶层 sources 不重复存 snippet（dimension 内已经带了），保留 url + fetched_at
+        # top-level sources doesn't duplicate the snippet (already in the dimension); keeps url + fetched_at
         entry: dict = {"source_url": url, "snippet": None}
         if fetched_at := ev.get("fetched_at"):
-            entry["fetched_at"] = fetched_at  # 否则 Pydantic default_factory=_now_iso 兜底
+            entry["fetched_at"] = fetched_at  # otherwise Pydantic's default_factory=_now_iso covers it
         new_sources.append(entry)
 
     for dim in raw.get("dimensions") or []:
@@ -104,13 +109,14 @@ def _autofill_sources(raw: dict) -> None:
 
 @tool
 def finalize_exploration(result_json: str) -> str:
-    """提交一轮探索结论，结束 ReAct 循环。完成调研后**必须调用一次**。
+    """Submit the round-one exploration conclusion, ending the ReAct loop. Must be called once after research is done.
 
     Args:
-        result_json: 符合 CollectorExplorationResult schema 的 JSON。字段：
-            target_product / product_type（联网推断）/ competitor_names（3-5 家）/
-            discovered_dimensions / initial_profiles（含 product_name / company / website / product_type）；
-            可选 rationale，说明选择依据；**fetch_url 失败时务必在此说明换向原因**。
+        result_json: JSON matching the CollectorExplorationResult schema. Fields:
+            target_product / product_type (inferred online) / competitor_names (3-5) /
+            discovered_dimensions / initial_profiles (with product_name / company /
+            website / product_type); optional rationale explaining the choices --
+            **if fetch_url failed, explain the pivot reason here**.
     """
     obj, err = safe_load_validate(result_json, CollectorExplorationResult)
     if err:
@@ -125,10 +131,11 @@ def challenge_pm(
     suggested_fix: str | None = None,
     requires_debate: bool = False,
 ) -> str:
-    """挑战 PM 的 InitialBrief。
+    """Challenge PM's InitialBrief.
 
-    事实性错误（company_hint 错 / 产品停服）传 requires_debate=False；
-    主观分歧（target_product 合理性）传 True。evidence 至少 1 条。
+    Pass requires_debate=False for factual errors (wrong company_hint / product
+    discontinued); True for subjective disagreements (target_product's
+    reasonableness). evidence needs at least 1 entry.
     """
     signal = AgentSignal(
         from_agent="collector", kind="pm_challenge", target="initial_brief",
@@ -139,9 +146,11 @@ def challenge_pm(
 
 
 def _submit_receipt(profile: ProductProfile) -> tuple[str, dict]:
-    """构造 finalize_profile 返回：模型只看到 content（成功+停止），profile 走 artifact 暗channel。
+    """Build finalize_profile's return: the model only sees content (success + stop
+    instruction); the profile travels through the artifact side-channel.
 
-    content 只给模型看停止指令；profile 经 artifact 回传，collect_one_product 据此入库。
+    content only shows the model a stop instruction; the profile comes back via
+    artifact, which collect_one_product uses to persist it.
     """
     content = (
         f"提交成功：{profile.product_name} ProductProfile 已入库"
@@ -154,20 +163,25 @@ def _submit_receipt(profile: ProductProfile) -> tuple[str, dict]:
 
 @tool(response_format="content_and_artifact")
 def finalize_profile(product_name: str, profile_json: str) -> tuple[str, dict]:
-    """提交单产品 ProductProfile，结束当前产品 ReAct 循环。每个 CollectTask 完成后**必须调用一次**。
+    """Submit a single product's ProductProfile, ending this product's ReAct loop.
+    Must be called once after every CollectTask is done.
 
-    Collector 该填字段：product_name / product_type / target_users / website /
-    dimensions（每个 Dimension.facts 每条 Fact.evidence min_length=1，每条 Evidence 是含
-    source_url 的对象，不要直接填 URL 字符串）/ pricing（tiers[].source 同样是含 source_url 的对象）/
-    sources。**不要**填 sentiment（Insight owner）。
+    Fields Collector should fill: product_name / product_type / target_users /
+    website / dimensions (each Dimension.facts needs each Fact.evidence with
+    min_length=1, each Evidence an object with source_url, not a bare URL string) /
+    pricing (tiers[].source likewise an object with source_url) / sources.
+    **Don't** fill sentiment (Insight owns that).
 
-    工具会主动归一常见错填（裸 URL 串 / {url:...} 自动补成 {source_url:...}；无 source_url 的
-    Evidence 才剔除；无证据的 Fact 才剔除）。清洗后仍不合规会返错误字符串带字段路径，ReAct 自修重试。
+    The tool proactively normalizes common mistakes (a bare URL string / {url:...}
+    auto-fills to {source_url:...}; only an Evidence truly missing source_url gets
+    dropped; only a Fact truly missing evidence gets dropped). If it's still invalid
+    after cleanup, an error string with the field path is returned for ReAct to self-correct.
     """
     def _clean(d: dict) -> dict:
-        # 先归一裸 URL / {url} → {source_url}（豆包高频错填），再走既有清洗
+        # first normalize a bare URL / {url} -> {source_url} (Doubao's frequent mistake), then run the existing cleanup
         d = repair_llm_json(d)
-        # 无论模型是否传入 product_name，都用外层参数覆盖，避免 Field required 循环
+        # overwrite with the outer parameter regardless of whether the model passed
+        # product_name, to avoid a Field-required loop
         d = _clean_profile(d)
         d["product_name"] = product_name
         return d
@@ -185,7 +199,9 @@ def finalize_profile(product_name: str, profile_json: str) -> tuple[str, dict]:
     )
     if not err:
         return _submit_receipt(profile)
-    # 放松后 schema 几乎只在类型错 / 截断不可救时失败：返错让模型自修重试（不再静默剥字段）
+    # after relaxing the schema, failures are almost always a type error or
+    # unrecoverable truncation: return the error for the model to self-correct
+    # (fields are no longer silently stripped)
     return err, {"profile": None}
 
 
@@ -195,10 +211,12 @@ def request_product_replacement(
     reason: str,
     evidence: list[str],
 ) -> str:
-    """CollectTask 指定的产品完全无法采集时，向 PM 申请换产品（事实性 data_gap 信号）。
+    """When a CollectTask's product is completely uncollectable, request a
+    replacement from PM (a factual data_gap signal).
 
-    适用：联网搜不到 / 官网 404 / 商店下架 / fetch 配额耗尽。
-    主观"觉得不够格"不在此——那是 phase 1 challenge_pm 的事。
+    Applies to: not findable online / official site 404s / delisted from the store /
+    fetch quota exhausted. Subjective "doesn't feel like it qualifies" doesn't belong
+    here -- that's phase 1's challenge_pm.
     """
     signal = AgentSignal(
         from_agent="collector", kind="data_gap", target="task_plan",

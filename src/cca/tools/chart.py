@@ -1,4 +1,4 @@
-"""Report Agent 图表渲染工具。"""
+"""Report Agent's chart rendering tools."""
 from __future__ import annotations
 
 import json
@@ -7,9 +7,9 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-# Windows：numpy/torch 带入 Intel OpenMP (libiomp5md.dll)，matplotlib 带入 LLVM OpenMP
-# (libomp.dll)，两者在同一进程内均初始化会导致 OMP Error #15 / exit code 3。
-# setdefault 仅在未设置时写入，不覆盖用户的显式配置。
+# Windows: numpy/torch bring in Intel OpenMP (libiomp5md.dll), matplotlib brings in
+# LLVM OpenMP (libomp.dll); both initializing in the same process causes OMP Error
+# #15 / exit code 3. setdefault only sets it if unset, never overriding an explicit user config.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 _CHART_DIR = Path("output/charts")
@@ -29,7 +29,8 @@ def _fmt_num(v: float) -> str:
 
 
 def _plot_value(v: float | None) -> float:
-    """缺失值 → nan，让 matplotlib 自然留缺口（柱不画、折线断开），不伪装成 0。"""
+    """A missing value -> nan, letting matplotlib naturally leave a gap (no bar, a
+    broken line) instead of faking it as 0."""
     return float("nan") if v is None else float(v)
 
 
@@ -39,7 +40,8 @@ def _apply_style() -> None:
     import matplotlib.font_manager as fm
     import matplotlib.pyplot as plt
 
-    # 动态注册 CJK 字体并获取实际注册名，避免名字匹配失败导致回退到 DejaVu Sans
+    # dynamically register a CJK font and get its actual registered name, to avoid
+    # a name mismatch falling back to DejaVu Sans
     detected: list[str] = []
     for p in _CJK_FONT_CANDIDATES:
         if Path(p).exists():
@@ -96,41 +98,41 @@ def _render_chart_impl(chart_type: str, title: str, data_json: str, filename: st
 
 @tool
 def render_chart(chart_type: str, title: str, data_json: str, filename: str) -> str:
-    """生成专业图表，返回 Markdown 图片引用字符串。
+    """Generate a professional chart, returning a Markdown image reference string.
 
-    chart_type 可选值：
-    - "bar"            单系列垂直柱状图
-    - "horizontal_bar" 水平柱状图，适合标签较长的对比
-    - "grouped_bar"    多系列分组柱状图，适合多产品多维度横向对比
-    - "dual_axis_bar"  双轴柱状图，左轴大量级（如评论量），右轴小量级（如评分）
-    - "line"           折线图，适合趋势展示
-    - "area"           面积图，适合趋势+量级对比
-    - "pie"            饼图，适合市场占比展示
-    - "radar"          雷达图，强烈推荐用于竞品多维度能力对比
+    chart_type options:
+    - "bar"            single-series vertical bar chart
+    - "horizontal_bar" horizontal bar chart, good for longer labels
+    - "grouped_bar"    multi-series grouped bar chart, good for multi-product multi-dimension comparison
+    - "dual_axis_bar"  dual-axis bar chart, left axis for large magnitudes (e.g. review count), right for small (e.g. rating)
+    - "line"           line chart, good for showing trends
+    - "area"           area chart, good for trend + magnitude comparison
+    - "pie"            pie chart, good for market share
+    - "radar"          radar chart, strongly recommended for multi-dimension competitor comparison
 
-    data_json 格式（JSON 字符串）：
+    data_json format (a JSON string):
     - bar / horizontal_bar / line / area / pie:
-      {"labels": ["钉钉","企业微信"], "values": [4.2, 3.9]}
+      {"labels": ["DingTalk","WeCom"], "values": [4.2, 3.9]}
     - grouped_bar:
-      {"labels": ["功能","定价","易用性"],
-       "series": {"钉钉": [4,3,4], "企业微信": [3,5,4]}}
+      {"labels": ["Features","Pricing","Usability"],
+       "series": {"DingTalk": [4,3,4], "WeCom": [3,5,4]}}
     - dual_axis_bar:
-      {"labels": ["飞书","钉钉","企业微信"],
-       "left":  {"name": "评论量（条）", "values": [85000, 210000, 95000]},
-       "right": {"name": "App Store 评分", "values": [4.6, 4.4, 4.2]}}
+      {"labels": ["Feishu","DingTalk","WeCom"],
+       "left":  {"name": "Review count", "values": [85000, 210000, 95000]},
+       "right": {"name": "App Store rating", "values": [4.6, 4.4, 4.2]}}
     - radar:
-      {"labels": ["功能","生态","定价","易用","稳定"],
-       "series": {"钉钉": [4,5,3,4,4], "企业微信": [3,4,5,4,3]},
+      {"labels": ["Features","Ecosystem","Pricing","Usability","Stability"],
+       "series": {"DingTalk": [4,5,3,4,4], "WeCom": [3,4,5,4,3]},
        "max_value": 5}
 
     Returns:
-        Markdown 图片嵌入字符串，可直接粘贴到报告正文。
+        A Markdown image-embed string, ready to paste directly into the report body.
     """
     return _render_chart_impl(chart_type, title, data_json, filename)
 
 
 def _cjk_font_path() -> str | None:
-    """词云渲染中文必须显式给字体；按优先级找系统 CJK 字体。"""
+    """Rendering Chinese word clouds requires an explicit font; searches system CJK fonts by priority."""
     candidates = ["msyh.ttc", "simhei.ttf", "simsun.ttc"]
     fonts_dir = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
     for name in candidates:
@@ -142,18 +144,20 @@ def _cjk_font_path() -> str | None:
 
 @tool
 def render_wordcloud(title: str, word_freq_json: str, filename: str) -> str:
-    """生成词云 PNG，返回 Markdown 图片引用字符串。
+    """Generate a word-cloud PNG, returning a Markdown image reference string.
 
-    用于可视化用户评论高频词，比柱状图更直观地呈现口碑焦点。
+    Used to visualize frequent terms from user reviews, showing sentiment focal
+    points more intuitively than a bar chart.
 
     Args:
-        title: 词云标题，如 "钉钉用户好评词云"。
-        word_freq_json: JSON 对象字符串 {"词": 权重}，直接取自 profile 的
-            sentiment.positive_word_freq 或 negative_word_freq，不要自己编词频。
-        filename: 输出文件名，不含扩展名。
+        title: word-cloud title, e.g. "DingTalk positive review word cloud".
+        word_freq_json: a JSON object string {"word": weight}, taken directly from
+            the profile's sentiment.positive_word_freq or negative_word_freq -- don't
+            make up word frequencies yourself.
+        filename: output filename, no extension.
 
     Returns:
-        Markdown 图片嵌入字符串；词频为空时返回提示文本（不出图）。
+        A Markdown image-embed string; returns a hint message instead of an image if word_freq is empty.
     """
     freq = json.loads(word_freq_json)
     if not freq:
@@ -180,18 +184,19 @@ def render_wordcloud(title: str, word_freq_json: str, filename: str) -> str:
 
 @tool
 def render_bar_chart(title: str, categories: str, values: str, filename: str) -> str:
-    """生成柱状图，返回可直接嵌入 Markdown 的图片引用字符串。
+    """Generate a bar chart, returning a Markdown-embeddable image reference string.
 
-    在需要跨竞品对比数值型指标时调用，例如 AppStore 评分对比、定价对比。
+    Call this when comparing a numeric metric across competitors, e.g. App Store
+    rating comparison, pricing comparison.
 
     Args:
-        title: 图表标题。
-        categories: JSON 数组字符串，每个元素对应一根柱子的标签。
-        values: JSON 数组字符串，数值与 categories 一一对应。
-        filename: 输出文件名，不含扩展名。
+        title: chart title.
+        categories: a JSON array string, each element labels one bar.
+        values: a JSON array string, values matching categories one-to-one.
+        filename: output filename, no extension.
 
     Returns:
-        Markdown 图片嵌入字符串。
+        A Markdown image-embed string.
     """
     data_json = json.dumps({"labels": json.loads(categories), "values": json.loads(values)})
     return _render_chart_impl("bar", title, data_json, filename)
@@ -321,7 +326,7 @@ def _pie(title: str, data: dict) -> "plt.Figure":
 
 
 def _dual_axis_bar(title: str, data: dict) -> "plt.Figure":
-    """左轴柱状（大量级），右轴折线+点（小量级）。"""
+    """Left axis is bars (large magnitude), right axis is a line+markers (small magnitude)."""
     import numpy as np
     import matplotlib.pyplot as plt
     labels: list[str] = data["labels"]
@@ -339,7 +344,8 @@ def _dual_axis_bar(title: str, data: dict) -> "plt.Figure":
     left_vals = [_plot_value(v) for v in left["values"]]
     bars = ax1.bar(x, left_vals, width, color=_PALETTE[0],
                    edgecolor="white", linewidth=1.5, label=left["name"], alpha=0.85)
-    # 缺失（None→nan）不画柱、不标 0；标签留空，缺口下面单独标「数据缺失」
+    # missing (None->nan) draws no bar and no 0 label; the label is left blank, with
+    # a separate "data missing" annotation under the gap
     bar_labels = ["" if not np.isfinite(v) else f"{int(round(v))}" for v in left_vals]
     ax1.bar_label(bars, labels=bar_labels, padding=5, fontsize=9, fontweight="bold")
     ax1.set_ylabel(left["name"], color=_PALETTE[0], fontsize=11)
@@ -367,7 +373,8 @@ def _dual_axis_bar(title: str, data: dict) -> "plt.Figure":
         ax2.set_ylim(max(0, rmin - margin), rmax + margin)
     ax2.spines["top"].set_visible(False)
 
-    # 评分与评论量都缺的类目在基线标「数据缺失」，替代误导性的 0 柱
+    # a category missing both rating and review count gets a "data missing" label at
+    # the baseline instead of a misleading 0 bar
     for xi, lv, rv in zip(x, left_vals, right_vals):
         if not np.isfinite(lv) and not np.isfinite(rv):
             ax1.annotate("数据缺失", (xi, top * 0.02), ha="center", va="bottom",

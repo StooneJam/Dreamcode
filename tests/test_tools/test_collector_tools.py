@@ -1,4 +1,4 @@
-"""测试 collector_tools：finalize_exploration 校验 schema，challenge_pm 构造 AgentSignal。"""
+"""Tests for collector_tools: finalize_exploration's schema validation, challenge_pm's AgentSignal construction."""
 from __future__ import annotations
 
 import json
@@ -29,10 +29,10 @@ def test_finalize_exploration_accepts_valid_schema() -> None:
 
 
 def test_finalize_exploration_returns_error_on_missing_required_field() -> None:
-    """缺 competitor_names 等 required 字段 → 返回 LLM-friendly 错误字符串（不 raise）。"""
+    """Missing required fields like competitor_names -> returns an LLM-friendly error string (doesn't raise)."""
     from cca.tools.collector_tools import finalize_exploration
 
-    invalid = json.dumps({"target_product": "飞书"})  # 缺 product_type / competitor_names / ...
+    invalid = json.dumps({"target_product": "飞书"})  # missing product_type / competitor_names / ...
     result = finalize_exploration.invoke({"result_json": invalid})
     assert "CollectorExplorationResult 校验失败" in result
 
@@ -58,7 +58,7 @@ def test_challenge_pm_constructs_collector_signal() -> None:
 
 
 def test_challenge_pm_rejects_empty_evidence() -> None:
-    """ChallengePayload 强制 evidence min_length=1，零证据挑战被拒。"""
+    """ChallengePayload enforces evidence min_length=1; a zero-evidence challenge is rejected."""
     from cca.tools.collector_tools import challenge_pm
 
     with pytest.raises(ValidationError):
@@ -77,11 +77,11 @@ def test_challenge_pm_requires_debate_flag_propagates() -> None:
     assert signal["requires_debate"] is True
 
 
-# ── Phase 2 工具 ───────────────────────────────────────────────────────
+# ── Phase 2 tools ────────────────────────────────────────────────────
 
 
 def _valid_profile_json(product_name: str = "钉钉") -> str:
-    """构造一个最小可通过 ProductProfile 校验的 JSON。"""
+    """Build the minimal JSON that passes ProductProfile validation."""
     return json.dumps({
         "product_name": product_name,
         "company": "阿里巴巴",
@@ -95,7 +95,7 @@ def _valid_profile_json(product_name: str = "钉钉") -> str:
 
 
 def _finalize(product_name: str, profile_json: str):
-    """用 ToolCall 形式 invoke，拿到带 .artifact 的 ToolMessage（content 只给模型看停止指令）。"""
+    """Invoke in ToolCall form, getting back a ToolMessage with .artifact (content only shows the model a stop instruction)."""
     from cca.tools.collector_tools import finalize_profile
 
     return finalize_profile.invoke({
@@ -112,7 +112,8 @@ def test_finalize_profile_accepts_valid_schema() -> None:
 
 
 def test_finalize_profile_content_tells_model_to_stop() -> None:
-    """模型只看 content：必须是成功+停止指令，绝不能回显 profile JSON（防 859da7c 死循环回归）。"""
+    """The model only sees content: it must be a success+stop instruction, never
+    echoing back the profile JSON (guards against the 859da7c infinite-loop regression)."""
     from cca.tools.collector_tools import finalize_profile
 
     content = finalize_profile.invoke({  # invoke(dict) 返回 content 字符串本身
@@ -123,26 +124,27 @@ def test_finalize_profile_content_tells_model_to_stop() -> None:
 
 
 def test_finalize_profile_overrides_mismatched_product_name() -> None:
-    """profile_json 里的 product_name 跟参数不一致 → 以参数为准（防 LLM 拼错）。"""
-    msg = _finalize("钉钉", _valid_profile_json("DingTalk"))  # 不一致
+    """The product_name inside profile_json disagrees with the argument -> the argument wins (guards against LLM typos)."""
+    msg = _finalize("钉钉", _valid_profile_json("DingTalk"))  # mismatched
     assert msg.artifact["profile"]["product_name"] == "钉钉"
 
 
 def test_finalize_profile_returns_error_string_on_invalid_schema() -> None:
-    """schema 校验失败时返回错误字符串（不 raise），让 LLM 看到 ToolMessage 自修。
+    """When schema validation fails, returns an error string (doesn't raise), so the
+    LLM sees the ToolMessage and self-corrects.
 
-    create_react_agent 里抛异常会中断 ReAct loop，所以走返回值路径。
+    Raising inside create_react_agent would abort the ReAct loop, hence the return-value path.
     """
     from cca.tools.collector_tools import finalize_profile
 
-    invalid = json.dumps({"product_name": "X", "product_type": 12345})  # type 错
+    invalid = json.dumps({"product_name": "X", "product_type": 12345})  # wrong type
     result = finalize_profile.invoke({"product_name": "X", "profile_json": invalid})
     assert "ProductProfile 校验失败" in result
     assert "字段规则提示" in result
 
 
 def test_finalize_profile_cleans_evidence_missing_source_url() -> None:
-    """Evidence 缺 source_url 是 LLM 常见偏差；本工具应剔除而非阻断整个产品。"""
+    """Evidence missing source_url is a common LLM mistake; this tool should drop it, not block the whole product."""
     raw = {
         "product_name": "Y",
         "product_type": "SaaS",
@@ -155,33 +157,35 @@ def test_finalize_profile_cleans_evidence_missing_source_url() -> None:
         }],
         "sources": [
             {"source_url": "https://ok.com"},
-            {"snippet": "no url"},  # 应被剔除
+            {"snippet": "no url"},  # should be dropped
         ],
     }
     profile = _finalize("Y", json.dumps(raw)).artifact["profile"]
-    assert len(profile["dimensions"][0]["facts"]) == 1  # 缺 url fact 被剔
-    assert len(profile["sources"]) == 1                 # 缺 url sources 项被剔
+    assert len(profile["dimensions"][0]["facts"]) == 1  # the fact missing url is dropped
+    assert len(profile["sources"]) == 1                 # the sources entry missing url is dropped
 
 
 def test_finalize_profile_keeps_dimensions_when_category_missing() -> None:
-    """放松后：dimension 漏 category（本次 husk 元凶）不再毁掉整段 dimensions，原样入库。"""
+    """After relaxing: a dimension missing category (the culprit behind this incident's data loss) no longer wipes out the whole dimensions block; it's stored as-is."""
     raw = {
         "product_name": "W",
         "product_type": "SaaS",
         "dimensions": [{
-            "name": "AI",  # 故意漏 category
+            "name": "AI",  # category deliberately omitted
             "facts": [{"statement": "F", "evidence": [{"source_url": "https://a.com"}]}],
         }],
     }
     msg = _finalize("W", json.dumps(raw))
     assert "提交成功" in msg.content
-    assert len(msg.artifact["profile"]["dimensions"]) == 1     # 维度保住，不再 husk
+    assert len(msg.artifact["profile"]["dimensions"]) == 1     # the dimension is kept, no longer lost
     assert msg.artifact["profile"]["dimensions"][0]["category"] == ""
 
 
 def test_finalize_profile_normalizes_fact_text_under_any_key() -> None:
-    """模型把事实正文放在任意非 statement key（content/value/snippet/没见过的 key）→ 取最长字符串
-    归一到 statement，保住正文不 husk。不靠别名白名单，换产品也泛化。"""
+    """The model puts a fact's body under any non-statement key
+    (content/value/snippet/an unseen key) -> the longest string is taken and
+    normalized into statement, preserving the body instead of losing it. Doesn't
+    rely on an alias whitelist, so it generalizes across products."""
     long = "这是一段足够长的事实正文描述用于被识别为 statement"
     raw = {
         "product_name": "V",
@@ -198,12 +202,12 @@ def test_finalize_profile_normalizes_fact_text_under_any_key() -> None:
     }
     profile = _finalize("V", json.dumps(raw)).artifact["profile"]
     facts = profile["dimensions"][0]["facts"]
-    assert len(facts) == 4                                  # 4 条都没被当成空 fact 丢掉
-    assert all(long in f["statement"] for f in facts)       # 任意 key 的正文都被归一回 statement
+    assert len(facts) == 4                                  # all 4 survive, none dropped as an empty fact
+    assert all(long in f["statement"] for f in facts)       # the body under any key is normalized back into statement
 
 
 def test_finalize_profile_coerces_invalid_pricing_model() -> None:
-    """放松后：非法 pricing_model 归 unknown，pricing 整段保住，不再被剥。"""
+    """After relaxing: an invalid pricing_model is normalized to unknown, and the whole pricing block is kept instead of stripped."""
     raw = {
         "product_name": "W",
         "product_type": "SaaS",
@@ -237,7 +241,7 @@ def test_request_product_replacement_constructs_data_gap_signal() -> None:
 
 
 def test_request_product_replacement_rejects_empty_evidence() -> None:
-    """ChallengePayload 强制 evidence min_length=1；空 evidence 应被拒。"""
+    """ChallengePayload enforces evidence min_length=1; empty evidence should be rejected."""
     from cca.tools.collector_tools import request_product_replacement
 
     with pytest.raises(ValidationError):
@@ -249,8 +253,8 @@ def test_request_product_replacement_rejects_empty_evidence() -> None:
 
 
 def test_finalize_profile_autofills_sources_from_evidence() -> None:
-    """LLM 漏填顶层 sources 时，工具应从 dimensions/pricing 的 evidence 自动聚合 URL。
-    R4 兜底：不依赖 LLM 自觉。"""
+    """When the LLM omits top-level sources, the tool should auto-aggregate URLs from dimensions/pricing's evidence.
+    An R4 fallback: doesn't rely on the LLM remembering."""
 
     raw = {
         "product_name": "Z",
@@ -269,7 +273,7 @@ def test_finalize_profile_autofills_sources_from_evidence() -> None:
                 "source": {"source_url": "https://c.com/pricing", "snippet": "$10"},
             }],
         },
-        "sources": [],  # ← LLM 漏填，工具应兜底
+        "sources": [],  # <- omitted by the LLM, the tool should backfill it
     }
     profile = _finalize("Z", json.dumps(raw)).artifact["profile"]
     urls = {s["source_url"] for s in profile["sources"]}
@@ -277,8 +281,10 @@ def test_finalize_profile_autofills_sources_from_evidence() -> None:
 
 
 def test_finalize_profile_tolerates_url_string_evidence_and_tier_source() -> None:
-    """豆包高频错填：fact.evidence / tier.source 填成裸 URL 字符串 → 归一后一次过，不再 retry。
-    回归保护：蜜雪冰城那轮 'pricing.tiers.0.source should be a valid dict' 超时的根因。"""
+    """Doubao's frequent mistake: filling fact.evidence / tier.source with a bare URL
+    string -> passes on the first try after normalization, no more retries. Regression
+    guard for the root cause behind a past timeout: 'pricing.tiers.0.source should be
+    a valid dict'."""
     raw = {
         "product_name": "Z",
         "product_type": "SaaS",
@@ -299,7 +305,7 @@ def test_finalize_profile_tolerates_url_string_evidence_and_tier_source() -> Non
 
 
 def test_finalize_profile_autofill_dedupes_against_existing_sources() -> None:
-    """LLM 已经填了部分 sources 时，autofill 不重复添加。"""
+    """When the LLM has already filled in some sources, autofill doesn't add duplicates."""
 
     raw = {
         "product_name": "Z",
@@ -315,5 +321,5 @@ def test_finalize_profile_autofill_dedupes_against_existing_sources() -> None:
     }
     profile = _finalize("Z", json.dumps(raw)).artifact["profile"]
     urls = [s["source_url"] for s in profile["sources"]]
-    assert urls.count("https://a.com") == 1  # 不重复
-    assert "https://b.com" in urls           # 新 URL 加上
+    assert urls.count("https://a.com") == 1  # not duplicated
+    assert "https://b.com" in urls           # the new URL is added

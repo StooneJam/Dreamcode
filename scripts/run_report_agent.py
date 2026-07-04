@@ -1,12 +1,12 @@
-"""手动测试脚本 —— 用虚拟数据驱动 Report Agent 生成完整竞品分析报告。
+"""Manual test script -- drives the Report Agent with mock data to generate a full competitive analysis report.
 
-用法：
+Usage:
     python scripts/run_report_agent.py
-    python scripts/run_report_agent.py --reviewer   # 同时开启豆包终审
+    python scripts/run_report_agent.py --reviewer   # also enable Doubao final review
 
-生成的文件保存在：
-    output/report_飞书.pdf    （PDF 报告）
-    output/charts/            （图表图片）
+Generated files are saved to:
+    output/report_飞书.pdf    (PDF report)
+    output/charts/            (chart images)
 """
 from __future__ import annotations
 
@@ -14,14 +14,14 @@ import argparse
 import sys
 from pathlib import Path
 
-# Windows 控制台强制 UTF-8 输出，防止中文乱码
+# force UTF-8 output on Windows consoles, to prevent garbled Chinese text
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 _root = Path(__file__).parent.parent
-sys.path.insert(0, str(_root / "src"))    # 让 `cca` 包可被 import（无需 pip install -e .）
-sys.path.insert(0, str(_root / "tests"))  # 让 fixtures 可被 import
+sys.path.insert(0, str(_root / "src"))    # makes the `cca` package importable (no `pip install -e .` needed)
+sys.path.insert(0, str(_root / "tests"))  # makes fixtures importable
 
 import os
 os.chdir(_root)

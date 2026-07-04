@@ -1,7 +1,8 @@
-"""答辩 demo 重放器 —— 强制 CCA_CACHE_MODE=replay，秒级重放预录缓存。
+"""Demo replay player -- forces CCA_CACHE_MODE=replay, replaying the pre-recorded cache instantly.
 
-前置：先用 runner.py --cache write 跑过一次填缓存。
-本脚本不调真 LLM、不写 cache、不联网；所有节点从 SQLite cache 反序列化 messages 重放。
+Prerequisite: run runner.py --cache write once first to populate the cache.
+This script never calls a real LLM, never writes cache, never goes online; every
+node replays by deserializing messages from the SQLite cache.
 
 Usage:
     $env:PYTHONPATH="src"; $env:PYTHONIOENCODING="utf-8"
@@ -25,7 +26,7 @@ def main() -> None:
     p.add_argument("--skip-report", action="store_true", help="跳过 report 节点（demo 现场常用）")
     args = p.parse_args()
 
-    # 强制 replay；未命中节点直接抛错，提醒先 runner write cache
+    # force replay; a cache miss raises immediately, prompting you to run the runner write-cache step first
     os.environ["CCA_CACHE_MODE"] = "replay"
     print("[player] CCA_CACHE_MODE=replay（未命中即抛错）", flush=True)
 

@@ -1,7 +1,7 @@
-"""开发 / 预录用 demo runner —— 真跑完整管线（graph.invoke 一把梭）。
+"""Dev / pre-recording demo runner -- runs the full pipeline for real (graph.invoke, straight through).
 
-本脚本**永远走真 LLM**：跑 runner 就是真跑。mock / plumbing 冒烟验证是
-scripts/demo/dry_run.py 的职责，两者职责不混。
+This script **always uses the real LLM**: running it is a real run. Mock/plumbing
+smoke tests are scripts/demo/dry_run.py's job -- the two are kept separate.
 
 Usage:
     $env:PYTHONPATH="src"; $env:PYTHONIOENCODING="utf-8"
@@ -23,7 +23,7 @@ from cca.observability.logger import format_table, track_pipeline_tokens
 
 
 def _prompt_human_review(payload: dict) -> dict:
-    """human_gate interrupt 暂停时，CLI 展示产出摘要并收一次修订意见。"""
+    """When human_gate pauses via interrupt, show a summary in the CLI and collect one round of revision feedback."""
     hr("HUMAN REVIEW · 阶段 2.5 修订意见（仅一次）")
     print(f"  {payload.get('hint', '')}", flush=True)
     for row in payload.get("profiles", []):
@@ -37,7 +37,8 @@ def _prompt_human_review(payload: dict) -> dict:
 
 
 def _invoke_with_human_review(graph, state: Any, config: dict) -> dict:
-    """图模式带人在环：跑到 interrupt 暂停 → CLI 收文本 → Command(resume) 续跑，直到无 interrupt。"""
+    """Graph mode with human-in-the-loop: run until interrupt pauses -> CLI collects
+    text -> Command(resume) continues, until there's no more interrupt."""
     from langgraph.types import Command
     result = graph.invoke(state, config=config)
     while "__interrupt__" in result:
@@ -69,19 +70,19 @@ def _run_graph(args: argparse.Namespace) -> None:
             result = graph.invoke(state, config=config)
 
     if result.get("domain_seed"):
-        # 仅在读到并蒸馏了用户上传文档时存在 —— 出现即证明 PDF 被吃进来了
+        # only present when a user-uploaded doc was read and distilled -- its presence proves the PDF was ingested
         dump_json("domain_seed", result["domain_seed"])
     if result.get("exploration_result"):
         dump_json("exploration_result", result["exploration_result"])
     if result.get("task_plan"):
         dump_json("task_plan", result["task_plan"])
     if result.get("profiles"):
-        # Collector 写 dimensions/pricing/sources/website；Insight 写 sentiment —— 一并 dump
+        # Collector writes dimensions/pricing/sources/website; Insight writes sentiment -- dump them together
         dump_json("profiles", result["profiles"])
     if result.get("report_task"):
         dump_json("report_task", result["report_task"])
     if result.get("audit_log"):
-        # 节点级事件审计，诊断 insight/finalize_sentiment 等中间步骤
+        # node-level event audit, for diagnosing intermediate steps like insight/finalize_sentiment
         dump_json("audit_log", result["audit_log"])
     show_decisions(result.get("decision_log") or [])
     summary(result)

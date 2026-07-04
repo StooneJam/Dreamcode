@@ -1,5 +1,5 @@
 """
-Tavily 联网搜索 —— PM 粗搜索 + Collector 细搜索共用入口。
+Tavily web search -- shared entry point for PM's rough search and Collector's fine-grained search.
 """
 
 from __future__ import annotations
@@ -13,23 +13,27 @@ from langchain_core.tools import tool
 from tavily import TavilyClient
 from tavily import errors as tavily_errors
 
-# 结果裁剪（缓存安全降本）：Tavily content 全程驻留 ReAct history 逐轮重发，
-# 本地截断只缩每轮新增的料、不动前缀缓存，零额外 LLM。两个旋钮都可 env 调。
+# result trimming (cache-safe cost control): Tavily content stays in ReAct history
+# and gets resent every round, so local truncation only shrinks each round's new
+# material, leaves the cached prefix untouched, and costs zero extra LLM calls.
+# Both knobs are env-tunable.
 _MAX_RESULTS_CAP = int(os.getenv("WEB_SEARCH_MAX_RESULTS_CAP", "5"))
 _MAX_RESULT_CONTENT = int(os.getenv("WEB_SEARCH_MAX_CONTENT", "600"))
 
-# 前端上传的 per-run Tavily key；None 时回落 .env 里项目自己的 key。
-# 与 llm/factory.py 的 _run_creds 同一范式：key 走 contextvar，不进 state（state 会被
-# audit_log 记录、被前端 stream 订阅，密钥进 state 等于泄漏）。
+# per-run Tavily key uploaded by the frontend; falls back to the project's own .env
+# key when None. Same pattern as llm/factory.py's _run_creds: the key travels via a
+# contextvar, never into state (state gets recorded in audit_log and subscribed to
+# by the frontend stream, so putting a key there would leak it).
 _run_tavily_key: ContextVar[str | None] = ContextVar("cca_run_tavily_key", default=None)
 
 
 @contextmanager
 def use_tavily_key(key: str | None) -> Iterator[None]:
-    """前端在 graph.invoke 外层包住一次运行，注入用户上传的 Tavily key。
+    """The frontend wraps a single run with this, outside graph.invoke, to inject the user's uploaded Tavily key.
 
-    空 / None → 回落 .env 里项目自己的 key。非法 key 应在 run 入口前用
-    validate_tavily_key 拦下让用户重传，不在这里兜底。
+    Empty/None -> falls back to the project's own .env key. An invalid key should be
+    caught by validate_tavily_key before the run starts so the user can re-upload;
+    this function doesn't handle that case.
     """
     token = _run_tavily_key.set(key or None)
     try:
@@ -39,27 +43,30 @@ def use_tavily_key(key: str | None) -> Iterator[None]:
 
 
 def validate_tavily_key(key: str) -> str | None:
-    """对 Tavily 打一次最小 search 探活。返回 None 表示可用，否则返回错误串供前端提示重传。"""
+    """Send one minimal search to Tavily as a liveness check. Returns None if usable, else an error string for the frontend to prompt a re-upload."""
     try:
         TavilyClient(api_key=key).search("ping", max_results=1)
     except Exception as exc:
         return f"Tavily key 校验失败（{type(exc).__name__}: {exc}）"
     return None
 
-# 运营/瞬时类失败：catch 返错误串，让图存活、ReAct 降级（D-035）。
-# auth/config 类（MissingAPIKeyError / InvalidAPIKeyError）故意不在此列 ——
-# 让 key 缺失/错误第一次调用就响亮 raise，而非吞成软错误产出零联网数据的报告（CLAUDE.md §1）。
+# operational/transient failures: caught and returned as an error string, keeping
+# the graph alive with ReAct degrading gracefully (D-035).
+# auth/config failures (MissingAPIKeyError / InvalidAPIKeyError) are deliberately
+# excluded here -- a missing/wrong key should raise loudly on the very first call,
+# not get swallowed into a soft error that produces a report with zero web data
+# (CLAUDE.md §1).
 _TRANSIENT_SEARCH_ERRORS = (
-    tavily_errors.UsageLimitExceededError,  # 432 配额/限流
-    tavily_errors.TimeoutError,             # 请求超时
+    tavily_errors.UsageLimitExceededError,  # 432 quota/rate-limited
+    tavily_errors.TimeoutError,             # request timed out
     tavily_errors.ForbiddenError,           # 403
-    tavily_errors.BadRequestError,          # 400（多为 LLM query 不合法，返串让其自修）
-    requests.RequestException,              # ConnectionError + raise_for_status 的 HTTPError(5xx)
+    tavily_errors.BadRequestError,          # 400 (usually an invalid LLM query; returned as a string for it to self-correct)
+    requests.RequestException,              # ConnectionError + the HTTPError(5xx) from raise_for_status
 )
 
 
 def _trim_result(result: dict) -> dict:
-    """只保留 {title, url, content}，content 截断到 _MAX_RESULT_CONTENT 字。"""
+    """Keep only {title, url, content}; content is truncated to _MAX_RESULT_CONTENT chars."""
     content = result.get("content") or ""
     if len(content) > _MAX_RESULT_CONTENT:
         content = content[:_MAX_RESULT_CONTENT]

@@ -1,6 +1,7 @@
-"""Insight Agent —— 问卷 + 评论采集 + 情感分析，写 profiles.sentiment。
+"""Insight Agent -- questionnaire + review collection + sentiment analysis, writes profiles.sentiment.
 
-与 Collector phase 2 并发。情感正负面判定与主题归纳都由 LLM 基于采集到的评论直接完成。
+Runs concurrently with Collector phase 2. Positive/negative judgment and theme
+extraction are both done directly by the LLM from the collected reviews.
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ def _load_prompt() -> str:
 
 
 def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
-    """收集指定工具调用中可解的 JSON。"""
+    """Collect parseable JSON from calls to the given tool."""
     out = []
     for msg in messages:
         if isinstance(msg, ToolMessage) and msg.name == tool_name and msg.content:
@@ -45,7 +46,7 @@ def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
 
 
 def _extract_sentiments(messages: list) -> dict[str, dict]:
-    """finalize_sentiment 各次结果 → {product_name: sentiment}。"""
+    """finalize_sentiment call results -> {product_name: sentiment}."""
     results: dict[str, dict] = {}
     for data in _extract_tool_jsons(messages, "finalize_sentiment"):
         if "product_name" in data and "sentiment" in data:
@@ -54,7 +55,7 @@ def _extract_sentiments(messages: list) -> dict[str, dict]:
 
 
 def _extract_events(messages: list) -> dict[str, list[dict]]:
-    """record_key_events 各次结果 → {product_name: key_events}。"""
+    """record_key_events call results -> {product_name: key_events}."""
     results: dict[str, list[dict]] = {}
     for data in _extract_tool_jsons(messages, "record_key_events"):
         if "product_name" in data and "key_events" in data:
@@ -67,15 +68,15 @@ def _extract_signals(messages: list) -> list[dict]:
 
 
 def build_insight_context(state: CCAState, product_name: str) -> dict:
-    """抽出单产品 insight 所需的最小 state 切片。"""
+    """Extract the minimal state slice needed for a single product's insight run."""
     task_plan = state.get("task_plan") or {}
     return {
         "profiles": state.get("profiles", {}),
         "competitor_names": state.get("competitor_names", []),
         "target_product": state["target_product"],
-        # 数据源路由信号：一轮 debate 收敛的权威赛道，Insight 据此选 App Store / 电商 / 垂类
+        # data-source routing signal: the debate-converged category, drives App Store / e-commerce / niche choice
         "product_type": task_plan.get("product_type") or "",
-        # 软引导：让 Insight 知道 PM 预设的 bucket，themes 尽量覆盖；非强制
+        # soft hint: lets Insight aim its themes at PM's preset buckets; not enforced
         "tentative_buckets": task_plan.get("tentative_buckets") or [],
     }
 
@@ -121,9 +122,9 @@ def _build_insight_product_message(
 
 
 def insight_one_product(task: InsightTask, context: dict) -> dict:
-    """单产品 ReAct insight 分析。与 collect_one_product 签名一致，供 Send fanout 调用。
+    """Single-product ReAct insight analysis. Same signature as collect_one_product for Send fanout.
 
-    context 需含 profiles / competitor_names / target_product。
+    context must include profiles / competitor_names / target_product.
     """
     profiles = context.get("profiles", {})
     competitor_names = context.get("competitor_names", [])
@@ -144,9 +145,9 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
         ],
         label=f"Insight·{task.product_name}",
         recursion_limit=30,
-        # 不接 cache —— Insight 单产品 ReAct 耗时本就在可接受范围；
-        # 且 cache_key 设计需要 worker 自治粒度切片（见讨论），暂不投资。
-        # 流式打印仍然保留（stream_react 在 cache_key=None 时走纯真跑路径）。
+        # no cache: single-product Insight ReAct latency is already acceptable, and
+        # a proper cache_key needs per-worker slicing not yet worth building.
+        # Streaming output is still preserved (cache_key=None takes the real-run path).
     )
     sentiments = _extract_sentiments(messages)
     events = _extract_events(messages)
@@ -154,9 +155,10 @@ def insight_one_product(task: InsightTask, context: dict) -> dict:
 
     name = task.product_name
     result: dict = {}
-    # Send fanout dispatch 时 context["profiles"] 是 task_plan 后的 snapshot（Collector 尚未跑完），
-    # 所以**不能用 `name in profiles` 守卫** —— _merge_profiles reducer (D-031) 会自动按 key 合并字段，
-    # Insight 写 {sentiment / key_events} 不论 Collector 是否已写过该产品都安全。
+    # At Send fanout dispatch time, context["profiles"] is a post-task_plan snapshot
+    # (Collector hasn't finished yet), so **don't guard with `name in profiles`** --
+    # the _merge_profiles reducer (D-031) merges fields by key automatically, so
+    # Insight writing {sentiment / key_events} is safe regardless of Collector's state.
     profile_update: dict = {}
     if name in sentiments:
         profile_update["sentiment"] = sentiments[name]

@@ -1,10 +1,11 @@
 """
-集中加载 .env 与 config.yaml。
-PM v0.1 是首个消费者；其他 agent 在此按需补充 helper 函数。
+Centralized loader for .env and config.yaml.
+PM v0.1 is the first consumer; other agents can add helper functions here as needed.
 
-设计要点：
-- `.env` 在 import 时一次性加载（override=True 避免被系统残留变量遮盖）。
-- `config.yaml` 进程内单例缓存（lru_cache）。
+Design notes:
+- `.env` loads once at import time (override=True so it isn't shadowed by stale
+  system env vars).
+- `config.yaml` is cached as a process-wide singleton (lru_cache).
 """
 from __future__ import annotations
 from functools import lru_cache
@@ -15,15 +16,15 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
-# 模块导入即加载 .env，下游所有 os.getenv 即刻可用
+# .env loads as soon as this module is imported, so all downstream os.getenv calls work immediately
 load_dotenv(override=True)
 
 
 @lru_cache(maxsize=1)
 def load_config() -> dict:
     """
-    读取 config.yaml；单次进程内缓存。
-    调用方按需读 section：
+    Read config.yaml; cached once per process.
+    Callers read sections as needed:
         cfg = load_config()
         n = cfg["task"]["n_competitors"]
     """

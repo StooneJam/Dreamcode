@@ -1,4 +1,4 @@
-"""App Store 工具测试 —— mock subprocess，不依赖 Node.js 或网络。"""
+"""App Store tool tests -- mocks subprocess, no dependency on Node.js or the network."""
 from __future__ import annotations
 
 import json
@@ -52,7 +52,7 @@ class TestRunScraper:
         assert "30" in call_args
 
     def test_returns_error_dict_on_empty_stdout_with_nonzero_exit(self):
-        """子进程异常 → 返回 {'error': ...} 而非 raise（避免中断 ReAct）。"""
+        """A subprocess exception -> returns {'error': ...} instead of raising (avoids interrupting ReAct)."""
         from cca.tools.appstore import _run_scraper
 
         with patch("subprocess.run", return_value=_make_proc("", returncode=1, stderr="boom")):

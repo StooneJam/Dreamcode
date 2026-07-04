@@ -1,10 +1,10 @@
-"""Report Agent 测试。
+"""Tests for the Report Agent.
 
-覆盖：
-- 工具单元测试（chart / pdf_renderer）
-- report_node 输出结构校验
-- forced 数据置信度标注
-- 豆包 reviewer 集成开关
+Covers:
+- tool unit tests (chart / pdf_renderer)
+- report_node output structure validation
+- forced-data confidence annotation
+- Doubao reviewer integration toggle
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from cca.schema import QAResult, ReportTask
 
 
 # ---------------------------------------------------------------------------
-# 辅助 fixtures / helpers
+# Helper fixtures / helpers
 # ---------------------------------------------------------------------------
 
 FAKE_REPORT_MD = """## 执行摘要
@@ -54,7 +54,7 @@ def _make_tool_message(name: str, content: str):
 
 
 def _make_ai_message_with_render_pdf(markdown_content: str) -> object:
-    """构造带 render_pdf tool_call 的 AIMessage，匹配 _extract_final_md 的提取逻辑。"""
+    """Builds an AIMessage carrying a render_pdf tool_call, matching _extract_final_md's extraction logic."""
     from langchain_core.messages import AIMessage
     return AIMessage(
         content="",
@@ -77,7 +77,7 @@ def _fake_agent_messages(include_pdf: bool = True, include_reviewer: bool = Fals
 
 
 # ---------------------------------------------------------------------------
-# 工具单元测试
+# Tool unit tests
 # ---------------------------------------------------------------------------
 
 class TestRenderBarChart:
@@ -210,7 +210,7 @@ class TestRenderPdf:
 
 
 # ---------------------------------------------------------------------------
-# 内部函数单元测试
+# Internal function unit tests
 # ---------------------------------------------------------------------------
 
 class TestCollectForcedKeys:
@@ -246,7 +246,7 @@ class TestSerializeProfiles:
         ke = json.loads(_serialize_profiles(profiles, set()))["蜜雪冰城"]["key_events"][0]
         assert ke["statement"] == "推 1 元冰杯，加盟商抵制"
         assert ke["url"] == ["https://news.example.com/x"]
-        assert "snippet" not in ke  # 瘦身省 token
+        assert "snippet" not in ke  # slimmed down to save tokens
 
 
 class TestBuildInitialMessage:
@@ -273,8 +273,8 @@ class TestBuildInitialMessage:
         assert "企业微信" in msg
 
     def test_task_plan_priority_dimensions_in_context(self, mock_state):
-        """mock_state.task_plan 中的 priority_dimensions / product_type 应进 prompt 上下文。"""
-        # 给 mock_state 的 task_plan 灌一个 priority_dimensions 验证
+        """mock_state.task_plan's priority_dimensions / product_type should end up in the prompt context."""
+        # Feed mock_state's task_plan a priority_dimensions value to verify
         mock_state["task_plan"]["collect_tasks"][0]["priority_dimensions"] = ["定价", "视频会议"]
         msg = self._call(mock_state, with_context=True)
         assert "PM 阶段二决策回顾" in msg
@@ -282,14 +282,14 @@ class TestBuildInitialMessage:
         assert "定价" in msg
 
     def test_review_state_forced_in_context(self, mock_state):
-        """review_state 全量进 prompt；forced 项的 qa_flags 应可见。"""
+        """review_state goes into the prompt in full; forced items' qa_flags should be visible."""
         msg = self._call(mock_state, with_context=True)
         assert "PM 评审台账" in msg
         assert "forced" in msg
-        assert "定价来源 404" in msg  # 企业微信 collector forced 项的 qa_flags
+        assert "定价来源 404" in msg  # qa_flags of 企业微信 collector's forced item
 
     def test_no_context_block_when_empty(self, mock_state):
-        """exploration_result=None / task_plan=None / review_state=[] 时不渲染对应段落。"""
+        """When exploration_result=None / task_plan=None / review_state=[], the corresponding section isn't rendered."""
         report_task = ReportTask(**mock_state["report_task"])
         profiles_json = _serialize_profiles(mock_state["profiles"], set())
         msg = _build_initial_message(
@@ -299,20 +299,20 @@ class TestBuildInitialMessage:
         assert "一轮探索回顾" not in msg
         assert "PM 阶段二决策回顾" not in msg
         assert "PM 评审台账" not in msg
-        # 但 ReportTask 块与 profiles 块仍在
+        # but the ReportTask block and profiles block are still present
         assert "报告任务" in msg
         assert "产品档案数据" in msg
 
     def test_mapping_block_included_when_non_empty(self, mock_state):
-        """Phase 2: dimension_canonical_map 非空时，mapping 段块进 prompt。"""
+        """Phase 2: when dimension_canonical_map is non-empty, the mapping block goes into the prompt."""
         msg = self._call(mock_state)
         assert "维度归类映射" in msg
-        assert "视频会议人数上限" in msg   # 正向 mapping key
-        assert "视频会议" in msg           # bucket 名（反向索引 key 也是它）
+        assert "视频会议人数上限" in msg   # forward mapping key
+        assert "视频会议" in msg           # bucket name (also the reverse-index key)
         assert "正向" in msg and "反向索引" in msg
 
     def test_mapping_block_omitted_when_empty(self, mock_state):
-        """dimension_canonical_map 为空时不渲染 mapping 段块。"""
+        """When dimension_canonical_map is empty, the mapping block isn't rendered."""
         mock_state["report_task"]["dimension_canonical_map"] = {}
         report_task = ReportTask(**mock_state["report_task"])
         profiles_json = _serialize_profiles(mock_state["profiles"], set())
@@ -349,7 +349,7 @@ class TestExtractHelpers:
 
 
 # ---------------------------------------------------------------------------
-# report_node 集成测试（mock agent）
+# report_node integration tests (mock agent)
 # ---------------------------------------------------------------------------
 
 class TestReportNode:
@@ -372,7 +372,7 @@ class TestReportNode:
         assert len(result["report_md"]) > 0
 
     def test_report_status_passed_by_default(self, mock_state_with_reviewer):
-        # reviewer 开启但 fake messages 里无 reviewer 消息 → _extract_reviewer_result 返回默认 passed=True
+        # reviewer enabled but fake messages have no reviewer message -> _extract_reviewer_result returns default passed=True
         result = self._invoke_node(mock_state_with_reviewer)
         assert result["report_status"] == "passed"
 
@@ -391,5 +391,5 @@ class TestReportNode:
                      failed_checks=["图文不一致"]).model_dump_json(),
         )
         result = self._invoke_node(mock_state_with_reviewer, extra_messages=[reviewer_msg])
-        assert result["report_status"] == "failed"   # reviewer 开启且返回 passed=False → failed
+        assert result["report_status"] == "failed"   # reviewer enabled and returns passed=False -> failed
         assert result["qa_results"][0]["passed"] is False

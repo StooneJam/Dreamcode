@@ -1,4 +1,4 @@
-"""问卷设计 —— 基于产品、竞品、分析维度自动生成调查问卷。"""
+"""Questionnaire design -- auto-generates a survey from a product, its competitors, and analysis dimensions."""
 from __future__ import annotations
 
 import json
@@ -11,10 +11,11 @@ from cca.llm.factory import get_llm
 from cca.llm.structured import invoke_structured
 
 _SYS = (
-    "你是问卷设计专家。根据产品信息生成 6-8 道用户调查题，"
-    "类型混合使用 rating_5（5分量表）、multiple_choice（单选）、open_text（开放作答）。"
-    "每题有唯一 id（q1, q2...）；multiple_choice 必须提供 options 列表（3-5 个选项）。"
-    "题目聚焦用户真实体验，不询问个人信息。"
+    "You are a survey design expert. Generate 6-8 user survey questions based on the "
+    "product info, mixing rating_5 (5-point scale), multiple_choice (single select), "
+    "and open_text (free response). Each question needs a unique id (q1, q2...); "
+    "multiple_choice must provide an options list (3-5 options). Focus questions on "
+    "real user experience, don't ask for personal information."
 )
 
 
@@ -36,7 +37,7 @@ def design_questionnaire(
     competitor_names: list[str],
     dimensions: list[str],
 ) -> Questionnaire:
-    """用 LLM 生成针对产品与竞品的用户调查问卷。"""
+    """Use the LLM to generate a user survey targeting the product and its competitors."""
     user = json.dumps(
         {"product_name": product_name, "competitor_names": competitor_names, "focus_dimensions": dimensions},
         ensure_ascii=False,

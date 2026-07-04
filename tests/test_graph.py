@@ -1,4 +1,4 @@
-"""主图编排测试 —— 编译 + 节点拓扑 + empty_state 契约。"""
+"""Main graph orchestration tests -- compilation + node topology + empty_state contract."""
 from __future__ import annotations
 
 import pytest
@@ -20,7 +20,7 @@ from cca.graph import (
 
 
 def test_graph_compiles_with_report() -> None:
-    """include_report=True 默认路径，所有节点都在（含 human_gate / review）。"""
+    """The include_report=True default path has every node present (including human_gate/review)."""
     graph = build_graph()
     nodes = set(graph.get_graph().nodes)
     assert NODE_INITIAL_BRIEF in nodes
@@ -36,7 +36,7 @@ def test_graph_compiles_with_report() -> None:
 
 
 def test_graph_compiles_with_checkpointer() -> None:
-    """传 checkpointer 时正常编译（human_gate interrupt/resume 依赖它）。"""
+    """Compiles fine when passed a checkpointer (human_gate's interrupt/resume depends on it)."""
     from langgraph.checkpoint.memory import MemorySaver
 
     graph = build_graph(checkpointer=MemorySaver())
@@ -44,17 +44,17 @@ def test_graph_compiles_with_checkpointer() -> None:
 
 
 def test_graph_human_gate_to_review_edge() -> None:
-    """human_gate → review 是普通边（无分支）：人在环关卡永远先于自动评审。"""
+    """human_gate -> review is a plain edge (no branching): the human-in-the-loop gate always precedes automatic review."""
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     assert (NODE_HUMAN_GATE, NODE_REVIEW) in edges
-    # collect/insight 不再直连 review，必须经 human_gate
+    # collect/insight no longer connect directly to review, must go through human_gate
     assert (NODE_COLLECT_PRODUCT, NODE_REVIEW) not in edges
     assert (NODE_INSIGHT_PRODUCT, NODE_REVIEW) not in edges
 
 
 def test_graph_compiles_without_report() -> None:
-    """include_report=False 时 report 节点缺席（demo --skip-report 路径）。"""
+    """When include_report=False, the report node is absent (the demo --skip-report path)."""
     graph = build_graph(include_report=False)
     nodes = set(graph.get_graph().nodes)
     assert NODE_REPORT not in nodes
@@ -62,7 +62,7 @@ def test_graph_compiles_without_report() -> None:
 
 
 def test_empty_state_covers_all_required_fields() -> None:
-    """empty_state 必须覆盖 CCAState 所有字段，不能漏，避免运行时 KeyError。"""
+    """empty_state must cover every CCAState field, none missing, to avoid a runtime KeyError."""
     from cca.state import CCAState
 
     state = empty_state(user_query="x", target_product="y")
@@ -73,7 +73,7 @@ def test_empty_state_covers_all_required_fields() -> None:
 
 
 def test_empty_state_user_files_optional() -> None:
-    """user_files 不传时默认 None，传时按值落字段。"""
+    """user_files defaults to None when omitted, and takes its given value when passed."""
     s1 = empty_state(user_query="x", target_product="y")
     s2 = empty_state(user_query="x", target_product="y", user_files=["a.md"])
     assert s1["user_files"] is None
@@ -81,12 +81,15 @@ def test_empty_state_user_files_optional() -> None:
 
 
 def test_graph_edges_fanout_path() -> None:
-    """主路径：START → initial_brief → exploration → task_plan → [fanout] → human_gate → review → report_task → report → END。
+    """Main path: START -> initial_brief -> exploration -> task_plan -> [fanout] ->
+    human_gate -> review -> report_task -> report -> END.
 
-    task_plan 后由 conditional_edges dispatcher 派发 Send 至 collect_product / insight_product；
-    worker 完成后汇入 human_gate（人在环关卡），再到 review；review 条件边到 handle_signal
-    （有 pending signal）或 report_task。handle_signal 条件边回 exploration / task_plan /
-    report_task / END（按清空字段路由）。
+    After task_plan, the conditional_edges dispatcher sends Send to
+    collect_product/insight_product; workers converge into human_gate (the
+    human-in-the-loop gate), then to review; review's conditional edge goes to
+    handle_signal (if there's a pending signal) or report_task. handle_signal's
+    conditional edge routes back to exploration/task_plan/report_task/END (based on
+    which field was cleared).
     """
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
@@ -106,7 +109,7 @@ def test_graph_edges_fanout_path() -> None:
 
 
 def test_graph_review_routes_to_handle_signal_and_report_task() -> None:
-    """review 出口的条件边目标必须含 handle_signal 和 report_task。"""
+    """review's exit conditional edge must target both handle_signal and report_task."""
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     assert (NODE_REVIEW, NODE_HANDLE_SIGNAL) in edges
@@ -114,7 +117,7 @@ def test_graph_review_routes_to_handle_signal_and_report_task() -> None:
 
 
 def test_graph_handle_signal_routes_to_all_phase_targets() -> None:
-    """handle_signal 条件边按被清空/reject 字段回四个 PM 阶段或 END（含 initial_brief）。"""
+    """handle_signal's conditional edge routes back to one of four PM phases or END, based on the cleared/rejected field (including initial_brief)."""
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     assert (NODE_HANDLE_SIGNAL, NODE_INITIAL_BRIEF) in edges
@@ -125,13 +128,16 @@ def test_graph_handle_signal_routes_to_all_phase_targets() -> None:
 
 
 def test_crashing_insight_worker_does_not_clobber_collector_profile() -> None:
-    """复现并回归 P0：同一 product key 上 collector 成功 + insight 崩溃，
-    insight 的 _skip_result 空壳（dimensions=[]/sources=[]）经 _merge_profiles fold 后
-    绝不抹掉 collector 真数据——靠 reducer 单层兜底（_skip_result 不做补丁式修复）。
+    """Reproduces and regression-tests a P0: on the same product key, collector
+    succeeds + insight crashes; insight's _skip_result placeholder
+    (dimensions=[]/sources=[]) must never blank out collector's real data after
+    folding through _merge_profiles -- the reducer's single-layer guard is the only
+    fallback (_skip_result does no patch-style repair itself).
 
-    走真实 _collect_product_node / _insight_product_node / _skip_result / _merge_profiles，
-    只 mock 两个 worker 函数（不调 LLM）。dispatch 顺序 collector 先 insight 后，
-    fold 同序——这正是 log-mixue 里数据丢失的路径。
+    Runs the real _collect_product_node / _insight_product_node / _skip_result /
+    _merge_profiles, mocking only the two worker functions (no LLM calls). Dispatch
+    order is collector first, insight second, and fold happens in the same order --
+    this is exactly the path where data was lost in the log-mixue incident.
     """
     from functools import reduce
     from unittest.mock import patch
@@ -150,18 +156,19 @@ def test_crashing_insight_worker_does_not_clobber_collector_profile() -> None:
         collect_out = _collect_product_node(fanout)
         insight_out = _insight_product_node(fanout)
 
-    # insight 崩溃 → _skip_result 空壳（含 dimensions=[]/sources=[]）
+    # insight crashed -> _skip_result placeholder (with dimensions=[]/sources=[])
     assert insight_out["profiles"]["瑞幸"]["dimensions"] == []
     assert insight_out["review_state"][0]["status"] == "forced"
 
-    # 按 dispatch 顺序 fold：reducer 守卫挡住空壳，collector 真数据必须存活
+    # fold in dispatch order: the reducer's guard blocks the placeholder, collector's real data must survive
     merged = reduce(_merge_profiles, [collect_out["profiles"], insight_out["profiles"]], {})
     assert merged["瑞幸"]["dimensions"] == [{"name": "门店"}]
     assert merged["瑞幸"]["sources"] == ["url1"]
 
 
 def test_route_after_review_enters_handle_signal_for_debate_only_signal() -> None:
-    """纯主观（requires_debate=True）pending 也要进 handle_signal，不能因门只认 factual 被丢。"""
+    """A purely subjective (requires_debate=True) pending signal must also enter
+    handle_signal -- it can't be dropped just because the gate only recognizes factual ones."""
     from cca.graph import NODE_HANDLE_SIGNAL as H, _route_after_review
 
     state = {
@@ -172,7 +179,7 @@ def test_route_after_review_enters_handle_signal_for_debate_only_signal() -> Non
 
 
 def test_route_after_review_skips_consumed_signal() -> None:
-    """已消费信号不再触发 handle_signal。"""
+    """A consumed signal no longer triggers handle_signal."""
     from cca.graph import _route_after_review
 
     state = {
@@ -183,7 +190,8 @@ def test_route_after_review_skips_consumed_signal() -> None:
 
 
 def test_route_after_signal_back_to_initial_brief_when_cleared() -> None:
-    """debate reject initial_brief 清空该字段后，路由必须回 initial_brief 节点而非落 END。"""
+    """After a debate rejects initial_brief and clears the field, routing must go
+    back to the initial_brief node, not fall through to END."""
     from cca.graph import _route_after_signal
 
     state = {
@@ -196,14 +204,14 @@ def test_route_after_signal_back_to_initial_brief_when_cleared() -> None:
 
 
 def test_graph_no_report_edge_to_end() -> None:
-    """include_report=False 时 report_task 直接到 END。"""
+    """When include_report=False, report_task goes straight to END."""
     graph = build_graph(include_report=False)
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     assert (NODE_REPORT_TASK, "__end__") in edges
 
 
 def _two_product_task_plan() -> dict:
-    """最小 task_plan：两产品各一 collect_task + insight_task。"""
+    """A minimal task_plan: one collect_task + insight_task each for two products."""
     return {
         "target_product": "甲",
         "product_type": "SaaS",
@@ -215,7 +223,7 @@ def _two_product_task_plan() -> dict:
 
 
 def test_dispatch_first_round_fanouts_all() -> None:
-    """首轮无 review 记录 → 全部 4 个 unit 都 fanout。"""
+    """The first round has no review record -> all 4 units fan out."""
     from cca.graph import _dispatch_collect_insight
 
     state = empty_state(user_query="x", target_product="甲")
@@ -226,12 +234,12 @@ def test_dispatch_first_round_fanouts_all() -> None:
 
 
 def test_dispatch_skips_passed_units_on_retry() -> None:
-    """reroute 重排后：只重派上一轮 needs_retry 的 unit，passed/forced 跳过。"""
+    """After a reroute re-plan: only re-dispatch the previous round's needs_retry units; passed/forced are skipped."""
     from cca.graph import _dispatch_collect_insight
 
     state = empty_state(user_query="x", target_product="甲")
     state["task_plan"] = _two_product_task_plan()
-    # 甲 全过；乙 collector needs_retry、乙 insight forced
+    # 甲 (A) fully passed; 乙 (B) collector needs_retry, 乙 insight forced
     state["review_state"] = [
         {"agent": "collector", "product_name": "甲", "status": "passed"},
         {"agent": "insight", "product_name": "甲", "status": "passed"},
@@ -240,11 +248,11 @@ def test_dispatch_skips_passed_units_on_retry() -> None:
     ]
     sends = _dispatch_collect_insight(state)
     assert isinstance(sends, list)
-    # 仅 乙 collector 一个 needs_retry 被重派
+    # only 乙 (B)'s collector needs_retry gets re-dispatched
     assert len(sends) == 1
     assert sends[0].arg["_fanout_task"]["product_name"] == "乙"
 
 
 @pytest.mark.skip(reason="需要真 LLM；用 demo 脚本配 dry-run 覆盖端到端")
 def test_graph_invoke_dry_run() -> None:
-    """端到端 invoke 覆盖见 scripts/demo/runner.py（图模式）或 scripts/demo/dry_run.py（mock）。"""
+    """End-to-end invoke coverage lives in scripts/demo/runner.py (graph mode) or scripts/demo/dry_run.py (mock)."""

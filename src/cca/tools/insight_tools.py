@@ -1,4 +1,4 @@
-"""Insight 专用 @tool：问卷 / finalize_sentiment / record_key_events / challenge_pm。"""
+"""Insight-specific @tools: questionnaire / finalize_sentiment / record_key_events / challenge_pm."""
 from __future__ import annotations
 
 import json
@@ -14,11 +14,11 @@ from cca.tools.appstore import scrape_app_store  # noqa: F401 — re-exported as
 
 @tool
 def run_questionnaire(product_name: str, competitor_names: str, dimensions: str) -> str:
-    """设计并收集用户问卷（含 SQLite 缓存）。
+    """Design and collect a user questionnaire (with SQLite caching).
 
     Args:
-        competitor_names: 逗号分隔，如 "钉钉,企业微信"
-        dimensions: 逗号分隔，如 "协同,定价,稳定性"
+        competitor_names: comma-separated, e.g. "DingTalk,WeCom"
+        dimensions: comma-separated, e.g. "collaboration,pricing,stability"
     """
     result = run_questionnaire_skill(
         product_name=product_name,
@@ -30,14 +30,15 @@ def run_questionnaire(product_name: str, competitor_names: str, dimensions: str)
 
 @tool
 def finalize_sentiment(product_name: str, sentiment_json: str) -> str:
-    """提交单产品 UserSentiment（sentiment_json 为符合 schema 的 JSON 字符串）。
+    """Submit a single product's UserSentiment (sentiment_json is a JSON string matching the schema).
 
-    形状：{"positive_themes": ["主题1","主题2"], "negative_themes": [...],
+    Shape: {"positive_themes": ["theme1","theme2"], "negative_themes": [...],
           "aggregate_rating": 4.2, "rating_review_count": 1000, "rating_source": "google_maps",
-          "representative_reviews": [{"text": "原文", "rating": 4, "platform": "大众点评"}],
+          "representative_reviews": [{"text": "original text", "rating": 4, "platform": "dianping"}],
           "sources": [{"source_url": "https://..."}]}
-    positive_themes / negative_themes 是**字符串数组**（不要填成一个用顿号分隔的串）；
-    sources[] 每项是**含 source_url 的对象**（不要直接填 URL 字符串）。
+    positive_themes / negative_themes are **string arrays** (don't fill in a single
+    delimiter-separated string); each sources[] item is **an object with
+    source_url** (don't fill in a bare URL string).
     """
     sentiment, err = safe_load_validate(
         sentiment_json, UserSentiment,
@@ -61,16 +62,20 @@ def finalize_sentiment(product_name: str, sentiment_json: str) -> str:
 
 @tool
 def record_key_events(product_name: str, events_json: str | list) -> str:
-    """记录单产品关键事件与经营矛盾/利益冲突语料，供 Report 推因果链。
+    """Record a single product's material events and business conflicts/interest
+    disputes, for Report to draw causal conclusions from.
 
-    events_json：Fact 对象的 JSON 数组（作为一个 JSON 字符串整体传入）。每个 Fact：
-      {"statement": "客观事实陈述（不下因果定性）",
-       "evidence": [{"source_url": "https://...", "snippet": "原文片段(可选)"}]}
-    statement 必填；evidence 至少 1 条，**每条是含 source_url 的对象**（不要直接填 URL 字符串）。
-    示例：[{"statement": "总部推1元冰杯引流，多地加盟商称单杯亏损拒执行",
+    events_json: a JSON array of Fact objects (passed in as one JSON string). Each Fact:
+      {"statement": "objective factual statement (no causal interpretation)",
+       "evidence": [{"source_url": "https://...", "snippet": "original excerpt (optional)"}]}
+    statement is required; evidence needs at least 1 entry, **each an object with
+    source_url** (don't fill in a bare URL string).
+    Example: [{"statement": "HQ pushed a $1 promo drink to drive traffic; multiple
+            franchisees said they lose money per cup and refused to comply",
             "evidence": [{"source_url": "https://news.example.com/a"}]}]
     """
-    # 豆包有时直接传数组而非 JSON 串；统一序列化后走宽松解析 + 结构修复（少 retry）
+    # Doubao sometimes passes an array directly instead of a JSON string; normalize
+    # by serializing, then use lenient parsing + structural repair (fewer retries)
     if not isinstance(events_json, str):
         events_json = json.dumps(events_json, ensure_ascii=False)
     events, err = safe_load_list(events_json, Fact, pre_clean=repair_llm_json)
@@ -89,8 +94,9 @@ def challenge_pm(
     suggested_fix: str | None = None,
     requires_debate: bool = False,
 ) -> str:
-    """挑战 PM 的 TaskPlan。事实性错误（产品不存在等）传 requires_debate=False，
-    主观分歧（受众/维度异议）传 True。evidence 至少 1 条。"""
+    """Challenge PM's TaskPlan. Pass requires_debate=False for factual errors (e.g.
+    product doesn't exist), True for subjective disagreements (audience/dimension
+    objections). evidence needs at least 1 entry."""
     signal = AgentSignal(
         from_agent="insight", kind="pm_challenge", target="task_plan",
         payload=ChallengePayload(claim=claim, evidence=evidence, suggested_fix=suggested_fix),

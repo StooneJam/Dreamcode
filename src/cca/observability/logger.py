@@ -1,31 +1,35 @@
-"""全流程 token 消耗审计：按模型分别加和。
+"""Full-pipeline token audit: sums usage per model.
 
-两种粒度，按需求选：
+Two granularities, pick as needed:
 
-单次 pipeline（推荐，精确、离线可用）——用 `track_pipeline_tokens()` 包住 graph.invoke。
-    边界 = 这一次 invoke 的 run 树（collect_runs 作用域），不依赖 LangSmith，也无入库
-    延迟。LangSmith 项目里是一条扁平 run 流、没有“开始/结束”概念，真正的边界是 trace；
-    本模块直接从本地 run 树取，规避了“分不清一次跑”的问题。
+Single pipeline (recommended, precise, works offline) -- wrap graph.invoke with
+`track_pipeline_tokens()`.
+    Boundary = this invoke's run tree (collect_runs scope), no LangSmith dependency
+    and no DB-write latency. A LangSmith project is a flat run stream with no
+    "start/end" concept -- the real boundary is the trace; this module reads
+    straight from the local run tree, sidestepping the "which run was this" problem.
 
         with track_pipeline_tokens() as box:
             result = graph.invoke(state, config={"recursion_limit": 30})
         print(format_table(box["usages"]))
 
-运行中实时（前端展示）——`LiveTokenCounter` 挂到 graph 的 callbacks，每次 LLM 调用
-即时累加，任意时刻可读当前快照（线程安全，兼容 Send fanout 并行）。
+Live during a run (frontend display) -- attach `LiveTokenCounter` to the graph's
+callbacks; it accumulates on every LLM call and can be read at any moment
+(thread-safe, compatible with Send fanout's concurrency).
 
         counter = LiveTokenCounter()
         for step in graph.stream(state, config={"callbacks": [counter], "recursion_limit": 30}):
-            push_to_frontend(counter.as_rows())   # 随各 Agent 完成跳动
+            push_to_frontend(counter.as_rows())   # updates as each agent finishes
 
-跨项目历史审计——`aggregate_by_model()` / CLI 从 LangSmith 拉。
-    python -m cca.observability.logger                # 全项目最近 N 条
-    python -m cca.observability.logger --latest-run   # 最近一次 pipeline（按 trace）
+Cross-project historical audit -- `aggregate_by_model()` / the CLI pulls from LangSmith.
+    python -m cca.observability.logger                # last N runs project-wide
+    python -m cca.observability.logger --latest-run   # the most recent pipeline (by trace)
     python -m cca.observability.logger --trace <id>
 
-豆包（Ark）在 LangSmith / metadata 里以端点 ID（ep-...）作模型名，按 .env 的
-DOUBAO_MODEL 映射回 "doubao"。cost 不依赖 LangSmith 价表（deepseek/doubao 不在其内置
-表里），按 config.yaml `observability.pricing` 自算；无配置则留空只报 token。
+Doubao (Ark) shows up in LangSmith/metadata as its endpoint id (ep-...); mapped back
+to "doubao" via .env's DOUBAO_MODEL. Cost doesn't rely on LangSmith's pricing table
+(deepseek/doubao aren't in its built-in list) -- it's computed from config.yaml's
+`observability.pricing`; unconfigured models just report tokens with no cost.
 """
 from __future__ import annotations
 
@@ -45,7 +49,7 @@ from cca.settings import load_config
 
 @dataclass
 class ModelUsage:
-    """单个模型在选定范围内的 token 加和。"""
+    """Token totals for a single model over the selected scope."""
 
     model: str
     calls: int = 0
@@ -64,19 +68,20 @@ class ModelUsage:
         return _cost(self.model, self.input_tokens, self.output_tokens)
 
 
-# ── 模型名 / 成本 ────────────────────────────────────────────────────────
+# ── model name / cost ───────────────────────────────────────────────────
 
 
 def _model_alias() -> dict[str, str]:
-    """Ark 端点 ID → 友好名。.env 的 DOUBAO_MODEL 即那串 ep-...。"""
+    """Ark endpoint id -> friendly name. .env's DOUBAO_MODEL is that ep-... string."""
     ep = os.getenv("DOUBAO_MODEL")
     return {ep: "doubao"} if ep else {}
 
 
 def _cost(model: str, input_tokens: int, output_tokens: int) -> float | None:
-    """按 config.yaml observability.pricing 的每百万 token (输入,输出) 单价算成本。
+    """Compute cost from config.yaml observability.pricing's per-million-token (input, output) rate.
 
-    键按模型名子串小写匹配；无配置或无匹配返回 None（只报 token，不瞎猜价）。
+    Keys are matched as a lowercase substring of the model name; no config or no
+    match returns None (report tokens only, don't guess at a price).
     """
     pricing = (load_config().get("observability") or {}).get("pricing") or {}
     name = model.lower()
@@ -90,11 +95,11 @@ def _sorted(by_model: dict[str, ModelUsage]) -> list[ModelUsage]:
     return sorted(by_model.values(), key=lambda u: -u.total_tokens)
 
 
-# ── 单次 pipeline：本地 run 树聚合 ────────────────────────────────────────
+# ── single pipeline: aggregate the local run tree ───────────────────────
 
 
 def _walk_llm_runs(run: Any) -> Iterator[Any]:
-    """深度优先 yield run 树里所有 llm 节点（含 ReAct 子图内部调用）。"""
+    """Depth-first yield of every llm node in the run tree (including nested ReAct subgraph calls)."""
     if getattr(run, "run_type", None) == "llm":
         yield run
     for child in getattr(run, "child_runs", None) or []:
@@ -102,7 +107,7 @@ def _walk_llm_runs(run: Any) -> Iterator[Any]:
 
 
 def _find_usage_metadata(node: Any) -> dict | None:
-    """在 outputs 里递归找第一个 usage_metadata（跨 provider 归一字段）。"""
+    """Recursively find the first usage_metadata in outputs (a field normalized across providers)."""
     if isinstance(node, dict):
         if node.get("usage_metadata"):
             return node["usage_metadata"]
@@ -117,7 +122,7 @@ def _find_usage_metadata(node: Any) -> dict | None:
 
 
 def _usage_of(run: Any) -> tuple[int, int, int]:
-    """从本地 run.outputs 取 (input, output, total)。优先 usage_metadata，回落 token_usage。"""
+    """Get (input, output, total) from the local run.outputs. Prefers usage_metadata, falls back to token_usage."""
     outputs = getattr(run, "outputs", None) or {}
     if usage := _find_usage_metadata(outputs.get("generations")):
         return (
@@ -136,7 +141,7 @@ def _model_of(run: Any) -> str:
 
 
 def aggregate_traced(traced_runs: list[Any]) -> list[ModelUsage]:
-    """从本地 run 树按模型加和。traced_runs 为 collect_runs 收集的顶层 run。"""
+    """Sum tokens per model from the local run tree. traced_runs are the top-level runs collect_runs collected."""
     alias = _model_alias()
     by_model: dict[str, ModelUsage] = {}
     for root in traced_runs:
@@ -148,11 +153,13 @@ def aggregate_traced(traced_runs: list[Any]) -> list[ModelUsage]:
 
 @contextmanager
 def track_pipeline_tokens() -> Iterator[dict[str, Any]]:
-    """包住一次 graph.invoke；with 块结束后 box['usages'] 是本次各模型 token 加和。
+    """Wrap a single graph.invoke; after the with-block, box['usages'] holds this
+    run's per-model token totals.
 
-    box['run_id'] 是本次 trace 的 root run id（供回查 LangSmith 详情）。
-    try/finally 保证 graph.invoke 中途抛异常时 box 仍被填充——这恰恰是最需要回查
-    trace 的场景（调用失败），不能因为 with 块提前退出就丢了 run_id。
+    box['run_id'] is this trace's root run id (for looking up LangSmith details).
+    The try/finally ensures box still gets filled if graph.invoke raises mid-way --
+    that's exactly the scenario where you most need to look up the trace (a failed
+    call), so the run_id can't be lost just because the with-block exited early.
     """
     from langchain_core.tracers.context import collect_runs
 
@@ -165,11 +172,11 @@ def track_pipeline_tokens() -> Iterator[dict[str, Any]]:
             box["run_id"] = str(cb.traced_runs[0].id) if cb.traced_runs else None
 
 
-# ── 运行中实时：回调累加器（前端展示）──────────────────────────────────
+# ── live during a run: callback accumulator (frontend display) ─────────
 
 
 def _usage_from_llm_result(response: LLMResult) -> tuple[int, int, int]:
-    """从 on_llm_end 的 LLMResult 取 (input, output, total)。优先 usage_metadata。"""
+    """Get (input, output, total) from on_llm_end's LLMResult. Prefers usage_metadata."""
     for gens in response.generations:
         for gen in gens:
             if usage := getattr(getattr(gen, "message", None), "usage_metadata", None):
@@ -183,11 +190,13 @@ def _usage_from_llm_result(response: LLMResult) -> tuple[int, int, int]:
 
 
 class LiveTokenCounter(BaseCallbackHandler):
-    """运行中实时累加各模型 token，供前端轮询展示。
+    """Accumulates per-model tokens live during a run, for the frontend to poll.
 
-    挂到 graph.invoke/stream 的 config["callbacks"]，会传播到 ReAct 子图内部调用。
-    model 名只在 on_chat_model_start 的 metadata 里给，故按 run_id 暂存到 on_llm_end。
-    全程加锁，兼容 Send fanout 的并行写。审计回调永不打断主流程。
+    Attached to graph.invoke/stream's config["callbacks"], propagates into nested
+    ReAct subgraph calls. The model name is only given in on_chat_model_start's
+    metadata, so it's stashed by run_id until on_llm_end. Locked throughout, safe
+    for Send fanout's concurrent writes. This audit callback never interrupts the
+    main pipeline.
     """
 
     raise_error = False
@@ -219,12 +228,12 @@ class LiveTokenCounter(BaseCallbackHandler):
             self._model_of.pop(run_id, None)
 
     def snapshot(self) -> list[ModelUsage]:
-        """当前各模型加和的拷贝（按 total 降序），可在运行中任意时刻调用。"""
+        """A copy of the current per-model totals (sorted by total desc), callable at any point during a run."""
         with self._lock:
             return _sorted({model: replace(usage) for model, usage in self._by_model.items()})
 
     def as_rows(self) -> list[dict[str, Any]]:
-        """前端友好的可序列化快照（含 cost）。"""
+        """A frontend-friendly serializable snapshot (with cost)."""
         return [
             {
                 "model": u.model, "calls": u.calls,
@@ -239,13 +248,15 @@ class LiveTokenCounter(BaseCallbackHandler):
             return sum(u.total_tokens for u in self._by_model.values())
 
 
-# ── 单条 run 的 web 链接（前端「查看完整 Trace」）─────────────────────────
+# ── web link for a single run (frontend's "view full trace") ───────────
 
 
 def resolve_trace_url(langsmith_run_id: str | None) -> str | None:
-    """尽力返回 LangSmith run 的 web 链接。未开 tracing / 查询失败均返 None。
+    """Best-effort return of a LangSmith run's web link. Returns None if tracing is
+    off or the lookup fails.
 
-    需一次 read_run 网络往返换取 project 信息，故只在前端按需请求时调，不放 job 热路径。
+    Needs one read_run network round-trip to get project info, so this is only
+    called on-demand by the frontend, never on the job's hot path.
     """
     if not langsmith_run_id or os.getenv("LANGSMITH_TRACING", "").lower() not in ("true", "1"):
         return None
@@ -256,7 +267,7 @@ def resolve_trace_url(langsmith_run_id: str | None) -> str | None:
         return None
 
 
-# ── 跨项目历史：从 LangSmith 拉 ───────────────────────────────────────────
+# ── cross-project history: pulled from LangSmith ────────────────────────
 
 
 def _project() -> str:
@@ -276,7 +287,7 @@ def _latest_trace_id(client: Client, project: str) -> str:
 def aggregate_by_model(
     *, project: str | None = None, trace_id: str | None = None, cap: int | None = 300
 ) -> list[ModelUsage]:
-    """从 LangSmith 按模型加和 token（历史 / 跨次审计）。"""
+    """Sum tokens per model from LangSmith (historical / cross-run audit)."""
     project = project or _project()
     client = Client()
     alias = _model_alias()
@@ -296,11 +307,11 @@ def aggregate_by_model(
     return _sorted(by_model)
 
 
-# ── 展示 ─────────────────────────────────────────────────────────────────
+# ── display ─────────────────────────────────────────────────────────────
 
 
 def format_table(usages: list[ModelUsage]) -> str:
-    """对齐表格 + 合计行。"""
+    """An aligned table + a total row."""
     lines = [f"{'model':28} {'calls':>6} {'input':>10} {'output':>10} {'total':>10} {'cost$':>10}"]
     tcalls = tin = tout = ttot = 0
     tcost = 0.0

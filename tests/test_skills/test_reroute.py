@@ -1,4 +1,4 @@
-"""测试 reroute skill 流程（不调真 API）。"""
+"""Tests for the reroute skill's flow (no real API calls)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _patch_reroute_gpt(monkeypatch: pytest.MonkeyPatch, response):
 
 
 def _mk_payload(text: str, **extra) -> dict:
-    """ChallengePayload dict 形态。"""
+    """The ChallengePayload dict shape."""
     return {"claim": text, "evidence": [text], **extra}
 
 
@@ -46,7 +46,8 @@ def _make_signal(**overrides) -> AgentSignal:
 def test_reroute_data_gap_returns_phase_2(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """单产品数据缺失走 phase_2 重采，不重做 exploration（保留 debate 已收敛的 competitor_names）。"""
+    """A single product's missing data goes through phase_2 re-collection, not redone
+    exploration (preserving the competitor_names debate already converged on)."""
     from cca.skills.reroute import RerouteDecision, reroute
 
     decision = RerouteDecision(
@@ -87,7 +88,7 @@ def test_reroute_stale_competitor_returns_phase_1(
 def test_reroute_unavailable_dimension_returns_phase_3(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ReportTask 指定的 focus_dimensions 数据不足 → phase_3 让 PM 重制 ReportTask。"""
+    """ReportTask's specified focus_dimensions has insufficient data -> phase_3 lets PM remake ReportTask."""
     from cca.skills.reroute import RerouteDecision, reroute
 
     signal = _make_signal(
@@ -158,7 +159,7 @@ def test_apply_reroute_phase_2_clears_task_plan() -> None:
 
 
 def test_apply_reroute_phase_3_clears_report_task() -> None:
-    """phase_3 现在对应 ReportTask 重派（Analyst 已并入 Reporter）。"""
+    """phase_3 now corresponds to re-dispatching ReportTask (Analyst has been folded into Reporter)."""
     from cca.skills.reroute import RerouteDecision, apply_reroute
 
     decision = RerouteDecision(

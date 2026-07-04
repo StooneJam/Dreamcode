@@ -1,13 +1,15 @@
-"""LLM 结构化输出兼容层 —— 兼容不支持 tool_choice / response_format 的推理模型。
+"""LLM structured-output compatibility layer -- for reasoning models that don't
+support tool_choice / response_format.
 
-用法（替代 llm.with_structured_output(MyModel)）：
+Usage (in place of llm.with_structured_output(MyModel)):
     from cca.llm.structured import invoke_structured
     result = invoke_structured(deepseek, messages, MyModel)
 
-原理：
-    把 JSON Schema 追加到最后一条 HumanMessage，要求模型输出合法 JSON；
-    用正则从回复文本中提取 JSON 块并用 Pydantic 解析。
-    不依赖 response_format / tool_choice，兼容所有 DeepSeek 模型包括推理版。
+How it works:
+    Append the JSON Schema to the last HumanMessage, asking the model for valid JSON;
+    extract the JSON block from the reply via regex and parse it with Pydantic.
+    Doesn't rely on response_format / tool_choice, so it works with every DeepSeek
+    model including reasoning variants.
 """
 from __future__ import annotations
 
@@ -27,7 +29,7 @@ def invoke_structured(
     messages: list[BaseMessage],
     output_class: Type[T],
 ) -> T:
-    """调用 LLM，将响应解析为指定 Pydantic 模型。"""
+    """Invoke the LLM and parse the response into the given Pydantic model."""
     schema_str = json.dumps(output_class.model_json_schema(), ensure_ascii=False, indent=2)
     instruction = (
         "\n\n请严格按照以下 JSON Schema 输出一个合法的 JSON 对象，"
@@ -44,13 +46,13 @@ def invoke_structured(
 
 
 def _extract(text: str, output_class: Type[T]) -> T:
-    """从 LLM 回复中提取 JSON 并解析。"""
-    # 优先匹配 ```json ... ```
+    """Extract and parse JSON from the LLM's reply."""
+    # prefer a ```json ... ``` fenced block
     m = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
     if m:
         return output_class.model_validate_json(m.group(1))
 
-    # 其次匹配最外层 { ... }
+    # otherwise, the outermost { ... }
     m = re.search(r"\{[\s\S]+\}", text)
     if m:
         return output_class.model_validate_json(m.group(0))

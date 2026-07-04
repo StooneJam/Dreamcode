@@ -1,9 +1,9 @@
-"""快速测试 Report Agent 输出，跳过上游 PM / Collector / Insight 阶段。
+"""Quickly test Report Agent's output, skipping the upstream PM/Collector/Insight phases.
 
-用法：
+Usage:
     python scripts/demo/test_report.py
-    python scripts/demo/test_report.py --target 飞书 --competitors 钉钉 企业微信
-    python scripts/demo/test_report.py --reviewer          # 启用豆包终审
+    python scripts/demo/test_report.py --target Feishu --competitors DingTalk WeCom
+    python scripts/demo/test_report.py --reviewer          # enable Doubao final review
 """
 from __future__ import annotations
 

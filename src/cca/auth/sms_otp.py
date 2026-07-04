@@ -11,7 +11,7 @@ def send_otp(phone: str) -> None:
     code = f"{random.randint(0, 999999):06d}"
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
     db.save_otp(phone, code, expires_at)
-    print(f"[SMS] {phone} 验证码: {code}")  # 开发期可见，上线前删除
+    print(f"[SMS] {phone} 验证码: {code}")  # visible during dev, remove before shipping
     _send_via_tencent(phone, code)
 
 

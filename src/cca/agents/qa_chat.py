@@ -1,10 +1,11 @@
-"""报告 Q&A：基于已生成报告的多轮答疑。纯函数，便于单测与 Phase 2 持久化复用。"""
+"""Report Q&A: multi-turn Q&A grounded in an already-generated report. Pure functions,
+easy to unit test and reuse for phase-2 persistence."""
 from __future__ import annotations
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
-# 保留最近 N 轮（每轮 user+assistant 两条）历史，超出丢最旧以控 token
+# keep the last N turns (2 messages per turn: user+assistant); drop oldest to bound tokens
 _MAX_HISTORY_TURNS = 8
 
 _SYSTEM = (
@@ -16,14 +17,14 @@ _SYSTEM = (
 
 
 def trim_history(history: list[dict], max_turns: int = _MAX_HISTORY_TURNS) -> list[dict]:
-    """只保留最近 max_turns 轮对话（每轮含 user+assistant 两条）。"""
+    """Keep only the last max_turns turns (2 messages per turn: user+assistant)."""
     if max_turns <= 0:
         return []
     return history[-max_turns * 2:]
 
 
 def build_qa_messages(report_md: str, history: list[dict], question: str) -> list[BaseMessage]:
-    """组装答疑 messages：System(报告全文) + 最近若干轮历史 + 本轮问题。"""
+    """Assemble the Q&A messages: System(full report) + recent history + this question."""
     messages: list[BaseMessage] = [SystemMessage(content=_SYSTEM.format(report=report_md))]
     for turn in trim_history(history):
         content = turn.get("content", "")
@@ -38,6 +39,7 @@ def build_qa_messages(report_md: str, history: list[dict], question: str) -> lis
 def answer_question(
     report_md: str, history: list[dict], question: str, llm: BaseChatModel
 ) -> str:
-    """基于报告多轮答疑，返回助手回答文本。llm 由调用方按凭证构造后传入。"""
+    """Answer a question grounded in the report; returns the assistant's reply text.
+    llm is built by the caller from its own credentials."""
     reply = llm.invoke(build_qa_messages(report_md, history, question))
     return (reply.content or "").strip()

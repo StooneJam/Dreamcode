@@ -1,7 +1,8 @@
-"""Plumbing 验证脚本 —— mock 所有 LLM + Collector / Insight ReAct，秒级跑 graph 主线。
+"""Plumbing verification script -- mocks every LLM + Collector/Insight ReAct call, runs the graph's main line instantly.
 
-不调真 LLM、不联网、不写真 cache（强制 CCA_CACHE_MODE=off 防 mock 数据污染）。
-作用：CI smoke test、改图后快速验证连接性。
+Never calls a real LLM, never goes online, never writes to the real cache (forces
+CCA_CACHE_MODE=off to prevent mock data from polluting it).
+Purpose: CI smoke test, quick connectivity check after changing the graph.
 
 Usage:
     $env:PYTHONPATH="src"; $env:PYTHONIOENCODING="utf-8"
@@ -39,7 +40,7 @@ from cca.schema import (
 from cca.demo._common import hr, show_decisions, summary
 
 
-# ── fake LLM 工厂 ──────────────────────────────────────────────────────
+# ── fake LLM factory ─────────────────────────────────────────────────
 
 
 class _FakeStructured:
@@ -51,7 +52,7 @@ class _FakeStructured:
 
 
 class _FakePMClient:
-    """覆盖 with_structured_output 的最小 PM client。"""
+    """Minimal PM client overriding with_structured_output."""
 
     def __init__(self, responses_by_type: dict) -> None:
         self._responses = responses_by_type
@@ -121,7 +122,7 @@ def _pm_responses() -> dict:
     }
 
 
-# ── fake ReAct messages ────────────────────────────────────────────────
+# ── fake ReAct messages ──────────────────────────────────────────────
 
 
 def _collector_exploration_msgs() -> list[Any]:
@@ -159,7 +160,7 @@ def _insight_msgs(names: list[str]) -> list[Any]:
 
 
 def _patch_all() -> None:
-    """patch PM + collector + insight 的 LLM 入口。"""
+    """Patch PM + collector + insight's LLM entry points."""
     import cca.agents.pm as pm_mod
     fake_pm = _FakePMClient(_pm_responses())
     pm_mod.get_llm = lambda _family: fake_pm  # type: ignore[assignment]
@@ -170,7 +171,7 @@ def _patch_all() -> None:
     explore_agent.invoke.return_value = {"messages": _collector_exploration_msgs()}
     col_mod.create_react_agent = lambda _bound=explore_agent, **_k: _bound  # type: ignore[assignment]
 
-    # Collector phase 2: 直接替换 collect_one_product 返回固定 Profile
+    # Collector phase 2: replace collect_one_product directly, returning a fixed Profile
     def _fake_collect(task, _ctx):
         from cca.schema import (
             Dimension, Evidence, Fact, PricingInfo, PricingTier, ProductProfile,
@@ -196,7 +197,7 @@ def _patch_all() -> None:
         }
     col_mod.collect_one_product = _fake_collect  # type: ignore[assignment]
 
-    # Insight: mock create_react_agent，但 collector / insight 共享 langgraph 模块所以分开 patch
+    # Insight: mock create_react_agent; collector/insight share the langgraph module, so patched separately
     import cca.agents.insight as ins_mod
     insight_agent = MagicMock()
     insight_agent.invoke.return_value = {"messages": _insight_msgs(["钉钉", "企业微信"])}
@@ -211,7 +212,7 @@ def main() -> None:
                    help="验证 human_gate interrupt/resume 闭环（canned feedback，零 API）")
     args = p.parse_args()
 
-    # dry-run 时强制 cache=off，避免 mock 数据写进真 cache
+    # force cache=off during dry-run, to keep mock data out of the real cache
     os.environ["CCA_CACHE_MODE"] = "off"
     print("[dry-run] CCA_CACHE_MODE=off（防 mock 污染 cache）", flush=True)
 
@@ -232,7 +233,8 @@ def main() -> None:
 
 
 def _run_with_human_review(args: argparse.Namespace) -> dict:
-    """canned-feedback 驱动 interrupt/resume，验证人在环闭环连接性（零 API）。"""
+    """Drive interrupt/resume with canned feedback, verifying the human-in-the-loop
+    connectivity end-to-end (zero API calls)."""
     from langgraph.checkpoint.memory import MemorySaver
     from langgraph.types import Command
 

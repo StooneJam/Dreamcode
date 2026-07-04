@@ -1,4 +1,4 @@
-"""call_report_reviewer skill — Doubao 跨家族审查报告 MD 与 profiles 的一致性。"""
+"""call_report_reviewer skill -- Doubao cross-family review of report MD vs. profiles consistency."""
 from __future__ import annotations
 
 import json
@@ -19,28 +19,29 @@ class _ReviewOutput(BaseModel):
 
 
 _SYSTEM = """\
-你是竞品分析报告的质检专家。核查报告内容是否忠实于原始档案数据，识别无法溯源的事实断言。
+You are a QA expert for competitive analysis reports. Check whether the report content
+is faithful to the original profile data, and identify any factual claims that can't be traced back to it.
 
-检查清单：
-1. 报告中的所有产品名、公司名是否出现在档案数据中
-2. 数值数据（定价、评分、用户数等）是否与档案一致，不得自行推算或估值
-3. 结论段落是否存在超出档案范围的无依据断言（合理归纳允许，无来源断言不允许）
-4. 标注为低置信度的数据是否已在报告中注明
+Checklist:
+1. Do all product names and company names in the report appear in the profile data?
+2. Do numeric figures (pricing, ratings, user counts, etc.) match the profile data, with no self-computed or estimated values?
+3. Does the conclusion section make any unsupported claims beyond the profile data (reasonable synthesis is fine, unsourced claims are not)?
+4. Is data flagged as low-confidence noted as such in the report?
 
-判定标准：
-- passed=true：无重大错误或仅有轻微措辞差异
-- passed=false：存在 1 条以上无法溯源的事实性断言
-- retry_recommended=true：存在影响结论可信度的重大错误
-- failed_checks：每条问题格式为"[章节名] 具体问题描述"\
+Verdict criteria:
+- passed=true: no major errors, or only minor wording differences
+- passed=false: one or more untraceable factual claims exist
+- retry_recommended=true: an error exists that materially affects the conclusion's credibility
+- failed_checks: each item formatted as "[section name] specific description of the issue"\
 """
 
 
 def call_report_reviewer(report_md: str, profiles: dict[str, dict]) -> QAResult:
-    """Doubao 跨家族审查报告一致性与事实可溯源性。"""
+    """Doubao cross-family review of report consistency and factual traceability."""
     profiles_json = json.dumps(profiles, ensure_ascii=False, indent=2)
     user = (
-        f"## 原始档案数据（Ground Truth）\n\n```json\n{profiles_json}\n```\n\n"
-        f"## 待审查报告\n\n{report_md}"
+        f"## Original Profile Data (Ground Truth)\n\n```json\n{profiles_json}\n```\n\n"
+        f"## Report Under Review\n\n{report_md}"
     )
     llm = get_llm("doubao").with_structured_output(_ReviewOutput, method="function_calling")
     out = cast(

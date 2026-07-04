@@ -1,6 +1,7 @@
-"""App Store 爬取 —— Node.js 子进程调用 app-store-scraper。
+"""App Store scraping -- calls app-store-scraper via a Node.js subprocess.
 
-依赖：scripts/node/ 先执行 `npm install`；未装时工具返 JSON 错误，LLM 自然换 web_search。
+Dependency: run `npm install` in scripts/node/ first; if missing, the tool returns a
+JSON error and the LLM naturally falls back to web_search.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ _NODE_SCRIPT = Path(__file__).parents[3] / "scripts" / "node" / "app_store_scrap
 
 
 def _run_scraper(product_name: str, country: str, max_reviews: int) -> dict:
-    """调 Node 脚本。失败时返 {"error": ..., "product_name": ...} 而非 raise。"""
+    """Call the Node script. Returns {"error": ..., "product_name": ...} on failure instead of raising."""
     try:
         result = subprocess.run(
             ["node", str(_NODE_SCRIPT), product_name, country, str(max_reviews)],
@@ -40,11 +41,12 @@ def _run_scraper(product_name: str, country: str, max_reviews: int) -> dict:
 
 @tool
 def scrape_app_store(product_name: str, country: str = "cn", max_reviews: int = 50) -> str:
-    """从 App Store 爬取应用评分与评论。
+    """Scrape an app's rating and reviews from the App Store.
 
-    返回 JSON 字符串，含 rating / review_count / reviews 列表（每条 review 含 rating 1-5 / title / text）。
-    country 默认 "cn"（中国区），max_reviews 最多 200。
-    失败（Node 未装 / 超时 / 找不到应用）会返 {"error": ...}；调用方应自行降级 web_search。
+    Returns a JSON string with rating / review_count / a reviews list (each review
+    has rating 1-5 / title / text). country defaults to "cn", max_reviews caps at 200.
+    On failure (Node missing / timeout / app not found) returns {"error": ...}; the
+    caller should fall back to web_search itself.
     """
     data = _run_scraper(product_name, country, min(max_reviews, 200))
     return json.dumps(data, ensure_ascii=False)

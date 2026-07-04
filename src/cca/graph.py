@@ -1,12 +1,14 @@
-"""主图编排：PM 三阶段 + Collector/Insight Send fanout + Report 串行。
+"""Main graph orchestration: PM's three phases + Collector/Insight Send fanout + Report in series.
 
-task_plan 之后 Collector phase 2 与 Insight 按产品 fanout 并行；
-全部产品就绪后汇入 report_task。
+After task_plan, Collector phase 2 and Insight fan out in parallel per product;
+once all products are ready they converge into report_task.
 
-信号路由：review 出口依 has_pending_signal 走 handle_signal，handle_signal 再依被
-清空/reject 字段回对应 PM 阶段（initial_brief / exploration / task_plan / report_task）。
+Signal routing: review's exit routes to handle_signal based on has_pending_signal;
+handle_signal then routes back to the corresponding PM phase (initial_brief /
+exploration / task_plan / report_task) based on which field got cleared/rejected.
 
-report 是终点：Reporter 不向 PM 发反驳信号（report → END），有意不设回路。
+report is a terminal node: Reporter never sends a rebuttal signal back to PM
+(report -> END) -- no loop back by design.
 """
 from __future__ import annotations
 
@@ -40,7 +42,7 @@ NODE_HANDLE_SIGNAL = "handle_signal"
 
 
 def _skip_result(agent: str, product_name: str, exc: Exception) -> dict:
-    """节点异常时产出最小 forced 占位，让流程继续。"""
+    """Produce a minimal forced placeholder on node exception so the pipeline can continue."""
     from datetime import datetime, timezone
     note = f"{type(exc).__name__}: {str(exc)[:200]}"
     return {
@@ -57,7 +59,8 @@ def _skip_result(agent: str, product_name: str, exc: Exception) -> dict:
 
 
 def _collect_product_node(state: CCAState) -> dict:
-    """Send fanout worker：单产品深采集。走模块引用以支持 test mock。"""
+    """Send fanout worker: deep collection for a single product. Calls via module
+    reference so tests can mock it."""
     task_data = state["_fanout_task"]
     product_name = task_data.get("product_name", "unknown") if isinstance(task_data, dict) else "unknown"
     try:
@@ -68,7 +71,8 @@ def _collect_product_node(state: CCAState) -> dict:
 
 
 def _insight_product_node(state: CCAState) -> dict:
-    """Send fanout worker：单产品 sentiment 分析。走模块引用以支持 test mock。"""
+    """Send fanout worker: sentiment analysis for a single product. Calls via module
+    reference so tests can mock it."""
     task_data = state["_fanout_task"]
     product_name = task_data.get("product_name", "unknown") if isinstance(task_data, dict) else "unknown"
     try:
@@ -79,10 +83,11 @@ def _insight_product_node(state: CCAState) -> dict:
 
 
 def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
-    """task_plan 后 fanout 出 collect_product + insight_product 并行。
+    """After task_plan, fan out collect_product + insight_product in parallel.
 
-    空 tasks 时直接路由到 human_gate（再到 review），避免空 fanout。
-    reroute 重跑时跳过已通过评审的产品，避免全量重采。
+    Empty tasks route straight to human_gate (then review), avoiding an empty fanout.
+    On a reroute re-run, products that already passed review are skipped to avoid
+    re-collecting everything.
     """
     raw = state.get("task_plan") or {}
     try:
@@ -90,7 +95,7 @@ def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
     except Exception:
         return NODE_HUMAN_GATE
 
-    # 已通过评审的 (agent, product) 对不再重采
+    # (agent, product) pairs that already passed review are not re-collected
     passed = {
         (rs["agent"], rs["product_name"])
         for rs in (state.get("review_state") or [])
@@ -121,12 +126,14 @@ def _dispatch_collect_insight(state: CCAState) -> list[Send] | str:
 
 
 def _route_after_review(state: CCAState) -> str:
-    """review 出口：有任何未消费 signal → handle_signal；否则 → report_task。
+    """review's exit: any unconsumed signal -> handle_signal; otherwise -> report_task.
 
-    判断口径与 handle_signal_node 内部一致——软（debate）/硬（reroute）信号都接，
-    避免纯主观信号因门只认 factual 而被卡在外面（含上游 exploration 阶段累加的
-    initial_brief 主观质疑）。reroute_count 达上限时 review_node 已把 needs_retry
-    全升 forced 不再 raise signal，所以此处只需判断是否有 unconsumed pending。
+    Matches handle_signal_node's own criteria -- both soft (debate) and hard (reroute)
+    signals are accepted, so a purely subjective signal isn't blocked by a
+    factual-only gate (this includes subjective challenges accumulated from the
+    upstream exploration/initial_brief phase). Once reroute_count hits the limit,
+    review_node has already escalated all needs_retry to forced and stops raising
+    signals, so this only needs to check for unconsumed pending signals.
     """
     raw = state.get("agent_signals") or []
     consumed = set(state.get("consumed_signal_ids") or [])
@@ -135,10 +142,12 @@ def _route_after_review(state: CCAState) -> str:
 
 
 def _route_after_signal(state: CCAState) -> str:
-    """handle_signal 出口：按被清空（reroute）或被 reject（debate）的字段决定回到哪个 PM 阶段。
+    """handle_signal's exit: routes back to whichever PM phase had its field
+    cleared (reroute) or rejected (debate).
 
-    顺序按管线先后：initial_brief → exploration → task_plan → report_task。
-    accepted_with_revision 不清字段 → 落到 END（避免回路；修订已写回，下游沿用）。
+    Ordered by pipeline sequence: initial_brief -> exploration -> task_plan -> report_task.
+    accepted_with_revision clears no field -> falls through to END (no loop back;
+    the revision is already written back and downstream reuses it).
     """
     if state.get("initial_brief") is None:
         return NODE_INITIAL_BRIEF
@@ -152,13 +161,14 @@ def _route_after_signal(state: CCAState) -> str:
 
 
 def build_graph(*, include_report: bool = True, checkpointer=None):
-    """编译主图。
+    """Compile the main graph.
 
-    include_report=False 时 report 节点不接入（demo 时 `--skip-report` 省 token）。
-    handle_signal_node 接在 review 出口的条件边上（见 _route_after_review）。
+    include_report=False skips wiring in the report node (saves tokens for demo's `--skip-report`).
+    handle_signal_node sits on review's conditional exit edge (see _route_after_review).
 
-    checkpointer：human_gate 的 interrupt/resume 依赖它。交互式前端传 MemorySaver 等；
-    非交互（脚本/测试/cache-fill）传 None——此时 human_gate 走 CCA_HUMAN_REVIEW 关闭分支直接放行。
+    checkpointer: human_gate's interrupt/resume depends on it. The interactive frontend
+    passes a MemorySaver etc.; non-interactive callers (scripts/tests/cache-fill) pass
+    None -- in that case human_gate's CCA_HUMAN_REVIEW-off branch passes straight through.
     """
     g = StateGraph(CCAState)
 
@@ -176,7 +186,7 @@ def build_graph(*, include_report: bool = True, checkpointer=None):
     g.add_edge(NODE_INITIAL_BRIEF, NODE_EXPLORATION)
     g.add_edge(NODE_EXPLORATION, NODE_TASK_PLAN)
 
-    # Send fanout：collect_product ‖ insight_product → human_gate → review
+    # Send fanout: collect_product || insight_product -> human_gate -> review
     g.add_conditional_edges(
         NODE_TASK_PLAN, _dispatch_collect_insight,
         path_map=[NODE_COLLECT_PRODUCT, NODE_INSIGHT_PRODUCT, NODE_HUMAN_GATE],
@@ -185,12 +195,12 @@ def build_graph(*, include_report: bool = True, checkpointer=None):
     g.add_edge(NODE_INSIGHT_PRODUCT, NODE_HUMAN_GATE)
     g.add_edge(NODE_HUMAN_GATE, NODE_REVIEW)
 
-    # review 后：有 pending signal → handle_signal；否则 → report_task
+    # after review: pending signal -> handle_signal; otherwise -> report_task
     g.add_conditional_edges(
         NODE_REVIEW, _route_after_review,
         path_map=[NODE_HANDLE_SIGNAL, NODE_REPORT_TASK],
     )
-    # handle_signal 后按清空/reject 字段路由回 PM 阶段
+    # after handle_signal: route back to a PM phase based on the cleared/rejected field
     g.add_conditional_edges(
         NODE_HANDLE_SIGNAL, _route_after_signal,
         path_map=[NODE_INITIAL_BRIEF, NODE_EXPLORATION, NODE_TASK_PLAN, NODE_REPORT_TASK, END],
@@ -207,7 +217,7 @@ def build_graph(*, include_report: bool = True, checkpointer=None):
 
 
 def empty_state(user_query: str, target_product: str, user_files: list[str] | None = None) -> CCAState:
-    """构造图的最小起点 state。"""
+    """Build the graph's minimal starting state."""
     from datetime import datetime, timezone
     return {
         "user_query": user_query,

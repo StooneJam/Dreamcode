@@ -1,6 +1,6 @@
-"""demo 三脚本共享 helper：打印、state 落盘、CCAState 摘要。
+"""Shared helper for the three demo scripts: printing, state persistence, CCAState summaries.
 
-player.py / runner.py / dry_run.py 各自负责自己的 LLM patching，本文件只放纯 I/O 与展示。
+player.py / runner.py / dry_run.py each handle their own LLM patching; this file only holds pure I/O and display.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ _hr_start: float | None = None
 
 
 def hr(title: str) -> None:
-    """段块分隔线，自动显示相对于首次调用的已耗时。"""
+    """A section divider, auto-showing elapsed time since the first call."""
     global _hr_start
     if _hr_start is None:
         _hr_start = time.monotonic()
@@ -31,7 +31,7 @@ def sub(title: str) -> None:
 
 
 def dump_json(label: str, data: Any, indent: int = 4) -> None:
-    """打印任意 JSON 可序列化对象。"""
+    """Print any JSON-serializable object."""
     text = json.dumps(data, ensure_ascii=False, indent=2, default=str)
     indented = "\n".join(" " * indent + line for line in text.splitlines())
     print(f"  {label}:\n{indented}", flush=True)
@@ -50,7 +50,7 @@ def show_decisions(log: list[dict]) -> None:
 
 
 def _elapsed_str(start_ts: str | None, end_ts: str | None) -> str:
-    """将两个 ISO 8601 UTC 时间戳换算为可读耗时字符串。"""
+    """Convert two ISO 8601 UTC timestamps into a readable elapsed-time string."""
     if not start_ts:
         return "(未记录)"
     try:
@@ -64,7 +64,7 @@ def _elapsed_str(start_ts: str | None, end_ts: str | None) -> str:
 
 
 def summary(state: CCAState) -> None:
-    """END 终态摘要。"""
+    """Final-state summary at END."""
     hr("END · 终态摘要")
     elapsed = _elapsed_str(state.get("analysis_start_ts"), state.get("analysis_end_ts"))
     print(f"  分析耗时: {elapsed}", flush=True)

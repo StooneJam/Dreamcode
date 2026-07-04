@@ -1,6 +1,6 @@
-"""PM Agent 测试（不调真 API）。
+"""PM Agent tests (no real API calls).
 
-覆盖 3 个阶段节点的输出结构 + 信号处理，不测试 LLM 内容质量。
+Covers the output structure of the 3 phase nodes + signal handling; doesn't test LLM content quality.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from cca.state import CCAState
 
 
 def _mk_decision(decision_type: str = "other", **overrides) -> DecisionRecord:
-    """构造最小可用 DecisionRecord，供 fake LLM 响应内嵌。phase 会被节点覆盖。"""
+    """Build a minimal usable DecisionRecord, embedded in fake LLM responses. phase gets overwritten by the node."""
     defaults: dict = {
         "phase": "initial_brief",
         "decision_type": decision_type,
@@ -37,12 +37,12 @@ def _mk_decision(decision_type: str = "other", **overrides) -> DecisionRecord:
 
 
 def _mk_payload(text: str) -> dict:
-    """构造 ChallengePayload 的 dict 形态供 AgentSignal.payload 用。"""
+    """Build ChallengePayload's dict shape for AgentSignal.payload."""
     return {"claim": text, "evidence": [text]}
 
 
 class _FakeStructuredLLM:
-    """模拟 with_structured_output() 返回的可调用对象。"""
+    """Simulates the callable returned by with_structured_output()."""
 
     def __init__(self, response):
         self._response = response
@@ -52,16 +52,17 @@ class _FakeStructuredLLM:
 
 
 class _FakeMessage:
-    """模拟 ChatOpenAI 直出（无 structured）返回的 AIMessage。"""
+    """Simulates the AIMessage returned by a direct (non-structured) ChatOpenAI call."""
 
     def __init__(self, content: str):
         self.content = content
 
 
 def _patch_pm_gpt(monkeypatch: pytest.MonkeyPatch, response, *, fallback_content: str = ""):
-    """替换 pm.get_llm：with_structured_output 走 fake；直接 invoke 走 JSON 直出兜底。
+    """Replace pm.get_llm: with_structured_output goes through the fake; a direct invoke goes through the JSON fallback.
 
-    fallback_content 为兜底通道返回的原始文本，默认空 → pydantic 校验失败 → _invoke_pm raise。
+    fallback_content is the raw text returned by the fallback channel; empty by
+    default -> pydantic validation fails -> _invoke_pm raises.
     """
     fake = _FakeStructuredLLM(response)
 
@@ -104,7 +105,7 @@ def _make_minimal_state(**overrides) -> CCAState:
     return state
 
 
-# ── Phase 1: InitialBrief ──────────────────────────────────────────────
+# ── Phase 1: InitialBrief ────────────────────────────────────────────
 
 
 def test_initial_brief_node_returns_initial_brief(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -127,14 +128,14 @@ def test_initial_brief_node_returns_initial_brief(monkeypatch: pytest.MonkeyPatc
     assert len(result["decision_log"]) == 1
     assert result["decision_log"][0]["phase"] == "initial_brief"
     assert result["decision_log"][0]["decision_type"] == "target_product_selection"
-    # 没上传文件 → domain_seed 不在 updates 里
+    # no file uploaded -> domain_seed isn't in updates
     assert "domain_seed" not in result
 
 
 def test_initial_brief_node_writes_back_refined_target_product(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PM 精炼后的 target_product 回写 state，成为单一来源（覆盖入口原值）。"""
+    """PM's refined target_product is written back to state, becoming the single source of truth (overwriting the raw entry value)."""
     output = InitialBriefOutput(
         initial_brief=InitialBrief(
             target_product="小米 Buds 4",
@@ -156,7 +157,8 @@ def test_initial_brief_node_writes_back_refined_target_product(
 def test_initial_brief_node_consumes_user_file_and_produces_domain_seed(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
-    """state.user_files 有路径 → 抽文本喂 prompt → LLM 返回 DomainSeed → 落 state.domain_seed。"""
+    """state.user_files has a path -> text is extracted and fed into the prompt -> the
+    LLM returns a DomainSeed -> it lands in state.domain_seed."""
     seed_file = tmp_path / "market.md"
     seed_file.write_text(
         "# 市场调研\n飞书在协同办公赛道，主要对手是钉钉、企业微信。\n关键维度：视频会议、AI 助手、定价。",
@@ -194,7 +196,7 @@ def test_initial_brief_node_consumes_user_file_and_produces_domain_seed(
 def test_initial_brief_node_missing_user_file_logs_audit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """文件路径不存在 → 不抛异常，audit_log 记 file_read_failed，无 domain_seed。"""
+    """File path doesn't exist -> no exception raised, audit_log records file_read_failed, no domain_seed."""
     output = InitialBriefOutput(
         initial_brief=InitialBrief(
             target_product="飞书", company_hint=None, user_query="分析飞书",
@@ -217,7 +219,7 @@ def test_initial_brief_node_missing_user_file_logs_audit(
 def test_initial_brief_node_multi_file_keeps_first_logs_warning(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
-    """多文件 → 只读第一个 + audit_log 记 multi_file_warning。"""
+    """Multiple files -> only the first is read + audit_log records multi_file_warning."""
     f1 = tmp_path / "a.md"
     f2 = tmp_path / "b.md"
     f1.write_text("first", encoding="utf-8")
@@ -246,7 +248,7 @@ def test_initial_brief_node_multi_file_keeps_first_logs_warning(
 def test_initial_brief_node_skips_domain_seed_when_llm_returns_none(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
-    """文件读到了但 LLM 没返回 domain_seed → state.domain_seed 不写入。"""
+    """File was read but the LLM didn't return domain_seed -> state.domain_seed is not written."""
     p = tmp_path / "x.md"
     p.write_text("noise", encoding="utf-8")
 
@@ -321,7 +323,7 @@ def _mk_taskplan_output() -> TaskPlanOutput:
 def test_invoke_pm_falls_back_to_json_when_structured_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """function_calling 持续返 None → 切 JSON 直出通道，本地解析出真实对象。"""
+    """function_calling keeps returning None -> falls back to the raw JSON channel, parsed locally into a real object."""
     _patch_pm_gpt(monkeypatch, None, fallback_content=_mk_taskplan_output().model_dump_json())
 
     from cca.agents.pm import _invoke_pm
@@ -335,7 +337,7 @@ def test_invoke_pm_falls_back_to_json_when_structured_returns_none(
 def test_invoke_pm_json_fallback_strips_markdown_fence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """兜底通道：模型用 ```json 围栏包裹也能抠出 JSON 解析。"""
+    """Fallback channel: JSON can still be extracted even when the model wraps it in a ```json fence."""
     fenced = f"```json\n{_mk_taskplan_output().model_dump_json()}\n```"
     _patch_pm_gpt(monkeypatch, None, fallback_content=fenced)
 
@@ -348,7 +350,7 @@ def test_invoke_pm_json_fallback_strips_markdown_fence(
 def test_invoke_pm_raises_when_structured_and_json_both_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """两条通道都拿不到合法结构 → RuntimeError，由调用方决定崩还是降级。"""
+    """Neither channel produces a valid structure -> RuntimeError, letting the caller decide whether to crash or degrade."""
     _patch_pm_gpt(monkeypatch, None, fallback_content="对不起，我无法完成。")
 
     from cca.agents.pm import _invoke_pm
@@ -357,7 +359,7 @@ def test_invoke_pm_raises_when_structured_and_json_both_fail(
         _invoke_pm(TaskPlanOutput, "阶段二 TaskPlan", {"user_query": "x"})
 
 
-# ── Phase 3: ReportTask（合并了原 AnalystTask 字段） ────────────────────
+# -- Phase 3: ReportTask (merges the former AnalystTask fields) --------------------
 
 
 def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -406,7 +408,7 @@ def test_report_task_node_returns_report_task(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_initial_brief_passes_user_query_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
-    """user_query 原样透传，不做加工。"""
+    """user_query is passed through unchanged, no processing."""
     output = InitialBriefOutput(
         initial_brief=InitialBrief(
             target_product="小米 Buds 4",
@@ -424,7 +426,7 @@ def test_initial_brief_passes_user_query_unchanged(monkeypatch: pytest.MonkeyPat
 
 
 def test_stamp_decisions_overrides_phase() -> None:
-    """LLM 自报错 phase 时，_stamp_decisions 必须覆盖为节点指定的 phase。"""
+    """When the LLM misreports phase, _stamp_decisions must overwrite it with the phase specified by the node."""
     from cca.agents.pm import _stamp_decisions
 
     records = [
@@ -440,7 +442,7 @@ def test_stamp_decisions_overrides_phase() -> None:
 
 
 def test_prompt_file_loads() -> None:
-    """系统 prompt 文件存在且非空。"""
+    """The system prompt file exists and is non-empty."""
     from cca.agents.pm import _load_system_prompt
 
     prompt = _load_system_prompt()
@@ -460,7 +462,7 @@ def _mk_decision_dict(
     alternatives: list[dict] | None = None,
     inputs_used: list[str] | None = None,
 ) -> dict:
-    """构造 decision_log 中的单条记录 dict（已 model_dump 形态）。"""
+    """Builds a single decision_log record dict (already in model_dump form)."""
     return DecisionRecord(
         phase=phase,  # type: ignore[arg-type]
         decision_type=decision_type,
@@ -472,7 +474,7 @@ def _mk_decision_dict(
 
 
 def test_read_defense_task_plan_reads_decision_log() -> None:
-    """defense 不再从 task_plan 字段拼装，改从 decision_log 同 phase 决策聚合。"""
+    """defense is no longer assembled from the task_plan field; it's aggregated from decision_log entries of the same phase."""
     from cca.agents.pm import _read_defense
 
     state = _make_minimal_state(
@@ -518,7 +520,7 @@ def test_read_defense_report_task_reads_decision_log() -> None:
         ],
     )
     pos = _read_defense("report_task", state)
-    # 两条决策都进入 claim
+    # Both decisions land in claim
     assert "[report_structure]" in pos.claim
     assert "[audience_choice]" in pos.claim
     assert "按 SWOT 高亮项组织章节" in pos.claim
@@ -526,7 +528,7 @@ def test_read_defense_report_task_reads_decision_log() -> None:
 
 
 def test_read_defense_falls_back_when_no_decision() -> None:
-    """decision_log 中无对应 phase 时，给最小占位 defense 而非崩溃。"""
+    """When decision_log has no matching phase, a minimal placeholder defense is given instead of crashing."""
     from cca.agents.pm import _read_defense
 
     state = _make_minimal_state()
@@ -537,7 +539,7 @@ def test_read_defense_falls_back_when_no_decision() -> None:
 
 
 def test_read_defense_ignores_decisions_from_other_phases() -> None:
-    """task_plan 阶段的 defense 不应混入 initial_brief / report_task 的决策。"""
+    """The task_plan phase's defense should not mix in decisions from initial_brief / report_task."""
     from cca.agents.pm import _read_defense
 
     state = _make_minimal_state(
@@ -591,13 +593,13 @@ def test_apply_debate_result_accepted_revises_task_plan() -> None:
 
 
 def test_apply_debate_result_rejected_clears_target_task() -> None:
-    """rejected verdict 必须清空对应 task 字段，触发上游路由重派该阶段。"""
+    """A rejected verdict must clear the corresponding task field, triggering upstream routing to redo that phase."""
     from cca.agents.pm import _apply_debate_result
 
     result = _make_debate_result(
         target="pm_taskplan",
         final_verdict="rejected",
-        revised_output={"product_type": "IM SaaS"},  # 即使 judge 给了 revision 也不采用
+        revised_output={"product_type": "IM SaaS"},  # not adopted even though the judge gave a revision
     )
     updates = _apply_debate_result(result)
     assert updates["task_plan"] is None
@@ -625,7 +627,7 @@ def test_apply_debate_result_report_target() -> None:
 
 
 def test_apply_debate_result_initial_brief_revises_field() -> None:
-    """pm_initial_brief 主观质疑被采纳 → 修订写回 initial_brief 字段。"""
+    """pm_initial_brief's subjective challenge is accepted -> the revision is written back to the initial_brief field."""
     from cca.agents.pm import _apply_debate_result
 
     result = _make_debate_result(
@@ -638,7 +640,7 @@ def test_apply_debate_result_initial_brief_revises_field() -> None:
 
 
 def test_apply_debate_result_initial_brief_rejected_clears_field() -> None:
-    """pm_initial_brief 被 reject → 清空 initial_brief，触发路由回阶段一重做。"""
+    """pm_initial_brief is rejected -> initial_brief is cleared, triggering routing back to redo phase 1."""
     from cca.agents.pm import _apply_debate_result
 
     result = _make_debate_result(target="pm_initial_brief", final_verdict="rejected")
@@ -684,7 +686,7 @@ def test_handle_signal_node_debate_dispatch(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_handle_signal_node_debate_from_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    """challenge 从 signal.payload 构造 DebatePosition。"""
+    """The challenge builds a DebatePosition from signal.payload."""
     from cca.agents.pm import handle_signal_node
 
     debate_result = _make_debate_result(final_verdict="accepted")
@@ -782,14 +784,14 @@ def test_handle_signal_node_multiple_signals(monkeypatch: pytest.MonkeyPatch) ->
     result = handle_signal_node(state)
     assert "debate_results" in result
     assert result["task_plan"] is None
-    # reroute 先于 debate，audit_log 顺序应为 [reroute, debate_applied]
+    # reroute happens before debate, so audit_log order should be [reroute, debate_applied]
     assert [e.get("agent") for e in result["audit_log"]] == ["reroute", "pm"]
 
 
 def test_handle_signal_node_multiple_debates_all_preserved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """两个 debate 信号同时来时，两份 DebateResult 都要进 debate_results，不能互覆。"""
+    """When two debate signals arrive together, both DebateResults must land in debate_results without overwriting each other."""
     from cca.agents.pm import handle_signal_node
 
     results_iter = iter(
@@ -836,7 +838,7 @@ def test_handle_signal_node_multiple_debates_all_preserved(
 def test_handle_signal_node_skips_already_consumed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """signal_id 已在 consumed_signal_ids 中的信号必须跳过，不再触发 debate。"""
+    """A signal whose signal_id is already in consumed_signal_ids must be skipped, not re-triggering debate."""
     from cca.agents.pm import handle_signal_node
 
     called = {"count": 0}
@@ -868,7 +870,7 @@ def test_handle_signal_node_skips_already_consumed(
 def test_handle_signal_node_returns_consumed_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """处理新信号时，本次消费的 signal_id 必须出现在返回的 consumed_signal_ids 中。"""
+    """When processing a new signal, the signal_id consumed this round must appear in the returned consumed_signal_ids."""
     from cca.agents.pm import handle_signal_node
 
     monkeypatch.setattr(
@@ -894,7 +896,7 @@ def test_handle_signal_node_returns_consumed_ids(
 
 
 def test_handle_signal_node_initial_brief_debate_target(monkeypatch: pytest.MonkeyPatch) -> None:
-    """initial_brief 主观质疑须映射到 debate target 'pm_initial_brief'，而非默认 pm_taskplan。"""
+    """An initial_brief subjective challenge must map to debate target 'pm_initial_brief', not the default pm_taskplan."""
     from cca.agents.pm import handle_signal_node
 
     called: dict = {}
@@ -923,7 +925,7 @@ def test_handle_signal_node_initial_brief_debate_target(monkeypatch: pytest.Monk
 
 
 def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -> None:
-    """旧信号已消费、新信号未消费时，只处理新信号。"""
+    """When an old signal is already consumed and a new one isn't, only the new signal is processed."""
     from cca.agents.pm import handle_signal_node
 
     called_targets: list[str] = []
@@ -957,16 +959,16 @@ def test_handle_signal_node_mixes_old_and_new(monkeypatch: pytest.MonkeyPatch) -
         report_task={"target_product": "飞书", "competitors": ["P"], "focus_dimensions": ["d"]},
     )
     result = handle_signal_node(state)
-    # _TARGET_TO_DEBATE 把 signal.target='report_task' 映射成 debate target='report'
+    # _TARGET_TO_DEBATE maps signal.target='report_task' to debate target='report'
     assert called_targets == ["report"]
     assert result["consumed_signal_ids"] == [new.signal_id]
 
 
-# ── review_node + reroute_count 上限 ──────────────────────────────────
+# -- review_node + reroute_count upper limit --------------------------
 
 
 def _mk_task_plan(*products: str) -> dict:
-    """构造最小 task_plan：每个 product 对应一个 CollectTask + InsightTask。"""
+    """Builds a minimal task_plan: each product maps to one CollectTask + InsightTask."""
     return TaskPlan(
         target_product=products[0] if products else "x",
         product_type="SaaS",
@@ -977,7 +979,7 @@ def _mk_task_plan(*products: str) -> dict:
 
 
 def _complete_profile(name: str) -> dict:
-    """构造数据完整的 profile：有 1 个 dim+fact、有 sources、sentiment 含 ≥3 review。"""
+    """Builds a complete-data profile: 1 dim+fact, sources present, sentiment with >=3 reviews."""
     return {
         "product_name": name,
         "dimensions": [{
@@ -1013,7 +1015,7 @@ def test_check_data_completeness_complete_profile_returns_empty() -> None:
 def test_check_data_completeness_missing_dimensions_flags_collector() -> None:
     from cca.agents.pm import _check_data_completeness
 
-    profiles = {"x": {"product_name": "x"}}  # 无 dimensions / sources / sentiment
+    profiles = {"x": {"product_name": "x"}}  # no dimensions / sources / sentiment
     task_plan = _mk_task_plan("x")
     flags = _check_data_completeness(profiles, task_plan)
     assert "collector:x" in flags
@@ -1048,18 +1050,18 @@ def test_check_data_completeness_sentiment_too_few_flagged() -> None:
                 {"source_url": "u", "snippet": "s", "fetched_at": "t"}]},
         ]}],
         "sources": [{"source_url": "u", "snippet": "s", "fetched_at": "t"}],
-        "sentiment": {"representative_reviews": []},  # 0 条，低于下限
+        "sentiment": {"representative_reviews": []},  # 0 entries, below the floor
     }}
     task_plan = _mk_task_plan("z")
     flags = _check_data_completeness(profiles, task_plan)
     assert "insight:z" in flags
     assert any("sentiment_too_few" in f for f in flags["insight:z"])
-    # Collector 这边数据齐全，不应有 flag
+    # Collector side has complete data, should have no flag
     assert "collector:z" not in flags
 
 
 def _mk_review_output(*units: dict) -> ReviewOutput:
-    """构造 ReviewOutput；units 形如 {"agent":..., "product_name":..., "status":..., "retry_count":..., "qa_flags":[...]}。"""
+    """Builds a ReviewOutput; units look like {"agent":..., "product_name":..., "status":..., "retry_count":..., "qa_flags":[...]}."""
     return ReviewOutput(
         review_units=[ReviewUnit(**u) for u in units],
         decision_records=[_mk_decision("review_judgement")],
@@ -1067,7 +1069,7 @@ def _mk_review_output(*units: dict) -> ReviewOutput:
 
 
 def test_review_node_all_passed_no_signals(monkeypatch: pytest.MonkeyPatch) -> None:
-    """全部数据完整 + LLM 标 passed → review_state 全 passed，无 signal。"""
+    """All data complete + LLM marks passed -> review_state is all passed, no signal."""
     output = _mk_review_output(
         {"agent": "collector", "product_name": "飞书", "status": "passed", "retry_count": 0},
         {"agent": "insight", "product_name": "飞书", "status": "passed", "retry_count": 0},
@@ -1090,11 +1092,11 @@ def test_review_node_all_passed_no_signals(monkeypatch: pytest.MonkeyPatch) -> N
 def test_review_node_degrades_to_code_layer_when_llm_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Doubao 连续返 None → _invoke_pm raise → review 不崩，降级纯代码层判定。
+    """Doubao repeatedly returns None -> _invoke_pm raises -> review doesn't crash, degrades to pure code-layer judgment.
 
-    数据完整产品仍 passed，缺数据产品仍 needs_retry —— 代码层 pre_flags 独立兜底。
+    Complete-data products are still passed, missing-data products are still needs_retry -- code-layer pre_flags provide an independent fallback.
     """
-    _patch_pm_gpt(monkeypatch, None)  # LLM 永远返 None → review 内部 raise 被 catch
+    _patch_pm_gpt(monkeypatch, None)  # LLM always returns None -> the internal raise in review is caught
 
     from cca.agents.pm import review_node
 
@@ -1113,9 +1115,9 @@ def test_review_node_degrades_to_code_layer_when_llm_fails(
 def test_review_node_B_constraint_coerces_llm_passed_when_pre_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """B 方案强约束：代码层 pre_flag 非空时，LLM 标 passed 被覆盖为 needs_retry。"""
+    """Plan B hard constraint: when the code-layer pre_flag is non-empty, an LLM 'passed' label is overridden to needs_retry."""
     output = _mk_review_output(
-        # LLM 试图"宽容放过"，但数据是缺的
+        # LLM tries to "let it pass leniently", but the data is missing
         {"agent": "collector", "product_name": "x", "status": "passed", "retry_count": 0, "qa_flags": []},
         {"agent": "insight", "product_name": "x", "status": "passed", "retry_count": 0},
     )
@@ -1137,7 +1139,7 @@ def test_review_node_B_constraint_coerces_llm_passed_when_pre_flag(
 def test_review_node_reroute_count_at_limit_coerces_to_forced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """reroute_count 达上限 → needs_retry 全部升 forced，不再 raise signal。"""
+    """reroute_count hits the limit -> all needs_retry are escalated to forced, no longer raising a signal."""
     output = _mk_review_output(
         {"agent": "collector", "product_name": "x", "status": "needs_retry", "retry_count": 0,
          "qa_flags": ["data_missing: x"]},
@@ -1162,9 +1164,9 @@ def test_review_node_reroute_count_at_limit_coerces_to_forced(
 def test_review_node_per_unit_retry_limit_forces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """单 unit 历史 retry_count 达上限 → forced，不再 needs_retry。
+    """A single unit's historical retry_count hits the limit -> forced, no longer needs_retry.
 
-    profile 给 insight 端完整数据避免它干扰断言；只让 collector 端缺数据。
+    The profile gives insight side complete data to avoid interfering with the assertion; only collector side lacks data.
     """
     output = _mk_review_output(
         {"agent": "collector", "product_name": "x", "status": "needs_retry", "retry_count": 99,
@@ -1175,12 +1177,12 @@ def test_review_node_per_unit_retry_limit_forces(
 
     from cca.agents.pm import _PER_UNIT_RETRY_LIMIT, review_node
 
-    # collector 端无 dim/sources；insight 端 sentiment 完整 → 只 collector 触发 pre_flag
+    # collector side has no dim/sources; insight side has complete sentiment -> only collector triggers pre_flag
     profile = _complete_profile("x")
     profile["dimensions"] = []
     profile["sources"] = []
 
-    # 历史 review_state 含 _PER_UNIT_RETRY_LIMIT 条该 collector 的 needs_retry 记录
+    # historical review_state contains _PER_UNIT_RETRY_LIMIT needs_retry records for this collector
     historical = [
         ReviewUnit(agent="collector", product_name="x", status="needs_retry",
                    retry_count=i, qa_flags=["x"]).model_dump()
@@ -1196,15 +1198,15 @@ def test_review_node_per_unit_retry_limit_forces(
     collector_unit = next(u for u in result["review_state"] if u["agent"] == "collector")
     assert collector_unit["status"] == "forced"
     assert collector_unit["retry_count"] == _PER_UNIT_RETRY_LIMIT
-    # insight 完整 → passed，所以 agent_signals 应为空（collector 已 forced 不 raise）
+    # insight is complete -> passed, so agent_signals should be empty (collector is already forced, no raise)
     assert result["agent_signals"] == []
 
 
 def test_review_node_llm_skips_unit_code_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """LLM 漏审某个 (agent, product) → 代码层兜底产 ReviewUnit。"""
-    # LLM 只返回 collector 一条，漏掉 insight
+    """LLM misses reviewing an (agent, product) -> code layer falls back to produce a ReviewUnit."""
+    # LLM only returns one collector entry, missing insight
     output = ReviewOutput(
         review_units=[ReviewUnit(
             agent="collector", product_name="x", status="passed", retry_count=0,
@@ -1223,13 +1225,13 @@ def test_review_node_llm_skips_unit_code_fallback(
     assert len(result["review_state"]) == 2
     insight_unit = next(u for u in result["review_state"] if u["agent"] == "insight")
     assert insight_unit["pm_note"] == "LLM 漏审，代码层兜底"
-    assert insight_unit["status"] == "passed"   # 兜底场景 + 无 pre_flag → passed
+    assert insight_unit["status"] == "passed"   # fallback scenario + no pre_flag -> passed
 
 
 def test_handle_signal_node_bumps_reroute_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """成功 reroute 一个事实性 signal → reroute_count += 1。"""
+    """Successfully rerouting a factual signal -> reroute_count += 1."""
     from cca.agents.pm import handle_signal_node
     from cca.skills.reroute import RerouteDecision
 
@@ -1255,7 +1257,7 @@ def test_handle_signal_node_bumps_reroute_count(
 def test_handle_signal_node_debate_only_does_not_bump_reroute(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """只走 debate 的 signal 不应增加 reroute_count。"""
+    """A signal that only goes through debate should not increase reroute_count."""
     from cca.agents.pm import handle_signal_node
 
     monkeypatch.setattr(
@@ -1273,17 +1275,17 @@ def test_handle_signal_node_debate_only_does_not_bump_reroute(
         task_plan={"product_type": "S"},
     )
     result = handle_signal_node(state)
-    assert "reroute_count" not in result   # 未增量则不写回
+    assert "reroute_count" not in result   # not written back when there's no increment
 
 
 def test_handle_signal_node_reroute_phase_skips_llm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """signal.reroute_phase 非空（review 预检 data_gap）→ 直接清 task_plan，不调 reroute LLM。"""
+    """signal.reroute_phase is non-empty (review pre-check data_gap) -> task_plan is cleared directly, without calling the reroute LLM."""
     from cca.agents.pm import handle_signal_node
 
     def _boom(*_args, **_kwargs):
-        raise AssertionError("reroute LLM 不应被调用")
+        raise AssertionError("reroute LLM should not be called")
 
     monkeypatch.setattr("cca.agents.pm.reroute", _boom, raising=False)
     signal = AgentSignal(
@@ -1296,14 +1298,14 @@ def test_handle_signal_node_reroute_phase_skips_llm(
         task_plan={"product_type": "S"},
     )
     result = handle_signal_node(state)
-    assert result["task_plan"] is None        # phase_2 字段被清
+    assert result["task_plan"] is None        # phase_2 field is cleared
     assert result["reroute_count"] == 1
 
 
 def test_handle_signal_node_multiple_retry_signals_bump_reroute_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """同轮多个 needs_retry signal 只 bump reroute_count 一次（熔断按轮计，非按 signal）。"""
+    """Multiple needs_retry signals in the same round only bump reroute_count once (circuit breaker counts per round, not per signal)."""
     from cca.agents.pm import handle_signal_node
 
     monkeypatch.setattr("cca.agents.pm.reroute", lambda *a, **k: None, raising=False)
@@ -1319,14 +1321,14 @@ def test_handle_signal_node_multiple_retry_signals_bump_reroute_once(
         agent_signals=sigs, reroute_count=0, task_plan={"product_type": "S"},
     )
     result = handle_signal_node(state)
-    assert result["reroute_count"] == 1        # 3 个 signal 仍只 +1
+    assert result["reroute_count"] == 1        # still only +1 even with 3 signals
 
 
 # ── Reporter dimension_canonical_map ─────────────────────────────────
 
 
 class TestEnsureMappingCoverage:
-    """_ensure_mapping_coverage 是 Phase 2 后置校正函数。"""
+    """_ensure_mapping_coverage is the Phase 2 post-hoc correction function."""
 
     def test_full_coverage_passes_through(self):
         from cca.agents.pm import _ensure_mapping_coverage
@@ -1343,11 +1345,11 @@ class TestEnsureMappingCoverage:
         assert coerced.dimension_canonical_map == {"dim_a": "X", "dim_b": "Y"}
 
     def test_missing_dim_falls_back_to_other(self):
-        """LLM 漏掉 dim_b → 自动归 '其他' 桶 + 返 fallback 列表。"""
+        """LLM misses dim_b -> automatically falls into the '其他' bucket + returns a fallback list."""
         from cca.agents.pm import _FALLBACK_BUCKET, _ensure_mapping_coverage
         report_task = ReportTask(
             target_product="t", competitors=["c"], product_names=["t", "c"],
-            dimension_canonical_map={"dim_a": "X"},   # 漏 dim_b
+            dimension_canonical_map={"dim_a": "X"},   # missing dim_b
         )
         profiles = {
             "t": {"dimensions": [{"name": "dim_a"}]},
@@ -1359,7 +1361,7 @@ class TestEnsureMappingCoverage:
 
 
 def test_report_task_node_logs_mapping_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """report_task_node 漏掉 mapping → audit_log 记 fallback dim 列表。"""
+    """report_task_node misses a mapping -> audit_log records the fallback dim list."""
     output = ReportTaskOutput(
         report_task=ReportTask(
             target_product="飞书",
@@ -1367,7 +1369,7 @@ def test_report_task_node_logs_mapping_fallback(monkeypatch: pytest.MonkeyPatch)
             product_names=["飞书", "钉钉"],
             focus_dimensions=[],
             invoke_call_report_reviewer=False,
-            dimension_canonical_map={"dim_a": "X"},   # 漏 dim_b
+            dimension_canonical_map={"dim_a": "X"},   # missing dim_b
         ),
         decision_records=[_mk_decision("analysis_focus")],
     )
@@ -1389,11 +1391,11 @@ def test_report_task_node_logs_mapping_fallback(monkeypatch: pytest.MonkeyPatch)
     )
 
 
-# ── 阶段 2.5 human_gate + 用户 feedback ───────────────────────────────
+# -- Phase 2.5 human_gate + user feedback ---------------------------
 
 
 def test_parse_feedback_variants() -> None:
-    """interrupt resume 值容错：str→原文，dict→校验，空→approved。"""
+    """interrupt resume value tolerance: str -> raw text, dict -> validated, empty -> approved."""
     from cca.agents.pm import _parse_feedback
 
     assert _parse_feedback("钉钉数据不全").raw_feedback == "钉钉数据不全"
@@ -1405,7 +1407,7 @@ def test_parse_feedback_variants() -> None:
 
 
 def test_human_feedback_text_only_when_revisions() -> None:
-    """_human_feedback_text：有实质修订返原文，approved / 空返 None。"""
+    """_human_feedback_text: returns raw text when there are substantive revisions, returns None for approved / empty."""
     from cca.agents.pm import _human_feedback_text
 
     s1 = _make_minimal_state(human_review_feedback={"raw_feedback": "补采定价", "approved": False})
@@ -1417,7 +1419,7 @@ def test_human_feedback_text_only_when_revisions() -> None:
 
 
 def test_profiles_digest_lists_dimensions_and_platforms() -> None:
-    """digest 给前端表格：维度名 / 评论数 / 抓取平台。"""
+    """digest for the frontend table: dimension names / review count / scraped platforms."""
     from cca.agents.pm import _profiles_digest
 
     profiles = {
@@ -1441,7 +1443,7 @@ def test_profiles_digest_lists_dimensions_and_platforms() -> None:
 
 
 def test_human_gate_skips_when_done() -> None:
-    """human_review_done=True → 直接 pass-through，不 interrupt（仅一次的保证）。"""
+    """human_review_done=True -> passes through directly, no interrupt (once-only guarantee)."""
     from cca.agents.pm import human_gate_node
 
     state = _make_minimal_state(human_review_done=True)
@@ -1449,7 +1451,7 @@ def test_human_gate_skips_when_done() -> None:
 
 
 def test_human_gate_non_interactive_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CCA_HUMAN_REVIEW 关闭 → 不暂停，只置 done=True 放行。"""
+    """CCA_HUMAN_REVIEW disabled -> no pause, just sets done=True and passes through."""
     monkeypatch.delenv("CCA_HUMAN_REVIEW", raising=False)
     from cca.agents.pm import human_gate_node
 
@@ -1458,7 +1460,7 @@ def test_human_gate_non_interactive_passes_through(monkeypatch: pytest.MonkeyPat
 
 
 def test_human_gate_interactive_collects_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CCA_HUMAN_REVIEW 开启 → interrupt 收集；resume 文本落 feedback，consumed=False。"""
+    """CCA_HUMAN_REVIEW enabled -> interrupt collects input; resumed text lands in feedback, consumed=False."""
     monkeypatch.setenv("CCA_HUMAN_REVIEW", "1")
     monkeypatch.setattr("cca.agents.pm.interrupt", lambda _payload: "钉钉定价没采全")
 
@@ -1471,7 +1473,7 @@ def test_human_gate_interactive_collects_feedback(monkeypatch: pytest.MonkeyPatc
 
 
 def test_review_node_consumes_unconsumed_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """有未消费 feedback → review 采纳并标 consumed=True，audit 记 used_human_feedback。"""
+    """Unconsumed feedback exists -> review adopts it and marks consumed=True, audit records used_human_feedback."""
     output = _mk_review_output(
         {"agent": "collector", "product_name": "飞书", "status": "passed", "retry_count": 0},
         {"agent": "insight", "product_name": "飞书", "status": "passed", "retry_count": 0},
@@ -1492,7 +1494,7 @@ def test_review_node_consumes_unconsumed_feedback(monkeypatch: pytest.MonkeyPatc
 
 
 def test_review_node_ignores_already_consumed_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """feedback 已消费 → review 不再采纳，不重置 consumed，audit used_human_feedback=False。"""
+    """feedback already consumed -> review no longer adopts it, doesn't reset consumed, audit used_human_feedback=False."""
     output = _mk_review_output(
         {"agent": "collector", "product_name": "飞书", "status": "passed", "retry_count": 0},
         {"agent": "insight", "product_name": "飞书", "status": "passed", "retry_count": 0},
@@ -1513,7 +1515,7 @@ def test_review_node_ignores_already_consumed_feedback(monkeypatch: pytest.Monke
 
 
 def test_review_node_ignores_approved_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """approved（无实质修订）feedback → review 不采纳。"""
+    """approved (no substantive revision) feedback -> review does not adopt it."""
     output = _mk_review_output(
         {"agent": "collector", "product_name": "飞书", "status": "passed", "retry_count": 0},
         {"agent": "insight", "product_name": "飞书", "status": "passed", "retry_count": 0},
@@ -1534,7 +1536,7 @@ def test_review_node_ignores_approved_feedback(monkeypatch: pytest.MonkeyPatch) 
 
 
 def _capture_invoke_payload(monkeypatch: pytest.MonkeyPatch, captured: dict, response) -> None:
-    """monkeypatch _invoke_pm 捕获传入 payload，并返回给定结构化响应。"""
+    """Monkeypatches _invoke_pm to capture the incoming payload and return the given structured response."""
     def _fake(output_type, label, payload, **_kw):  # noqa: ANN001, ARG001
         captured["payload"] = payload
         return response
@@ -1542,7 +1544,7 @@ def _capture_invoke_payload(monkeypatch: pytest.MonkeyPatch, captured: dict, res
 
 
 def test_task_plan_node_injects_human_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """feedback 有实质修订 → task_plan payload 注入原文，供 PM 重排分栏。"""
+    """feedback has a substantive revision -> the raw text is injected into task_plan payload for PM to rearrange sections."""
     captured: dict = {}
     response = TaskPlanOutput(
         task_plan=TaskPlan(
@@ -1564,7 +1566,7 @@ def test_task_plan_node_injects_human_feedback(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_task_plan_node_omits_feedback_key_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """无 feedback → payload 不含 human_review_feedback 键（向后兼容）。"""
+    """No feedback -> payload doesn't contain the human_review_feedback key (backward compatible)."""
     captured: dict = {}
     response = TaskPlanOutput(
         task_plan=TaskPlan(
@@ -1582,7 +1584,7 @@ def test_task_plan_node_omits_feedback_key_when_absent(monkeypatch: pytest.Monke
 
 
 def test_build_reroute_context_excludes_large_fields() -> None:
-    """reroute 上下文只含决策必需切片，不带 profiles / audit_log / decision_log。"""
+    """The reroute context only includes decision-necessary slices, no profiles / audit_log / decision_log."""
     import json as _json
 
     from cca.agents.pm import _build_reroute_context

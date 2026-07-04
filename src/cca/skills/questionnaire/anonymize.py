@@ -1,4 +1,4 @@
-"""问卷匿名化 —— 正则脱敏 open_text 回答中的 PII。"""
+"""Questionnaire anonymization -- regex-scrubs PII from open_text answers."""
 from __future__ import annotations
 
 import re
@@ -20,7 +20,7 @@ def _scrub(text: str) -> str:
 
 
 def anonymize_responses(responses: list[SurveyResponse]) -> list[SurveyResponse]:
-    """对回答做 PII 脱敏，respondent_id 截断为前 8 位匿名标识。"""
+    """Scrub PII from answers; respondent_id is truncated to an 8-char anonymous id."""
     return [
         SurveyResponse(
             respondent_id=f"anon_{resp.respondent_id[:8]}",

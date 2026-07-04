@@ -1,6 +1,6 @@
 'use strict';
 
-/* ── Google OAuth 回调处理（页面加载时一次性执行） ── */
+/* ── Google OAuth callback handling (runs once on page load) ── */
 (function(){
   const p=new URLSearchParams(window.location.search);
   const token=p.get('token'), name=p.get('display_name'), authErr=p.get('auth_error');
@@ -354,14 +354,14 @@ function togglePanelFullscreen(panelId, btnId){
   const bd=_getOrCreateBackdrop();
   bd.classList.toggle('active', isFs);
   if(isFs){
-    // 脱离 section 的 stacking context，直接挂到 body（根上下文），
-    // 确保 z-index:8000 能压过 backdrop 的 z-index:7999
+    // detach from the section's stacking context by mounting directly on body (the
+    // root context), so z-index:8000 can beat the backdrop's z-index:7999
     panel._fsParent=panel.parentNode;
     panel._fsNextSib=panel.nextSibling;
     document.body.appendChild(panel);
     document.addEventListener('keydown',_escHandler);
   } else {
-    // 退出全屏：还原到原始 DOM 位置
+    // exiting fullscreen: restore to the original DOM position
     if(panel._fsParent){
       panel._fsParent.insertBefore(panel, panel._fsNextSib||null);
     }
@@ -426,13 +426,13 @@ async function loadReport(id, productName){
     } else {
       if(_pcontent) _pcontent.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'该报告暂无 PDF 文件':'No PDF available for this report'}</p></div>`;
     }
-    // 回显历史对话
+    // replay the historical Q&A conversation
     const msgBox=$('qa-messages');
     if(messages&&messages.length){
       msgBox.innerHTML='';
       messages.forEach(m=>appendQaMessage(m.role==='user'?'user':'agent', m.content));
     }
-    // 回放本次运行的 Agent 过程日志 + LangSmith Trace 链接
+    // replay this run's agent process log + LangSmith trace link
     loadRunTrace(id);
   } catch(e){
     if(_pcontent) _pcontent.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'报告加载失败，请重试':'Failed to load report, please retry'}</p></div>`;
@@ -511,7 +511,7 @@ function applyLang(){
   // Update dynamic warn text
   const warnEl=$('api-warn'); if(warnEl) warnEl.textContent=t.keyWarn;
   setAuthDisplay();
-  // 登录弹窗 i18n
+  // login modal i18n
   set('t-login-title',t.loginTitle); set('t-login-tab-account',t.loginTabAccount);
   set('t-login-tab-google',t.loginTabGoogle);
   set('t-login-username-label',t.loginUsernameLabel); setA('login-username','placeholder',t.loginUsernamePh);
@@ -791,7 +791,7 @@ function buildWordCloudSVG(l='zh'){
   return s+'</svg>';
 }
 
-/* ── Chart 2: Smoothed Area + Line — MAU 增长指数 ── */
+/* ── Chart 2: Smoothed Area + Line — MAU growth index ── */
 function buildLineChartSVG(l='zh'){
   const zh=l==='zh';
   const W=560,H=330, mx=54,my=18,mxr=12,myb=52;
@@ -874,7 +874,7 @@ function buildLineChartSVG(l='zh'){
   return s+'</svg>';
 }
 
-/* ── Chart 3: Radar — 5 维综合竞争力 ── */
+/* ── Chart 3: Radar — 5-dimension overall competitiveness ── */
 function buildRadarGallerySVG(l='zh'){
   const zh=l==='zh';
   const W=560,H=330;
@@ -942,7 +942,7 @@ function buildRadarGallerySVG(l='zh'){
   return s+'</svg>';
 }
 
-/* ── Chart 4: Donut — 2026 Q1 国内市场份额 ── */
+/* ── Chart 4: Donut — 2026 Q1 domestic market share ── */
 function buildDonutSVG(l='zh'){
   const zh=l==='zh';
   const W=560, H=360;
@@ -1406,7 +1406,7 @@ async function startAnalysis(){
   const _rsb=$('report-status-badge'); if(_rsb) _rsb.style.display='none';
   startTimer();
   jumpTo('pdf-section');
-  // 立即更新报告标题为本次分析的产品名
+  // immediately update the report title to this run's product name
   const _fname=$('pdf-fname'); if(_fname) _fname.textContent=`${product} 竞品分析报告`;
   const _pcontent=$('pdf-content');
   if(_pcontent) _pcontent.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted)">分析运行中，完成后 PDF 将在此处显示...</p></div>`;
@@ -1417,7 +1417,7 @@ async function startAnalysis(){
   if(uploadedFile) fd.append('file',uploadedFile);
   ['gpt5','deepseek','doubao'].forEach(fam=>{
     const key=$(`${fam}-key`)?.value.trim();
-    // key 存浏览器供答疑复用（不入库）；用户只在生成时输一次
+    // key is stored in the browser for Q&A reuse (never persisted server-side); the user only enters it once at generation time
     if(key){ fd.append(`${fam}_key`,key); localStorage.setItem(`dc-key-${fam}`,key); }
   });
   const tv=$('tavily-key')?.value.trim(); if(tv) fd.append('tavily_key',tv);
@@ -1430,7 +1430,8 @@ async function startAnalysis(){
   } catch(_){ isSimulateMode=true; simulate(btn,product); }
 }
 
-// 单条流式事件的「渲染」逻辑：实时 SSE 与历史回放共用，保证两条路径完全一致。
+// "Render" logic for a single streamed event: shared by live SSE and historical
+// replay, keeping the two paths perfectly consistent.
 function applyStreamEvent(msg){
   switch(msg.type){
     case 'thinking': setThink(true); break;
@@ -1449,16 +1450,16 @@ function applyStreamEvent(msg){
   }
 }
 
-// 历史回放：把落库的事件流按序重放进日志面板（无实时时间戳）。
+// Historical replay: replays the persisted event stream into the log panel in order (no live timestamps).
 function replayRun(events){
   const body=$('log-body');
   if(body) body.innerHTML='';
-  analysisStartTime=0;  // appendLog 据此不渲染 +MM:SS 时间戳
+  analysisStartTime=0;  // appendLog skips rendering +MM:SS timestamps based on this
   (events||[]).forEach(applyStreamEvent);
   setThink(false); setProgress(100);
 }
 
-// LangSmith trace 深链渲染：实时（trace_url SSE 事件）与历史回放共用同一块 HTML。
+// LangSmith trace deep-link rendering: shares the same HTML block between live (trace_url SSE event) and historical replay.
 function renderTraceUrl(url){
   appendLogBlock(`<div class="log-line" style="padding-top:8px"><a href="${esc(url)}" target="_blank" rel="noopener" class="trace-link">${T('viewTrace')}</a></div>`);
 }
@@ -1499,8 +1500,9 @@ function openSSE(jobId,btn){
       default: applyStreamEvent(msg);
     }
   };
-  // 断线后让 EventSource 自动重连（不立即关闭），容忍 LLM 长文生成期间的网络抖动；
-  // 连续 20 次（约 60s）仍失败才放弃并从 DB 捞报告
+  // let EventSource auto-reconnect after a disconnect (don't close immediately),
+  // tolerating network jitter during long LLM generation; only give up and
+  // fall back to fetching the report from the DB after 20 consecutive failures (~60s)
   let _errCount=0;
   eventSource.onerror=()=>{
     _errCount++;
@@ -1531,7 +1533,7 @@ async function showPdf(reportId, fname){
   if(pdfBlobUrl){ URL.revokeObjectURL(pdfBlobUrl); pdfBlobUrl = null; }
   const c = $('pdf-content');
   try{
-    // 带 Authorization 头取 PDF 字节（iframe/<a> 发不出自定义头，故走 fetch+blob）
+    // fetch the PDF bytes with an Authorization header (an iframe/<a> can't send a custom header, hence fetch+blob)
     const res = await fetch(`/api/report/pdf?report_id=${encodeURIComponent(reportId)}`, {headers:{...authHeaders()}});
     if(!res.ok) throw new Error('HTTP '+res.status);
     pdfBlobUrl = URL.createObjectURL(await res.blob());
@@ -1691,7 +1693,7 @@ function simulate(btn,product){
     [1000,()=>{ appendLog('PM Agent',zh?'分析用户查询，制定竞品分析计划...':'Parsing query, creating plan...'); setThink(false); }],
     [600,()=>{
       appendLog('PM Agent','→ initial_brief({...})',true); setProgress(8);
-      // 若用户上传了参考文档，模拟 domain_seed 事件
+      // if the user uploaded a reference doc, simulate a domain_seed event
       if(uploadedFile){
         renderDomainSeed({
           product_type_hint: zh?'企业协作与通讯软件':'Enterprise collaboration & communication',
@@ -1713,7 +1715,7 @@ function simulate(btn,product){
     [600,()=>appendLog('Insight',zh?'情感研判完成...':'Sentiment analysis done...')],
     [700,()=>{
       setProgress(75);
-      // PM 评审结果
+      // PM review results
       const mockUnits=[
         {agent:'collector',product_name:zh?'钉钉':'DingTalk',status:'passed',qa_flags:[],pm_note:null},
         {agent:'collector',product_name:'Slack',status:'passed',qa_flags:[],pm_note:null},
@@ -1723,7 +1725,7 @@ function simulate(btn,product){
       renderReviewUpdate(mockUnits);
     }],
     [400,()=>{
-      // Debate 结果（TaskPlan 被接受）
+      // debate result (TaskPlan accepted)
       renderDebateResult({
         target:'pm_taskplan',
         final_verdict:'accepted',
@@ -1749,7 +1751,7 @@ function continueSimulateAfterPhase1(){
     [500,()=>{ appendLog('Reporter',zh?'开始生成报告...':'Generating report...'); setProgress(78); }],
     [800,()=>{ appendLog('Reporter','→ finalize_swot({...})',true); setProgress(88); }],
     [900,()=>{
-      // 报告终审 debate（call_report_reviewer）
+      // report final-review debate (call_report_reviewer)
       renderDebateResult({
         target:'report',
         final_verdict:'accepted_with_revision',
@@ -1759,7 +1761,7 @@ function continueSimulateAfterPhase1(){
       });
     }],
     [500,()=>{
-      // qa_results 终审汇总
+      // qa_results final-review summary
       const prods=product?[product,zh?'钉钉':'DingTalk','Slack']:[zh?'飞书':'Feishu',zh?'钉钉':'DingTalk','Slack'];
       renderQaResult(prods.map((n,i)=>({
         product_name:n,

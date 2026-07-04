@@ -1,8 +1,11 @@
-"""按 product_type 关键词映射评论抓取渠道。
+"""Maps product_type keywords to a review-scraping channel.
 
-对比对象一致性的核心：同一次竞品分析里 target + 全部竞品共享 task 级 product_type，
-据此选定**唯一**渠道，避免「某产品恰好有 App 就去抓 App Store 评分、其余产品抓大众点评」
-导致两边评价的根本不是同一个对象。无关键词命中时默认通用联网搜索——绝不默认 App Store。
+The core of comparison-target consistency: within one competitive analysis run,
+target + all competitors share a single task-level product_type, which picks a
+**single** channel for all of them -- avoiding a situation where "this product
+happens to have an app so we scrape App Store ratings, but the rest get scraped
+from Dianping," which would compare fundamentally different things across products.
+When no keyword matches, defaults to general web search -- never defaults to App Store.
 """
 from __future__ import annotations
 
@@ -14,16 +17,17 @@ Channel = Literal["app_store", "local_life", "ecommerce", "general"]
 
 @dataclass
 class ChannelRoute:
-    """单个渠道的路由描述符，供 Insight 构造数据源指引。"""
+    """A single channel's routing descriptor, used by Insight to build its data-source guidance."""
 
     channel: Channel
-    label: str            # 渠道中文名，写进 prompt
-    platforms: list[str]  # 候选平台/搜索源，喂给 web_search
-    use_app_store: bool   # 是否走 scrape_app_store
+    label: str            # the channel's display name, written into the prompt
+    platforms: list[str]  # candidate platforms/search sources, fed to web_search
+    use_app_store: bool   # whether to go through scrape_app_store
 
 
-# 关键词 → 渠道，按特异性从高到低匹配：本地生活 / 电商 在前，App 在后。
-# App 类关键词保持精确（软件/SaaS/客户端…），不收「平台」「应用」「工具」等泛词，避免误命中。
+# keyword -> channel, matched from most to least specific: local-life / e-commerce
+# first, App last. App keywords are kept precise (software/SaaS/client...), excluding
+# generic terms like "platform"/"application"/"tool" to avoid false matches.
 _KEYWORD_ROUTES: list[tuple[tuple[str, ...], ChannelRoute]] = [
     (
         ("餐饮", "咖啡", "茶饮", "奶茶", "餐厅", "饭店", "到店", "门店", "连锁",
@@ -52,7 +56,7 @@ _DEFAULT_ROUTE = ChannelRoute(
 
 
 def resolve_review_channel(product_type: str | None) -> ChannelRoute:
-    """按 product_type 关键词选评论渠道；无命中默认通用搜索（不默认 App Store）。"""
+    """Pick a review channel from product_type keywords; defaults to general search on no match (never App Store)."""
     if not product_type:
         return _DEFAULT_ROUTE
     pt = product_type.lower()

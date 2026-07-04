@@ -1,15 +1,17 @@
-"""ReAct 节点产出缓存 —— demo 兜底重放用。
+"""ReAct node output cache -- for demo fallback replay.
 
-缓存粒度：每个 ReAct 节点的 messages list（不是节点返回 dict，因为视觉上想保留流式打印）。
-存储：SQLite `react_cache` 表，复用 data/memory/store.db。
-key：`{node_name}:{sha256(input_slice)[:16]}`。input_slice 是节点真正消费的状态字段，
-变了就不命中——保证 cache 反映上游变化。
+Cache granularity: each ReAct node's messages list (not the node's return dict,
+since we want to keep the streamed print output).
+Storage: SQLite `react_cache` table, reusing data/memory/store.db.
+key: `{node_name}:{sha256(input_slice)[:16]}`. input_slice is the state fields the
+node actually consumes; if they change, the cache misses -- so it always reflects
+upstream changes.
 
-模式（环境变量 CCA_CACHE_MODE）：
-    off (默认) - 不读不写，每次都真跑
-    write     - 真跑后写缓存
-    replay    - 强制读缓存，未命中抛错（demo 现场用这个保证秒级）
-    auto      - 优先读，未命中真跑 + 写（开发期友好）
+Modes (env var CCA_CACHE_MODE):
+    off (default) - no read/write, always runs for real
+    write         - runs for real, then writes the cache
+    replay        - forces a cache read, raises on miss (use this for demos to guarantee instant results)
+    auto          - reads first, falls back to a real run + write on miss (dev-friendly)
 """
 from __future__ import annotations
 
@@ -29,7 +31,8 @@ _VALID_MODES = ("off", "write", "replay", "auto")
 
 
 def get_mode() -> CacheMode:
-    """读 CCA_CACHE_MODE；非法值 fallback 到 off + 抛警告打印（不抛异常，避免影响主流程）。"""
+    """Read CCA_CACHE_MODE; an invalid value falls back to off + a printed warning
+    (never raises, to avoid disrupting the main pipeline)."""
     raw = (os.getenv("CCA_CACHE_MODE") or "off").lower()
     if raw not in _VALID_MODES:
         print(f"  [react_cache] WARN: invalid CCA_CACHE_MODE={raw!r}, fallback to 'off'", flush=True)
@@ -57,7 +60,7 @@ def _ensure_table(conn: sqlite3.Connection) -> None:
 
 
 def hash_key(key_data: dict) -> str:
-    """key_data → 稳定 16 hex 摘要。key_data 必须 JSON 可序列化（default=str 兜底非标准类型）。"""
+    """key_data -> a stable 16-hex digest. key_data must be JSON-serializable (default=str covers non-standard types)."""
     s = json.dumps(key_data, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
 
@@ -67,7 +70,7 @@ def _full_key(node_name: str, key_data: dict) -> str:
 
 
 def get(node_name: str, key_data: dict) -> dict | None:
-    """查缓存。返回 payload dict（不存在时 None）。"""
+    """Look up the cache. Returns the payload dict, or None if absent."""
     key = _full_key(node_name, key_data)
     with sqlite3.connect(_db_path()) as conn:
         _ensure_table(conn)
@@ -78,7 +81,7 @@ def get(node_name: str, key_data: dict) -> dict | None:
 
 
 def put(node_name: str, key_data: dict, payload: dict) -> None:
-    """写缓存。重复 key 覆盖。"""
+    """Write the cache. A repeated key overwrites."""
     key = _full_key(node_name, key_data)
     with sqlite3.connect(_db_path()) as conn:
         _ensure_table(conn)
@@ -93,7 +96,7 @@ def put(node_name: str, key_data: dict, payload: dict) -> None:
 
 
 def list_entries() -> list[dict]:
-    """列出所有缓存项摘要（管理用）。返回 [{key, node_name, created_at, size}]。"""
+    """List a summary of every cache entry (for admin use). Returns [{key, node_name, created_at, size}]."""
     with sqlite3.connect(_db_path()) as conn:
         _ensure_table(conn)
         rows = conn.execute(
@@ -107,7 +110,7 @@ def list_entries() -> list[dict]:
 
 
 def clear(node_name: str | None = None) -> int:
-    """清空缓存。给定 node_name 则只清该节点；否则清全部。返回删除条数。"""
+    """Clear the cache. If node_name is given, clears only that node; otherwise clears everything. Returns the row count deleted."""
     with sqlite3.connect(_db_path()) as conn:
         _ensure_table(conn)
         if node_name:

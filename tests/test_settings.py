@@ -1,4 +1,4 @@
-"""测试 settings.py 的 config 加载行为。"""
+"""Tests for settings.py's config-loading behavior."""
 from __future__ import annotations
 
 import pytest
@@ -8,7 +8,7 @@ from cca import settings
 
 @pytest.fixture(autouse=True)
 def reset_config_cache() -> None:
-    """每个测试前清 lru_cache，避免 monkeypatch 受历史污染。"""
+    """Clear the lru_cache before every test, so monkeypatches aren't polluted by earlier state."""
     settings.load_config.cache_clear()
 
 
@@ -20,14 +20,14 @@ def test_load_config_returns_dict_with_task_section() -> None:
 
 
 def test_config_task_section_has_pm_required_fields() -> None:
-    """PM 启动依赖的 task 字段必须全部存在；缺失即 config 被改坏。"""
+    """Every task field PM's startup depends on must be present; a missing one means config got broken."""
     task = settings.load_config()["task"]
     for field in ("primary_competitor", "n_competitors", "user_query"):
         assert field in task, f"PM 需要的 task.{field} 缺失"
 
 
 def test_load_config_is_cached() -> None:
-    """连续两次调用应返回同一对象（lru_cache 生效）。"""
+    """Two consecutive calls should return the same object (lru_cache in effect)."""
     a = settings.load_config()
     b = settings.load_config()
     assert a is b

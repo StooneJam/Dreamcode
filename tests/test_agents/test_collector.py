@@ -1,4 +1,4 @@
-"""测试 Collector exploration_node + collect_node / collect_one_product —— mock ReAct，不调真 LLM。"""
+"""Tests for Collector's exploration_node + collect_node/collect_one_product -- mocks ReAct, no real LLM calls."""
 from __future__ import annotations
 
 import json
@@ -42,7 +42,7 @@ def _empty_state(**overrides) -> CCAState:
     return state
 
 
-# ── _last_tool_json(finalize_exploration) ─────────────────────────────
+# ── _last_tool_json(finalize_exploration) ───────────────────────────
 
 
 def test_extract_exploration_returns_dict() -> None:
@@ -77,7 +77,7 @@ def test_extract_exploration_returns_none_if_finalize_not_called() -> None:
 
 
 def test_extract_exploration_takes_latest_when_called_twice() -> None:
-    """LLM 偶尔会多次 finalize，应以最新一次为准。"""
+    """The LLM occasionally calls finalize multiple times; the latest one should win."""
     from cca.agents.collector import _last_tool_json
 
     early = json.dumps({
@@ -103,7 +103,7 @@ def test_extract_exploration_takes_latest_when_called_twice() -> None:
     assert result["target_product"] == "Y"
 
 
-# ── _extract_tool_jsons(challenge_pm) ─────────────────────────────────
+# ── _extract_tool_jsons(challenge_pm) ───────────────────────────────
 
 
 def test_extract_signals_collects_challenge_pm_outputs() -> None:
@@ -136,7 +136,7 @@ def test_extract_signals_empty_when_no_challenge() -> None:
     assert _extract_tool_jsons(messages, "challenge_pm") == []
 
 
-# ── exploration_node ──────────────────────────────────────────────────
+# ── exploration_node ─────────────────────────────────────────────────
 
 
 def _make_mock_agent(messages: list) -> MagicMock:
@@ -146,7 +146,7 @@ def _make_mock_agent(messages: list) -> MagicMock:
 
 
 def test_exploration_node_success_returns_required_state_fields() -> None:
-    """正常路径：finalize_exploration 被调用 → 节点返回 exploration_result / competitor_names。"""
+    """Normal path: finalize_exploration is called -> the node returns exploration_result/competitor_names."""
     exploration = CollectorExplorationResult(
         target_product="飞书",
         product_type="企业协作平台",
@@ -176,7 +176,7 @@ def test_exploration_node_success_returns_required_state_fields() -> None:
 
 
 def test_exploration_node_failure_when_finalize_not_called() -> None:
-    """ReAct 没调 finalize → 节点写 exploration_failed audit，不写 exploration_result。"""
+    """ReAct never calls finalize -> the node writes an exploration_failed audit entry, no exploration_result."""
     mock_messages = [AIMessage(content="I think the answer is...")]
     with patch(
         "cca.agents.collector.create_react_agent",
@@ -190,7 +190,7 @@ def test_exploration_node_failure_when_finalize_not_called() -> None:
 
 
 def test_exploration_node_collects_signals_alongside_exploration() -> None:
-    """同次 ReAct 既能产出 exploration 又能挑战 PM → 两者都进 state。"""
+    """The same ReAct run can produce both an exploration and a challenge to PM -> both go into state."""
     exploration = CollectorExplorationResult(
         target_product="飞书",
         product_type="企业协作平台",
@@ -229,7 +229,7 @@ def test_exploration_node_collects_signals_alongside_exploration() -> None:
 
 
 def test_exploration_node_injects_domain_seed_hint_into_prompt() -> None:
-    """state.domain_seed 存在时，prompt 应含其 dimension_candidates / competitor_mentions。"""
+    """When state.domain_seed is present, the prompt should include its dimension_candidates/competitor_mentions."""
     exploration = CollectorExplorationResult(
         target_product="飞书",
         product_type="企业协作平台",
@@ -258,7 +258,7 @@ def test_exploration_node_injects_domain_seed_hint_into_prompt() -> None:
         )
         exploration_node(state)
 
-    # 校验 ReAct agent 收到的 prompt 含 domain_seed 内容
+    # verify the prompt the ReAct agent received includes the domain_seed content
     call_args = mock_agent.invoke.call_args[0][0]
     human_msg = call_args["messages"][1]
     assert "PM 从用户文档蒸馏" in human_msg.content
@@ -267,7 +267,7 @@ def test_exploration_node_injects_domain_seed_hint_into_prompt() -> None:
 
 
 def test_exploration_node_omits_seed_hint_when_no_domain_seed() -> None:
-    """state.domain_seed 为 None 时 prompt 不出现 hint 段，回到纯联网路径。"""
+    """When state.domain_seed is None, the prompt has no hint section, falling back to the pure web-discovery path."""
     exploration = CollectorExplorationResult(
         target_product="飞书",
         product_type="企业协作平台",
@@ -292,7 +292,7 @@ def test_exploration_node_omits_seed_hint_when_no_domain_seed() -> None:
 
 
 def test_exploration_node_uses_target_product_from_brief() -> None:
-    """initial_brief.target_product 优先于 state.target_product（PM 阶段一可能更新）。"""
+    """initial_brief.target_product takes priority over state.target_product (PM phase 1 may have updated it)."""
     exploration = CollectorExplorationResult(
         target_product="飞书",
         product_type="企业协作平台",
@@ -315,7 +315,7 @@ def test_exploration_node_uses_target_product_from_brief() -> None:
         )
         exploration_node(state)
 
-    # 检查初始消息里用的是 brief 的 target_product
+    # check the initial message uses the brief's target_product
     call_args = mock_agent.invoke.call_args[0][0]
     human_msg = call_args["messages"][1]
     assert "飞书" in human_msg.content
@@ -325,7 +325,7 @@ def test_exploration_node_uses_target_product_from_brief() -> None:
 
 
 def _valid_profile_payload(product_name: str = "钉钉") -> dict:
-    """构造一个最小可通过 ProductProfile 校验的 dict（带 evidence min_length=1）。"""
+    """Build the minimal dict that passes ProductProfile validation (with evidence min_length=1)."""
     return {
         "product_name": product_name,
         "company": "阿里巴巴",
@@ -341,7 +341,7 @@ def _valid_profile_payload(product_name: str = "钉钉") -> dict:
 def _finalize_profile_tool_msg(
     product_name: str = "钉钉", degraded: list[str] | None = None,
 ) -> ToolMessage:
-    """模拟 finalize_profile 产出：content 给模型看，profile 经 artifact 传回。"""
+    """Simulates finalize_profile's output: content is shown to the model, profile comes back through artifact."""
     return ToolMessage(
         content=f"提交成功：{product_name} 已入库。请立即停止，不得再次调用 finalize_profile。",
         artifact={"profile": _valid_profile_payload(product_name), "degraded": degraded or []},
@@ -400,7 +400,7 @@ def test_extract_replacement_signals_collects_all() -> None:
 
 
 def test_collect_one_product_success_path() -> None:
-    """ReAct 调了 finalize_profile → 节点返回 profiles + audit collect_done。"""
+    """ReAct calls finalize_profile -> the node returns profiles + a collect_done audit entry."""
     task = CollectTask(product_name="钉钉", priority_dimensions=["视频会议"])
     mock_agent = _make_mock_agent([
         AIMessage(content="搜了官网"),
@@ -415,11 +415,11 @@ def test_collect_one_product_success_path() -> None:
     assert result["profiles"]["钉钉"]["product_type"] == "企业协作平台"
     assert result["audit_log"][0]["event"] == "collect_done"
     assert result["audit_log"][0]["product_name"] == "钉钉"
-    assert "review_state" not in result  # 数据完整 → 不注入 forced
+    assert "review_state" not in result  # data is complete -> no forced injection
 
 
 def test_collect_one_product_replacement_path() -> None:
-    """ReAct 调了 request_product_replacement → 节点返回 agent_signals + audit replacement_requested。"""
+    """ReAct calls request_product_replacement -> the node returns agent_signals + a replacement_requested audit entry."""
     task = CollectTask(product_name="幽灵产品", priority_dimensions=[])
     mock_agent = _make_mock_agent([_replacement_tool_msg("幽灵产品")])
     with patch("cca.agents.collector.create_react_agent", return_value=mock_agent):
@@ -433,7 +433,7 @@ def test_collect_one_product_replacement_path() -> None:
 
 
 def test_collect_one_product_failed_path() -> None:
-    """ReAct 既没 finalize 也没 request_replacement → 节点 audit collect_failed。"""
+    """ReAct calls neither finalize nor request_replacement -> the node audits collect_failed."""
     task = CollectTask(product_name="钉钉", priority_dimensions=[])
     mock_agent = _make_mock_agent([AIMessage(content="我想了想就放弃了")])
     with patch("cca.agents.collector.create_react_agent", return_value=mock_agent):
@@ -465,7 +465,7 @@ def test_collect_one_product_passes_domain_seed_hint_to_prompt() -> None:
 
 
 def testbuild_collect_context_finds_product_brief() -> None:
-    """build_collect_context 从 exploration_result.initial_profiles 找该产品的 brief。"""
+    """build_collect_context finds this product's brief from exploration_result.initial_profiles."""
     from cca.agents.collector import build_collect_context
 
     state = _empty_state(
@@ -492,11 +492,11 @@ def testbuild_collect_context_no_match_returns_none_brief() -> None:
     assert ctx["product_brief"] is None
 
 
-# ── cache key 稳定切片（回归防线）─────────────────────────────────────
+# ── stable cache-key slices (regression guard) ──────────────────────
 
 
 def test_stable_domain_seed_strips_extracted_at() -> None:
-    """extracted_at 浮动不该影响 cache key —— 这是 P0 修复的核心不变量。"""
+    """A floating extracted_at shouldn't affect the cache key -- the core invariant of the P0 fix."""
     from cca.agents.collector import _stable_domain_seed
 
     seed_a = {
@@ -511,7 +511,7 @@ def test_stable_domain_seed_strips_extracted_at() -> None:
 
 
 def test_stable_product_brief_keeps_only_prompt_fields() -> None:
-    """未来扩 ProductBrief 加新字段时不应污染 cache —— P1 修复的契约。"""
+    """A future ProductBrief field addition shouldn't pollute the cache -- the contract of the P1 fix."""
     from cca.agents.collector import _stable_product_brief
 
     brief = {
@@ -525,8 +525,9 @@ def test_stable_product_brief_keeps_only_prompt_fields() -> None:
 
 
 def test_cache_key_hash_stable_under_floating_fields() -> None:
-    """端到端不变量：domain_seed.extracted_at + ProductBrief 未知扩展字段
-    不影响最终 react_cache hash。这条断言挂掉 = 答辩现场 replay miss 风险回归。"""
+    """An end-to-end invariant: domain_seed.extracted_at + ProductBrief's unknown
+    extension fields don't affect the final react_cache hash. This assertion
+    failing means the risk of a replay miss during a live demo has come back."""
     from cca.agents.collector import _stable_domain_seed, _stable_product_brief
     from cca.memory.react_cache import hash_key
 
@@ -546,11 +547,11 @@ def test_cache_key_hash_stable_under_floating_fields() -> None:
         **base_key,
         "domain_seed": _stable_domain_seed({
             "product_type_hint": "协作", "terminology": {},
-            "extracted_at": "2026-99-99T99:99:99Z",   # 时间戳浮动
+            "extracted_at": "2026-99-99T99:99:99Z",   # a floating timestamp
         }),
         "product_brief": _stable_product_brief({
             "product_name": "钉钉", "company": "阿里", "website": "https://d.com",
-            "product_type": "协作", "discovered_at": "later",  # 未来字段
+            "product_type": "协作", "discovered_at": "later",  # a future field
         }),
     }
     assert hash_key(base_key) == hash_key(drifted_key)

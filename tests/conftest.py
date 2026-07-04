@@ -1,4 +1,4 @@
-"""共享 pytest fixtures —— agent / skill / tool 三层测试共用。"""
+"""Shared pytest fixtures -- used across agent/skill/tool test layers."""
 from __future__ import annotations
 
 import json
@@ -15,20 +15,20 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 @pytest.fixture
 def mock_sources():
-    """模拟采集到的源数据（飞书/钉钉等），用于测试下游 agent 的输入。"""
+    """Simulated collected source data (Feishu/DingTalk etc.), used as input for downstream agent tests."""
     with open(FIXTURES_DIR / "mock_sources.json", encoding="utf-8") as f:
         return json.load(f)
 
 
 @pytest.fixture
 def mock_llm_responses():
-    """按 key 索引的假 LLM 返回，用于离线测试避免烧 API 配额。"""
+    """Fake LLM responses indexed by key, for offline tests that avoid burning API quota."""
     with open(FIXTURES_DIR / "mock_llm_responses.json", encoding="utf-8") as f:
         return json.load(f)
 
 
 class FakeLLM:
-    """最简假 LLM 客户端 —— 单元测试默认注入此对象，绝不调真 API。"""
+    """The simplest fake LLM client -- unit tests inject this by default, never calling a real API."""
 
     def __init__(self, responses: dict):
         self.responses = responses
@@ -46,11 +46,11 @@ def fake_llm(mock_llm_responses):
 
 @pytest.fixture
 def mock_state():
-    """Phase 2 结束后的完整 CCAState，供 Report Agent 测试使用。"""
+    """A complete CCAState after phase 2, for Report Agent tests."""
     return make_mock_state(invoke_reviewer=False)
 
 
 @pytest.fixture
 def mock_state_with_reviewer():
-    """同上，但开启豆包终审开关。"""
+    """Same as above, but with the Doubao final-review switch on."""
     return make_mock_state(invoke_reviewer=True)

@@ -1,7 +1,9 @@
-"""报告与 Q&A 对话的 sqlite 持久化。所有读写按 owner（用户名）隔离。
+"""sqlite persistence for reports and Q&A conversations. All reads/writes are
+isolated by owner (username).
 
-每次操作开一个短连接、用完即关，避免跨线程共享连接（server 在线程池里跑 graph）。
-API key 不入库——只持久化报告与对话。
+Each operation opens a short-lived connection and closes it when done, to avoid
+sharing a connection across threads (the server runs the graph in a thread pool).
+API keys are never persisted -- only reports and conversations are.
 """
 from __future__ import annotations
 
@@ -78,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
 
 def configure(path: str | Path) -> None:
-    """切换 db 文件路径（测试用临时库）。"""
+    """Switch the db file path (used by tests for a temporary db)."""
     global _DB_PATH
     _DB_PATH = Path(path)
 
@@ -89,7 +91,7 @@ def _now() -> str:
 
 @contextmanager
 def _tx() -> Iterator[sqlite3.Connection]:
-    """一次连接：事务自动提交/回滚，用完即关。"""
+    """A single connection: transaction auto-commits/rolls back, then closes."""
     conn = sqlite3.connect(_DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
@@ -100,11 +102,11 @@ def _tx() -> Iterator[sqlite3.Connection]:
 
 
 def init_db() -> None:
-    """建表（幂等）。server 启动时调一次。"""
+    """Create tables (idempotent). Called once at server startup."""
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _tx() as conn:
         conn.executescript(_SCHEMA)
-        # 迁移：补 password_hash 列（已存在时忽略）
+        # migration: add the password_hash column (ignored if it already exists)
         try:
             conn.execute("ALTER TABLE user_identities ADD COLUMN password_hash TEXT")
         except sqlite3.OperationalError:
@@ -114,7 +116,7 @@ def init_db() -> None:
 def save_report(
     report_id: str, owner: str, target_product: str, report_md: str, pdf_path: str
 ) -> None:
-    """落库一份报告（同 id 覆盖）。"""
+    """Persist a report (same id overwrites)."""
     with _tx() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO reports"
@@ -125,7 +127,7 @@ def save_report(
 
 
 def get_report(report_id: str, owner: str) -> dict | None:
-    """取报告，owner 不匹配返 None（隔离）。"""
+    """Get a report; returns None if owner doesn't match (isolation)."""
     with _tx() as conn:
         row = conn.execute(
             "SELECT * FROM reports WHERE id = ? AND owner = ?", (report_id, owner)
@@ -134,7 +136,7 @@ def get_report(report_id: str, owner: str) -> dict | None:
 
 
 def list_reports(owner: str) -> list[dict]:
-    """该 owner 的报告列表，最新在前（不含 report_md 正文，省带宽）。"""
+    """This owner's report list, newest first (excludes report_md body to save bandwidth)."""
     with _tx() as conn:
         rows = conn.execute(
             "SELECT id, target_product, pdf_path, created_at FROM reports "
@@ -145,7 +147,7 @@ def list_reports(owner: str) -> list[dict]:
 
 
 def get_or_create_conversation(report_id: str, owner: str) -> str:
-    """取 (report, owner) 的会话 id，没有则新建。"""
+    """Get the conversation id for (report, owner), creating one if none exists."""
     with _tx() as conn:
         row = conn.execute(
             "SELECT id FROM conversations WHERE report_id = ? AND owner = ?",
@@ -162,7 +164,7 @@ def get_or_create_conversation(report_id: str, owner: str) -> str:
 
 
 def add_message(conversation_id: str, role: str, content: str) -> None:
-    """追加一条对话消息。"""
+    """Append one conversation message."""
     with _tx() as conn:
         conn.execute(
             "INSERT INTO messages(conversation_id, role, content, created_at) "
@@ -172,7 +174,7 @@ def add_message(conversation_id: str, role: str, content: str) -> None:
 
 
 def get_messages(conversation_id: str) -> list[dict]:
-    """按时间顺序取会话消息 [{role, content}]。"""
+    """Get a conversation's messages in chronological order: [{role, content}]."""
     with _tx() as conn:
         rows = conn.execute(
             "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id",
@@ -184,7 +186,7 @@ def get_messages(conversation_id: str) -> list[dict]:
 def save_run_trace(
     run_id: str, owner: str, langsmith_run_id: str | None, events_json: str
 ) -> None:
-    """落库一次运行的 Agent 过程事件流（同 run_id 覆盖）。events_json 是事件数组的 JSON 串。"""
+    """Persist a run's agent process event stream (same run_id overwrites). events_json is a JSON array string."""
     with _tx() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO run_traces"
@@ -195,7 +197,7 @@ def save_run_trace(
 
 
 def get_run_trace(run_id: str, owner: str) -> dict | None:
-    """取一次运行的过程事件流，owner 不匹配返 None（隔离）。"""
+    """Get a run's process event stream; returns None if owner doesn't match (isolation)."""
     with _tx() as conn:
         row = conn.execute(
             "SELECT * FROM run_traces WHERE run_id = ? AND owner = ?", (run_id, owner)
@@ -204,7 +206,7 @@ def get_run_trace(run_id: str, owner: str) -> dict | None:
 
 
 def get_history(report_id: str, owner: str) -> list[dict]:
-    """取 (report, owner) 会话的全部消息；无会话返 []（只读，不建会话）。"""
+    """Get all messages for (report, owner); returns [] if no conversation exists (read-only, doesn't create one)."""
     with _tx() as conn:
         conv = conn.execute(
             "SELECT id FROM conversations WHERE report_id = ? AND owner = ?",
@@ -223,7 +225,7 @@ def get_history(report_id: str, owner: str) -> list[dict]:
 
 
 def get_or_create_user(provider: str, provider_id: str, display_name: str) -> tuple[str, str]:
-    """按 (provider, provider_id) 查找或新建用户，返回 (user_id, display_name)。"""
+    """Look up or create a user by (provider, provider_id), returns (user_id, display_name)."""
     with _tx() as conn:
         row = conn.execute(
             "SELECT user_id FROM user_identities WHERE provider = ? AND provider_id = ?",
@@ -249,7 +251,7 @@ def get_or_create_user(provider: str, provider_id: str, display_name: str) -> tu
 
 
 def create_password_user(username: str, password_hash: str) -> tuple[str, str]:
-    """新建用户名+密码账号，用户名已占用时抛 ValueError。"""
+    """Create a username+password account; raises ValueError if the username is taken."""
     with _tx() as conn:
         if conn.execute(
             "SELECT id FROM user_identities WHERE provider = 'password' AND provider_id = ?",
@@ -271,7 +273,7 @@ def create_password_user(username: str, password_hash: str) -> tuple[str, str]:
 
 
 def get_password_user(username: str) -> tuple[str, str, str] | None:
-    """按用户名查账号，返回 (user_id, display_name, password_hash) 或 None。"""
+    """Look up an account by username, returns (user_id, display_name, password_hash) or None."""
     with _tx() as conn:
         row = conn.execute(
             "SELECT ui.user_id, u.display_name, ui.password_hash "
@@ -314,7 +316,7 @@ def save_otp(phone: str, code: str, expires_at: str) -> None:
 
 
 def check_and_consume_otp(phone: str, code: str) -> bool:
-    """验证验证码是否正确且未过期；正确时立即删除（防重放）。"""
+    """Verify the OTP is correct and unexpired; deletes it immediately on success (prevents replay)."""
     with _tx() as conn:
         row = conn.execute(
             "SELECT code FROM otp_codes WHERE phone = ? AND expires_at > ?",

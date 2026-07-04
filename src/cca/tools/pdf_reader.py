@@ -1,14 +1,16 @@
-"""文档文本抽取工具 —— PDF / TXT / MD。
+"""Document text extraction -- PDF / TXT / MD.
 
-D-032 修订版：PM `initial_brief_node` 调本工具把用户上传文档抽成文本，
-拼进 PM phase 1 prompt 让 GPT-5 蒸馏 DomainSeed。
+D-032 revision: PM's `initial_brief_node` calls this tool to extract text from a
+user-uploaded doc, feeding it into PM phase 1's prompt for GPT-5 to distill a DomainSeed.
 
-设计取舍：
-- PDF 走 pypdf 抽**文本主导**（demo 规模够用；图表/版式信息丢失但 90% 信息密度仍在文本）
-- 不依赖 poppler / pdf2image（跨平台部署友好）
-- 不暴露为 @tool —— 由 PM 节点直接调用，PM 不是 ReAct agent
+Design tradeoffs:
+- PDFs go through pypdf, **text-only extraction** (fine at demo scale; chart/layout
+  info is lost, but ~90% of the information density is still in the text)
+- No dependency on poppler / pdf2image (friendlier for cross-platform deployment)
+- Not exposed as a @tool -- called directly by the PM node, since PM isn't a ReAct agent
 
-升级路径：未来若需要图像/版式信息，加 `read_file_as_images(path) -> list[Image]` 兜底分支。
+Upgrade path: if image/layout info is ever needed, add a
+`read_file_as_images(path) -> list[Image]` fallback branch.
 """
 from __future__ import annotations
 
@@ -20,18 +22,18 @@ _SUPPORTED_TEXT_SUFFIXES = {".txt", ".md", ".markdown"}
 
 
 class UnsupportedFormat(ValueError):
-    """文件后缀不在支持白名单内。"""
+    """The file's suffix isn't on the supported whitelist."""
 
 
 def read_file(path: str | Path) -> str:
-    """抽取文件文本内容。
+    """Extract a file's text content.
 
-    支持后缀：`.pdf` / `.txt` / `.md` / `.markdown`。
-    PDF 拼接所有页文本；纯文本直读为 UTF-8。
+    Supported suffixes: `.pdf` / `.txt` / `.md` / `.markdown`.
+    PDFs have all pages' text concatenated; plain text is read directly as UTF-8.
 
     Raises:
-        FileNotFoundError: 路径不存在
-        UnsupportedFormat: 后缀不支持
+        FileNotFoundError: the path doesn't exist
+        UnsupportedFormat: the suffix isn't supported
     """
     p = Path(path)
     if not p.exists():
@@ -48,7 +50,7 @@ def read_file(path: str | Path) -> str:
 
 
 def _read_pdf(path: Path) -> str:
-    """用 pypdf 抽全部页文本并拼接，空页跳过。"""
+    """Extract and concatenate all pages' text with pypdf, skipping empty pages."""
     reader = pypdf.PdfReader(str(path))
     pages = [page.extract_text() for page in reader.pages]
     return "\n\n".join(p for p in pages if p and p.strip())

@@ -1,10 +1,10 @@
-"""Insight Agent 测试。
+"""Insight Agent tests.
 
-覆盖：
-- 问卷缓存（mock SQLite 路径）
-- 问卷 fill_mode（real 模式返回空列表）
-- 问卷设计 / 格式化 / 匿名化（mock LLM）
-- insight_one_product 输出结构（mock agent）
+Covers:
+- questionnaire caching (mocked SQLite path)
+- questionnaire fill_mode (real mode returns an empty list)
+- questionnaire design / formatting / anonymization (mocked LLM)
+- insight_one_product's output structure (mocked agent)
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from cca.skills.questionnaire.distribute import format_questionnaire
 
 
 # ---------------------------------------------------------------------------
-# 问卷格式化
+# Questionnaire formatting
 # ---------------------------------------------------------------------------
 
 class TestFormatQuestionnaire:
@@ -49,7 +49,7 @@ class TestFormatQuestionnaire:
 
 
 # ---------------------------------------------------------------------------
-# 问卷匿名化
+# Questionnaire anonymization
 # ---------------------------------------------------------------------------
 
 class TestAnonymizeResponses:
@@ -89,7 +89,8 @@ class TestAnonymizeResponses:
 
 
 # ---------------------------------------------------------------------------
-# insight_one_product 集成（mock agent）—— Send fanout worker，主图与 demo 实际路径
+# insight_one_product integration (mocked agent) -- the Send fanout worker, the
+# real path taken by the main graph and the demo
 # ---------------------------------------------------------------------------
 
 class TestInsightOneProduct:
@@ -134,8 +135,10 @@ class TestInsightOneProduct:
         assert result["profiles"]["钉钉"]["sentiment"] is not None
 
     def test_collector_data_preserved(self, mock_state):
-        # insight_one_product 只返回增量 {"sentiment": ...}，由 _merge_profiles reducer 保留 Collector 字段。
-        # 这里模拟 LangGraph 的 reducer 合并行为，验证合并后 dimensions 不丢失。
+        # insight_one_product only returns the delta {"sentiment": ...}; the
+        # _merge_profiles reducer preserves Collector's fields.
+        # This simulates LangGraph's reducer-merge behavior, verifying dimensions
+        # survive the merge.
         from cca.state import _merge_profiles
         result = self._invoke(mock_state)
         merged = _merge_profiles(mock_state["profiles"], result["profiles"])
@@ -150,7 +153,7 @@ class TestInsightOneProduct:
         assert log["sentiment_written"] is True
 
     def test_no_signals_by_default(self, mock_state):
-        # fanout worker 无 signal 时不带 agent_signals key（精简增量契约）
+        # a fanout worker with no signal omits the agent_signals key (a minimal delta contract)
         result = self._invoke(mock_state)
         assert "agent_signals" not in result
 
@@ -162,14 +165,14 @@ class TestInsightOneProduct:
         assert result["audit_log"][0]["key_events_written"] is True
 
     def test_key_events_absent_when_not_recorded(self, mock_state):
-        # 未调 record_key_events 时不写 key_events，sentiment 仍在
+        # when record_key_events isn't called, key_events isn't written, but sentiment still is
         result = self._invoke(mock_state)
         assert "key_events" not in result["profiles"]["钉钉"]
         assert result["audit_log"][0]["key_events_written"] is False
 
 
 # ---------------------------------------------------------------------------
-# _build_insight_product_message：product_type → 数据源渠道注入
+# _build_insight_product_message: product_type -> data-source channel injection
 # ---------------------------------------------------------------------------
 
 class TestInsightProductMessage:
@@ -185,12 +188,12 @@ class TestInsightProductMessage:
         assert "大众点评" in msg and "美团" in msg
 
     def test_coffee_message_excludes_app_store(self):
-        # 幸运咖有 App，但赛道是咖啡 → 消息不得引导抓 App Store
+        # "Lucky Coffee" has an app, but the category is coffee -> the message must not steer it toward scraping App Store
         msg = self._build("连锁咖啡")
         assert "scrape_app_store" not in msg
 
     def test_coffee_message_uses_scrape_local_life(self):
-        # 本地生活渠道结构化评分走 Google Places 工具
+        # structured ratings for the local-life channel go through the Google Places tool
         msg = self._build("连锁咖啡")
         assert "scrape_local_life" in msg
 
@@ -200,7 +203,7 @@ class TestInsightProductMessage:
 
 
 # ---------------------------------------------------------------------------
-# 问卷缓存（get_or_create_questionnaire）
+# Questionnaire caching (get_or_create_questionnaire)
 # ---------------------------------------------------------------------------
 
 class TestGetOrCreateQuestionnaire:
@@ -231,7 +234,7 @@ class TestGetOrCreateQuestionnaire:
         with patch.object(collect_mod, "design_questionnaire", return_value=q) as mock_design:
             from cca.skills.questionnaire.collect import get_or_create_questionnaire
             get_or_create_questionnaire("飞书", ["钉钉"], ["协同"])
-            # 第二次调用，竞品/维度不同，但产品名相同 → 应命中缓存
+            # second call, different competitors/dimensions but the same product name -> should hit the cache
             result = get_or_create_questionnaire("飞书", ["企业微信"], ["定价"])
         assert mock_design.call_count == 1
         assert result.product_name == "飞书"
@@ -257,7 +260,7 @@ class TestGetOrCreateQuestionnaire:
 
 
 # ---------------------------------------------------------------------------
-# 问卷 fill_mode
+# Questionnaire fill_mode
 # ---------------------------------------------------------------------------
 
 class TestCollectResponsesFillMode:
@@ -291,7 +294,7 @@ class TestCollectResponsesFillMode:
 
 
 # ---------------------------------------------------------------------------
-# challenge_pm 工具：AgentSignal 结构与 schema 对齐
+# challenge_pm tool: AgentSignal structure aligns with the schema
 # ---------------------------------------------------------------------------
 
 class TestChallengePmTool:
@@ -329,11 +332,11 @@ class TestChallengePmTool:
         r2 = challenge_pm.invoke({"claim": "c2", "evidence": ["e2"]})
         s1 = AgentSignal.model_validate_json(r1)
         s2 = AgentSignal.model_validate_json(r2)
-        assert s1.signal_id != s2.signal_id  # UUID，每次唯一
+        assert s1.signal_id != s2.signal_id  # a UUID, unique every time
 
 
 # ---------------------------------------------------------------------------
-# finalize_sentiment 工具：UserSentiment 验证与输出结构
+# finalize_sentiment tool: UserSentiment validation and output structure
 # ---------------------------------------------------------------------------
 
 class TestFinalizeSentimentTool:
@@ -365,7 +368,7 @@ class TestFinalizeSentimentTool:
         assert "好用" in result["sentiment"]["positive_themes"]
 
     def test_invalid_rating_returns_error_string(self):
-        """rating 越界 → 返回 LLM-friendly 错误字符串（不 raise）。"""
+        """An out-of-range rating -> returns an LLM-friendly error string (doesn't raise)."""
         from cca.tools.insight_tools import finalize_sentiment
 
         bad_json = '{"aggregate_rating": 99, "positive_themes": [], "negative_themes": []}'
@@ -374,7 +377,7 @@ class TestFinalizeSentimentTool:
         assert "aggregate_rating" in result
 
     def test_string_themes_are_tolerated(self):
-        # 豆包高频错填：positive_themes 填成顿号分隔的串 → 应切成数组一次过，不再 retry
+        # Doubao's frequent mistake: filling positive_themes with a delimiter-separated string -> should split into an array on the first try, no retry
         from cca.tools.insight_tools import finalize_sentiment
         bad = json.dumps({
             "positive_themes": "性价比高、出餐快",
@@ -404,7 +407,7 @@ class TestFinalizeSentimentTool:
 
 
 # ---------------------------------------------------------------------------
-# record_key_events 工具：list[Fact] 校验 + LLM-friendly 错误
+# record_key_events tool: list[Fact] validation + LLM-friendly errors
 # ---------------------------------------------------------------------------
 
 class TestRecordKeyEventsTool:
@@ -423,7 +426,8 @@ class TestRecordKeyEventsTool:
         assert "加盟商" in result["key_events"][0]["statement"]
 
     def test_missing_evidence_returns_error(self):
-        # Fact.evidence min_length=1：无证据应返回 LLM 可自修的错误串，不 raise
+        # Fact.evidence min_length=1: missing evidence should return an
+        # LLM-self-correctable error string, without raising
         from cca.tools.insight_tools import record_key_events
         bad = json.dumps([{"statement": "无证据事件"}])
         result = record_key_events.invoke({"product_name": "X", "events_json": bad})
@@ -435,14 +439,14 @@ class TestRecordKeyEventsTool:
         assert "数组" in result
 
     def test_bare_url_evidence_is_tolerated(self):
-        # 豆包高频错填：evidence 填成裸 URL 字符串 → 应归一后一次过，不再 retry
+        # Doubao's frequent mistake: filling evidence with a bare URL string -> should pass after normalization, no retry
         from cca.tools.insight_tools import record_key_events
         bad_shape = json.dumps([{"statement": "事件", "evidence": ["https://x.com/a"]}])
         result = json.loads(record_key_events.invoke({"product_name": "X", "events_json": bad_shape}))
         assert result["key_events"][0]["evidence"][0]["source_url"] == "https://x.com/a"
 
     def test_events_passed_as_list_is_tolerated(self):
-        # 豆包有时直接传数组而非 JSON 串 → 应被容忍
+        # Doubao sometimes passes an array directly instead of a JSON string -> should be tolerated
         from cca.tools.insight_tools import record_key_events
         events = [{"statement": "事件", "evidence": [{"source_url": "https://x.com"}]}]
         result = json.loads(record_key_events.invoke({"product_name": "X", "events_json": events}))

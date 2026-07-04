@@ -1,6 +1,6 @@
-"""测试 debate skill 流程（不调真 API）。
+"""Tests for the debate skill's flow (no real API calls).
 
-Position 由 caller 外部注入，debate 只负责 Critique → Refine → Judge / Converge。
+Positions are injected externally by the caller; debate only handles Critique -> Refine -> Judge/Converge.
 """
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from cca.skills import debate
 
 
 class _FakeMessage:
-    """模拟 langchain AIMessage，给 .invoke() 返回用。"""
+    """Simulates a langchain AIMessage, returned by .invoke()."""
     def __init__(self, content: str):
         self.content = content
 
 
 class _FakeStructuredLLM:
-    """模拟 ChatOpenAI.with_structured_output() 返回的可调用对象。"""
+    """Simulates the callable returned by ChatOpenAI.with_structured_output()."""
 
     def __init__(self, responses: list):
         self._responses = responses
@@ -32,12 +32,12 @@ class _FakeStructuredLLM:
 
 
 class _FakeLLMClient:
-    """模拟 ChatOpenAI client。
+    """Simulates a ChatOpenAI client.
 
-    支持 with_structured_output() → FakeStructuredLLM；plain invoke()；以及
-    bind(response_format=...) —— `_phase_finalize_converged` 走的裸 JSON 路径：
-    bind 返回一个 invoke 出 AIMessage(content=JSON) 的对象，JSON 内容由
-    responses_by_target_type[Pydantic schema][0].model_dump() 序列化得到。
+    Supports with_structured_output() -> FakeStructuredLLM; plain invoke(); and
+    bind(response_format=...) -- the raw-JSON path `_phase_finalize_converged` takes:
+    bind returns an object whose invoke() yields AIMessage(content=JSON), with the
+    JSON content serialized from responses_by_target_type[Pydantic schema][0].model_dump().
     """
 
     def __init__(self, responses_by_target_type: dict[type, list], plain_response: str = ""):
@@ -51,17 +51,17 @@ class _FakeLLMClient:
         return _FakeMessage(self._plain)
 
     def bind(self, **_kwargs):  # noqa: ANN003
-        """匹配 _phase_finalize_converged 的 llm.bind(response_format=...) 调用。
+        """Matches _phase_finalize_converged's llm.bind(response_format=...) call.
 
-        返回一个对象，invoke 时按已注册的 Pydantic schema 取第一条预制响应、
-        model_dump → json 包成 AIMessage。
+        Returns an object whose invoke() takes the first pre-set response for a
+        registered Pydantic schema, model_dump -> json, wrapped as an AIMessage.
         """
         import json as _json
 
         responses = self._responses
 
-        # 排除 _Critique / _Refinement / DebateResult 这类辅助 schema；
-        # 选注册过的最后一项 schema（通常是 TaskPlan / ReportTask 这种 revised target）
+        # exclude helper schemas like _Critique / _Refinement / DebateResult;
+        # pick the last registered schema (usually a revised target like TaskPlan/ReportTask)
         from cca.schema import DebateResult as _DR
         from cca.skills.debate import _Critique as _C, _Refinement as _R
 
@@ -94,7 +94,7 @@ def test_run_debate_rejects_judge_in_families() -> None:
 
 
 def test_run_debate_full_flow_to_judge(monkeypatch: pytest.MonkeyPatch) -> None:
-    """still_disagrees=True → 不走收敛短路，最终进入 judge。"""
+    """still_disagrees=True -> skips the convergence short-circuit, eventually reaches judge."""
     from cca.skills.debate import _Critique, _Refinement
 
     deepseek_responses = {
@@ -149,8 +149,8 @@ def test_run_debate_full_flow_to_judge(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_debate_converged_short_circuit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """still_disagrees=False → 收敛短路，跳过 judge 直接返回。
-    revised_output 走 with_structured_output(TaskPlan)，必须是合规的 TaskPlan dict。
+    """still_disagrees=False -> converges via short-circuit, skipping judge and returning directly.
+    revised_output goes through with_structured_output(TaskPlan), and must be a valid TaskPlan dict.
     """
     from cca.skills.debate import _Critique, _Refinement
 
@@ -166,7 +166,7 @@ def test_run_debate_converged_short_circuit(monkeypatch: pytest.MonkeyPatch) -> 
         _Critique: [_Critique(critique="ds accepts db")],
         _Refinement: [_Refinement(refinement="ds conceded", still_disagrees=False)],
     }
-    # ds 让步 → 赢家是 doubao（fam_b），由 doubao 产出修订版 TaskPlan
+    # deepseek concedes -> the winner is doubao (fam_b), which produces the revised TaskPlan
     doubao_responses = {
         _Critique: [_Critique(critique="db accepts ds")],
         _Refinement: [_Refinement(refinement="db conceded", still_disagrees=True)],
@@ -192,10 +192,10 @@ def test_run_debate_converged_short_circuit(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
     assert result.final_verdict == "accepted_with_revision"
-    assert result.judge_family is None  # self-converged，无仲裁
+    assert result.judge_family is None  # self-converged, no arbitration
     assert "self-converged" in (result.judge_rationale or "")
     assert len(result.rounds) == 1
-    # revised_output 是完整 TaskPlan，包含 required 字段 — 校验没被绕过
+    # revised_output is a complete TaskPlan with required fields -- validation wasn't bypassed
     assert result.revised_output is not None
     assert result.revised_output["competitor_names"] == ["钉钉", "企业微信"]
     assert result.revised_output["product_type"] == "协作办公SaaS"
@@ -205,8 +205,8 @@ def test_run_debate_converged_short_circuit(monkeypatch: pytest.MonkeyPatch) -> 
 def test_phase_finalize_converged_default_path_uses_json_object(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """三家族默认路径：bind(response_format=json_object) + 手工 parse + _repair_for_schema。
-    target='report' 对应 ReportTask（已吸收原 AnalystTask 字段）。"""
+    """The default three-family path: bind(response_format=json_object) + manual parse + _repair_for_schema.
+    target='report' corresponds to ReportTask (which has absorbed the old AnalystTask fields)."""
     import json as _json
 
     from cca.skills.debate import _phase_finalize_converged
@@ -242,7 +242,7 @@ def test_phase_finalize_converged_default_path_uses_json_object(
 def test_phase_finalize_converged_dev_override_uses_function_calling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """dev override 路径：with_structured_output(function_calling) —— 无 bind / 无手工 parse。"""
+    """The dev override path: with_structured_output(function_calling) -- no bind, no manual parse."""
     from cca.skills.debate import _phase_finalize_converged
     from cca.schema import ReportTask
 
@@ -268,7 +268,7 @@ def test_phase_finalize_converged_dev_override_uses_function_calling(
 def test_run_debate_two_rounds_propagates_refinement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """2 轮 debate：第二轮 position.claim 应是第一轮 refinement.text。"""
+    """A 2-round debate: round two's position.claim should be round one's refinement.text."""
     from cca.skills.debate import _Critique, _Refinement
 
     def make_client(fam: str):
@@ -324,7 +324,7 @@ def test_run_debate_two_rounds_propagates_refinement(
 
 
 def test_judge_family_is_forced_by_code(monkeypatch: pytest.MonkeyPatch) -> None:
-    """LLM 自报错家族时，代码强制覆盖 judge_family。"""
+    """When the LLM misreports its own family, the code force-overwrites judge_family."""
     from cca.skills.debate import _Critique, _Refinement
 
     family_clients = {
@@ -347,7 +347,7 @@ def test_judge_family_is_forced_by_code(monkeypatch: pytest.MonkeyPatch) -> None
                         target="pm_taskplan",
                         rounds=[],
                         final_verdict="accepted",
-                        judge_family="doubao",  # LLM 故意错填
+                        judge_family="doubao",  # deliberately wrong, simulating an LLM misreport
                         judge_rationale="x",
                     )
                 ]

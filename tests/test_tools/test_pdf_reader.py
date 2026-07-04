@@ -1,4 +1,5 @@
-"""测试 pdf_reader 文档抽取工具 —— 用 pypdf 真包覆盖 PDF 路径，纯文本走文件 IO。"""
+"""Tests for the pdf_reader document-extraction tool -- uses the real pypdf package
+for the PDF path, plain text goes through file I/O."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,13 +26,13 @@ def test_read_file_md(tmp_path: Path) -> None:
 
 
 def test_read_file_pdf(tmp_path: Path) -> None:
-    """构造一个最小可读 PDF，pypdf 解出文本。"""
+    """Build a minimal readable PDF, for pypdf to extract text from."""
     pdf_path = tmp_path / "doc.pdf"
     writer = pypdf.PdfWriter()
-    writer.add_blank_page(width=612, height=792)  # 单页空白
+    writer.add_blank_page(width=612, height=792)  # a single blank page
     with pdf_path.open("wb") as f:
         writer.write(f)
-    # 空白页 pypdf 抽出空字符串，但调用本身应该成功不抛
+    # pypdf extracts an empty string from a blank page, but the call itself should succeed without raising
     text = read_file(pdf_path)
     assert isinstance(text, str)
 

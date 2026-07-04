@@ -1,4 +1,4 @@
-"""问卷 skill 入口 —— design → distribute → collect → anonymize → 返回汇总结果。"""
+"""Questionnaire skill entry point -- design -> distribute -> collect -> anonymize -> return the aggregated result."""
 from __future__ import annotations
 
 from cca.settings import load_config
@@ -14,14 +14,14 @@ def run_questionnaire_skill(
     n_responses: int | None = None,
     fill_mode: str | None = None,
 ) -> dict:
-    """完整问卷流程，支持缓存复用和真实/LLM 两种填写模式。
+    """The full questionnaire flow, supporting cache reuse and real/LLM fill modes.
 
-    返回 dict：
-        questionnaire_display  — 格式化后的问卷文本（供前端展示）
-        fill_mode              — 实际使用的填写模式
-        responses              — 匿名化回答列表，供 Insight Agent NLP 分析
+    Returns a dict:
+        questionnaire_display  -- the formatted questionnaire text (for the frontend)
+        fill_mode              -- the fill mode actually used
+        responses              -- anonymized answer list, for Insight Agent's NLP analysis
 
-    副作用：LLM 模式下回答持久化到 SQLite store.db；问卷按产品名缓存。
+    Side effect: in LLM mode, answers are persisted to SQLite store.db; questionnaires are cached by product name.
     """
     cfg = load_config().get("questionnaire", {})
     if fill_mode is None:

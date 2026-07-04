@@ -1,16 +1,19 @@
-"""离线回归评估：跑 tests/golden 里的 case，检查 Collector/Insight 产出的结构完整性。
+"""Offline regression eval: runs the cases in tests/golden and checks the structural
+completeness of Collector/Insight output.
 
-用法：
+Usage:
     python scripts/eval_golden.py
 
-只跑到 human_gate（不生成报告，不建 checkpointer，直接放行），聚焦 Collector 联网
-采集 + Insight 情感分析这两段最容易被 prompt/模型改动影响的产出。
+Only runs up to human_gate (no report generation, no checkpointer, passes straight
+through), focusing on Collector's web collection + Insight's sentiment analysis --
+the two stages most sensitive to prompt/model changes.
 
-PM 的 initial_brief / task_plan 不走 react_cache（见 cca/agents/pm.py），每次都是真实
-LLM 调用，因此本脚本每次运行都会产生少量真实 API 开销（2 次 gpt-5 短调用）；下游
-Collector 的 ReAct 调用走 CCA_CACHE_MODE=auto——命中则免费重放，未命中则真跑并写入
-缓存供下次复用。想强制全部重放（不允许任何真实调用），改成 CCA_CACHE_MODE=replay，
-未命中会直接报错提示你先用 --cache write 跑一次。
+PM's initial_brief / task_plan don't go through react_cache (see cca/agents/pm.py),
+so every run makes real LLM calls (2 short gpt-5 calls); this script always incurs a
+small real API cost. Downstream, Collector's ReAct calls use
+CCA_CACHE_MODE=auto -- a hit replays for free, a miss runs for real and writes to
+cache for next time. To force full replay (no real calls allowed), switch to
+CCA_CACHE_MODE=replay; a miss will error out and tell you to run with --cache write first.
 """
 from __future__ import annotations
 
@@ -29,23 +32,23 @@ def _load_cases() -> list[dict]:
 
 
 def _evaluate(case: dict, result: dict) -> list[str]:
-    """结构完整性检查，复用 call_report_reviewer 的溯源思路：数据必须可回查来源。"""
+    """Structural completeness check, reusing call_report_reviewer's traceability idea: data must be traceable to a source."""
     failed: list[str] = []
     profiles = result.get("profiles") or {}
     target = case["target_product"]
 
     if target not in profiles:
-        failed.append(f"目标产品 {target!r} 未出现在 profiles 中")
+        failed.append(f"target product {target!r} not found in profiles")
     if len(profiles) < case.get("min_competitors", 1):
-        failed.append(f"竞品数量 {len(profiles)} 少于要求的 {case['min_competitors']}")
+        failed.append(f"competitor count {len(profiles)} is below the required {case['min_competitors']}")
 
     for name, profile in profiles.items():
         if not profile.get("dimensions"):
-            failed.append(f"[{name}] dimensions 为空")
+            failed.append(f"[{name}] dimensions is empty")
         if not profile.get("sources"):
-            failed.append(f"[{name}] sources 为空——数据无法溯源")
+            failed.append(f"[{name}] sources is empty -- data isn't traceable")
         if profile.get("sentiment") is None:
-            failed.append(f"[{name}] sentiment 未填写，Insight 可能未完整跑完")
+            failed.append(f"[{name}] sentiment isn't filled in, Insight may not have finished")
 
     return failed
 
@@ -54,7 +57,7 @@ def _run_case(case: dict) -> dict:
     from cca.graph import build_graph, empty_state
 
     state = empty_state(case["user_query"], case["target_product"])
-    graph = build_graph(include_report=False)  # 无 checkpointer：human_gate 自动放行
+    graph = build_graph(include_report=False)  # no checkpointer: human_gate passes straight through
     return graph.invoke(state, config={"recursion_limit": 40})
 
 
@@ -63,12 +66,12 @@ def main() -> None:
     p.add_argument("--cache", choices=["auto", "replay"], default="auto")
     args = p.parse_args()
 
-    os.environ["CCA_CACHE_MODE"] = args.cache  # 必须在 import cca.* 之前设置
+    os.environ["CCA_CACHE_MODE"] = args.cache  # must be set before importing cca.*
     sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
     cases = _load_cases()
     if not cases:
-        print(f"未找到 golden case（{_GOLDEN_DIR}）")
+        print(f"no golden cases found ({_GOLDEN_DIR})")
         sys.exit(1)
 
     any_failed = False
@@ -77,7 +80,7 @@ def main() -> None:
             result = _run_case(case)
             failed = _evaluate(case, result)
         except Exception as exc:
-            failed = [f"运行异常：{exc}"]
+            failed = [f"run failed: {exc}"]
 
         any_failed = any_failed or bool(failed)
         print(f"[{'FAIL' if failed else 'PASS'}] {case['id']}")

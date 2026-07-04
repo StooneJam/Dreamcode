@@ -1,4 +1,4 @@
-"""测试 schema.py 中所有模型的字段约束是否符合预期。"""
+"""Tests that every model's field constraints in schema.py behave as expected."""
 from __future__ import annotations
 
 import pytest
@@ -118,7 +118,7 @@ def profile(evidence, dimension, pricing, sentiment) -> ProductProfile:
 
 
 # ---------------------------------------------------------------------------
-# 合法对象构建
+# Building valid objects
 # ---------------------------------------------------------------------------
 
 def test_evidence_valid(evidence: Evidence) -> None:
@@ -154,7 +154,7 @@ def test_product_profile_full(profile: ProductProfile) -> None:
 
 
 def test_product_profile_has_no_swot_field() -> None:
-    """SWOT 已不再是 profile owner 字段——Reporter 工具产出后直接进 MD。"""
+    """SWOT is no longer an owned profile field -- Reporter's tool produces it and it goes straight into the MD."""
     assert "swot" not in ProductProfile.model_fields
 
 
@@ -186,7 +186,7 @@ def test_task_plan_valid() -> None:
 
 
 def test_task_plan_rejects_missing_target_product() -> None:
-    """target_product 是 PM 入口必填字段。"""
+    """target_product is a required field at PM's entry point."""
     with pytest.raises(ValidationError):
         TaskPlan(
             product_type="企业协作平台",
@@ -197,7 +197,7 @@ def test_task_plan_rejects_missing_target_product() -> None:
 
 
 def test_task_plan_rejects_missing_product_type() -> None:
-    """product_type 经一轮 debate 收敛后是权威值，必填。"""
+    """product_type is the authoritative value once round-one debate converges, and is required."""
     with pytest.raises(ValidationError):
         TaskPlan(
             target_product="飞书",
@@ -208,13 +208,13 @@ def test_task_plan_rejects_missing_product_type() -> None:
 
 
 def test_insight_task_has_self_extension_flag() -> None:
-    """v3：InsightTask 与 CollectTask 对称，有 allow_self_extension。"""
+    """v3: InsightTask is symmetric with CollectTask, and has allow_self_extension."""
     task = InsightTask(product_name="飞书")
     assert task.allow_self_extension is True
 
 
 def test_insight_task_default_empty_platforms() -> None:
-    """InsightTask 不传 target_platforms 时默认空列表，由 Insight 自主决定。"""
+    """InsightTask defaults target_platforms to an empty list when omitted, leaving it to Insight's own judgment."""
     task = InsightTask(product_name="飞书")
     assert task.target_platforms == []
     assert task.priority_dimensions == []
@@ -229,7 +229,7 @@ def test_insight_task_accepts_multiple_platforms() -> None:
 
 
 def test_insight_task_accepts_open_platform() -> None:
-    """target_platforms 是开放字符串：不预设产品领域，任意来源名都接受。"""
+    """target_platforms is an open string: no assumed product domain, any source name is accepted."""
     task = InsightTask(product_name="飞书", target_platforms=["twitter", "fragrantica", "tmall"])
     assert task.target_platforms == ["twitter", "fragrantica", "tmall"]
 
@@ -245,13 +245,13 @@ def test_report_task_valid() -> None:
     )
     assert task.output_formats == ["markdown", "pdf"]
     assert task.invoke_call_report_reviewer is True
-    # 原 AnalystTask 字段已合并进 ReportTask
+    # the old AnalystTask fields have been merged into ReportTask
     assert task.require_swot is True
     assert task.cross_product_comparison_required is True
 
 
 def test_report_task_minimal_has_analyst_defaults() -> None:
-    """最简 ReportTask 只填 target_product + competitors，其余字段有默认值。"""
+    """A minimal ReportTask fills only target_product + competitors; the rest have defaults."""
     task = ReportTask(target_product="飞书", competitors=["钉钉"])
     assert task.require_swot is True
     assert task.cross_product_comparison_required is True
@@ -279,13 +279,13 @@ def test_review_unit_valid() -> None:
 
 
 def test_review_unit_rejects_analyst_agent() -> None:
-    """Analyst 已并入 Reporter，agent 字段不再接受 'analyst'。"""
+    """Analyst has been folded into Reporter; the agent field no longer accepts 'analyst'."""
     with pytest.raises(ValidationError):
         ReviewUnit(agent="analyst", product_name="飞书", status="needs_retry", retry_count=1)
 
 
 # ---------------------------------------------------------------------------
-# 字段约束验证
+# Field constraint validation
 # ---------------------------------------------------------------------------
 
 def test_fact_rejects_empty_evidence() -> None:
@@ -304,7 +304,7 @@ def test_review_sample_rejects_out_of_range_rating() -> None:
 
 
 def test_review_sample_accepts_open_platform() -> None:
-    """platform 是开放字符串：电商 / 垂类 / 任意来源名都接受。"""
+    """platform is an open string: e-commerce / niche / any source name is accepted."""
     sample = ReviewSample(text="好评", rating=5, platform="fragrantica")
     assert sample.platform == "fragrantica"
 
@@ -400,7 +400,7 @@ def test_decision_record_requires_rationale() -> None:
 
 
 def test_pricing_info_coerces_invalid_model_to_unknown() -> None:
-    """采集期放松：非法 pricing_model 不再 raise，归一到 unknown。"""
+    """Relaxed during collection: an invalid pricing_model no longer raises, it's normalized to unknown."""
     p = PricingInfo(has_free_tier=True, pricing_model="monthly")
     assert p.pricing_model == "unknown"
 
@@ -442,7 +442,7 @@ def test_domain_seed_with_all_fields() -> None:
 
 
 def test_domain_seed_rejects_too_many_dimensions() -> None:
-    """dimension_candidates 上限 20 项。"""
+    """dimension_candidates is capped at 20 entries."""
     with pytest.raises(ValidationError):
         DomainSeed(
             source_files=["uploads/m.pdf"],
@@ -451,7 +451,7 @@ def test_domain_seed_rejects_too_many_dimensions() -> None:
 
 
 def test_initial_brief_output_domain_seed_optional() -> None:
-    """domain_seed 字段是可选的，None 时不影响其他字段。"""
+    """The domain_seed field is optional; None doesn't affect the other fields."""
     out = InitialBriefOutput(
         initial_brief=InitialBrief(
             target_product="飞书", company_hint=None, user_query="x",

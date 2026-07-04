@@ -1,11 +1,11 @@
-"""跨家族 debate skill。
+"""Cross-family debate skill.
 
-应用点：
-    pm_taskplan —— 下游对 TaskPlan 主观挑战
-    report     —— Reporter 对 ReportTask 挑战 / call_report_reviewer 终审
+Used at:
+    pm_taskplan -- a downstream subjective challenge to TaskPlan
+    report     -- Reporter's challenge to ReportTask / call_report_reviewer's final review
 
-流程：caller 注入 seed_positions → Critique → Refine → 任一方让步即收敛，否则 Judge 仲裁。
-仲裁方必须异于两个辩方。
+Flow: the caller injects seed_positions -> Critique -> Refine -> converges as soon as
+either side concedes, otherwise the Judge arbitrates. The judge must differ from both debaters.
 """
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ from cca.llm.factory import DEV_DOUBAO_OVERRIDE, get_llm
 
 
 def _struct_method() -> str:
-    """LLM 结构化输出方式按 dev override flag dispatch：
-    - Doubao override：function_calling（Doubao 不支持 response_format=json_object）
-    - 三家族原路径：json_mode（D-029 #3 自然命名 + parse 容错好）
-    切回三家族只需 unset CCA_DEV_MODEL_OVERRIDE，业务代码零改动。
+    """LLM structured-output method dispatches on the dev override flag:
+    - Doubao override: function_calling (Doubao doesn't support response_format=json_object)
+    - normal three-family path: json_mode (D-029 #3, natural field naming + better parse tolerance)
+    Switching back to three families just needs unset CCA_DEV_MODEL_OVERRIDE, zero business-code changes.
     """
     return "function_calling" if DEV_DOUBAO_OVERRIDE else "json_mode"
 from cca.schema import (
@@ -37,7 +37,7 @@ from cca.schema import (
 
 DebateTarget = Literal["pm_taskplan", "report", "pm_initial_brief"]
 
-# 收敛阶段产 revised_output 用的 schema 校验表
+# schema validation table for producing revised_output at convergence
 _REVISED_OUTPUT_SCHEMA: dict[DebateTarget, type[BaseModel]] = {
     "pm_taskplan": TaskPlan,
     "report": ReportTask,
@@ -48,11 +48,11 @@ _VALID_PLATFORMS: frozenset[str] = frozenset({"appstore_cn", "appstore_us", "zhi
 
 
 def _repair_for_schema(data: dict, target: DebateTarget) -> dict:
-    """修复 LLM 在 revised_output 中常见的 schema 偏差。
+    """Fix common schema deviations the LLM produces in revised_output.
 
-    已知偏差仅在 pm_taskplan：
-    - competitor_groups 替代 competitor_names
-    - target_platforms 写中文自由文本而非枚举
+    Known deviations, pm_taskplan only:
+    - competitor_groups used instead of competitor_names
+    - target_platforms written as free-text instead of the enum
     """
     if target != "pm_taskplan":
         return data
@@ -71,17 +71,17 @@ def _repair_for_schema(data: dict, target: DebateTarget) -> dict:
     return data
 
 
-# critique / refinement 用 json_mode 自然命名，避免 parse 失败
+# critique / refinement use json_mode's natural field naming to avoid parse failures
 class _Critique(BaseModel):
-    critique: str = Field(description="对对方观点的具体批驳，至少指出 1 处问题")
+    critique: str = Field(description="A specific rebuttal of the other side's position, pointing out at least 1 problem")
 
 
 class _Refinement(BaseModel):
-    refinement: str = Field(description="基于对方批驳后修订的观点正文")
-    still_disagrees: bool = Field(description="本轮修订后是否仍与对方有分歧")
+    refinement: str = Field(description="The revised position after the other side's critique")
+    still_disagrees: bool = Field(description="Whether there's still disagreement after this round's revision")
 
 
-# ── 三阶段实现 ──────────────────────────────────────────────────────────
+# ── three-phase implementation ──────────────────────────────────────────
 
 
 def _phase_critique(family: AgentFamily, mine: DebatePosition, other: DebatePosition) -> str:
@@ -116,7 +116,7 @@ def _phase_refine(family: AgentFamily, mine: DebatePosition, critique: str) -> _
 def _phase_judge(
     judge: AgentFamily, target: DebateTarget, target_content: dict, rounds: list[DebateRound],
 ) -> DebateResult:
-    """辩论未自然收敛 → 第三家族仲裁。judge / target / rounds 由代码强制覆盖。"""
+    """When debate doesn't converge naturally, a third family arbitrates. judge / target / rounds are force-overwritten by code."""
     llm = get_llm(judge).with_structured_output(DebateResult, method=_struct_method())
     sys = (
         f"你是 {judge} 家族的独立仲裁者。两辩方对 {target} 完成 {len(rounds)} 轮辩论。"
@@ -140,11 +140,12 @@ def _phase_finalize_converged(
     winner_family: AgentFamily, target: DebateTarget,
     target_content: dict, winning_refinement: str,
 ) -> dict:
-    """获胜方把共识结构化为修订版 target_content。
+    """The winning side structures the consensus into a revised target_content.
 
-    两条路径按 dev override 选择（不删旧路径，切回三家族时直接复用）：
-    - Doubao override：with_structured_output(function_calling) —— Doubao 不支持 json_object
-    - 三家族原路径：bind(response_format=json_object) + 手工 parse + _repair_for_schema
+    Two paths chosen by dev override (the old path isn't deleted, so switching back
+    to three families reuses it directly):
+    - Doubao override: with_structured_output(function_calling) -- Doubao doesn't support json_object
+    - normal three-family path: bind(response_format=json_object) + manual parse + _repair_for_schema
     """
     if DEV_DOUBAO_OVERRIDE:
         return _finalize_via_function_calling(winner_family, target, target_content, winning_refinement)
@@ -155,7 +156,7 @@ def _finalize_via_function_calling(
     winner_family: AgentFamily, target: DebateTarget,
     target_content: dict, winning_refinement: str,
 ) -> dict:
-    """dev override 路径：function_calling 由 API 端强制 schema，无需手工 parse / repair。"""
+    """Dev override path: function_calling has the schema enforced API-side, no manual parse/repair needed."""
     schema = _REVISED_OUTPUT_SCHEMA[target]
     sys = (
         f"你的观点在辩论中被对方采纳。基于你的最终 refinement，"
@@ -174,8 +175,8 @@ def _finalize_via_json_object(
     winner_family: AgentFamily, target: DebateTarget,
     target_content: dict, winning_refinement: str,
 ) -> dict:
-    """三家族原路径：裸 JSON + _repair_for_schema + Pydantic validate。
-    with_structured_output 无法插 repair 步骤，故走 bind(response_format)。"""
+    """Normal three-family path: raw JSON + _repair_for_schema + Pydantic validate.
+    with_structured_output has no hook for a repair step, so this uses bind(response_format) instead."""
     schema = _REVISED_OUTPUT_SCHEMA[target]
     schema_json = json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=2)
     sys = (
@@ -197,7 +198,7 @@ def _finalize_via_json_object(
     return schema.model_validate(raw_dict).model_dump()
 
 
-# ── 主流程 ─────────────────────────────────────────────────────────────
+# ── main flow ───────────────────────────────────────────────────────────
 
 
 def run_debate(
@@ -208,10 +209,11 @@ def run_debate(
     judge: AgentFamily = "doubao",
     max_rounds: int = 2,
 ) -> DebateResult:
-    """跑完整 debate 返回 DebateResult。
+    """Run the full debate and return a DebateResult.
 
-    families = 2 个辩方，judge 异于两者。seed_positions 由 caller 注入真实经验，
-    避免辩方凭空生成。max_rounds=2 控制 token 开销。
+    families = the 2 debaters, judge must differ from both. seed_positions are
+    injected by the caller from real experience, so debaters aren't fabricating from
+    nothing. max_rounds=2 bounds token cost.
     """
     if judge in families:
         raise ValueError(f"judge={judge!r} 不能与辩方 {families!r} 重叠")
@@ -234,7 +236,7 @@ def run_debate(
             refinements={fam_a: refined_a.refinement, fam_b: refined_b.refinement},
         ))
 
-        # 任一方让步即收敛，跳过 judge
+        # converges as soon as either side concedes, skipping the judge
         if not refined_a.still_disagrees or not refined_b.still_disagrees:
             winner = fam_a if refined_a.still_disagrees else fam_b
             winning = refined_a.refinement if refined_a.still_disagrees else refined_b.refinement
@@ -246,7 +248,7 @@ def run_debate(
                 revised_output=_phase_finalize_converged(winner, target, target_content, winning),
             )
 
-        # 下一轮 position = 本轮 refinement
+        # next round's position = this round's refinement
         if round_idx < max_rounds:
             pos_a = DebatePosition(agent_family=fam_a, claim=refined_a.refinement, evidence=pos_a.evidence)
             pos_b = DebatePosition(agent_family=fam_b, claim=refined_b.refinement, evidence=pos_b.evidence)

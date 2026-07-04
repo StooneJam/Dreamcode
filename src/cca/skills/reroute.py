@@ -1,6 +1,6 @@
-"""reroute skill —— 事实性信号的根因分析 + 阶段回溯。
+"""reroute skill -- root-cause analysis + phase rollback for factual signals.
 
-debate 的对称路径：AgentSignal.requires_debate=false 时触发。
+The symmetric counterpart to debate: triggered when AgentSignal.requires_debate=false.
 """
 from __future__ import annotations
 
@@ -21,47 +21,53 @@ _PHASE_FIELD = {
     "phase_3": "report_task",
 }
 
-_SYSTEM_PROMPT = """你是竞品分析系统的纠偏 skill - reroute。
-下游 Agent 报告了一个事实性问题（数据缺失/URL 失效/数据错误等），不涉及主观判断。
-你的任务：诊断根因 + 决定回溯到哪个阶段。
+_SYSTEM_PROMPT = """You are the "reroute" correction skill in a competitive analysis system.
+A downstream agent has reported a factual problem (missing data / dead URL / bad data,
+etc.) -- not a subjective judgment call. Your job: diagnose the root cause and decide
+which phase to roll back to.
 
-## 三阶段语义
-- phase_1 采集层：Collector 联网获取原始数据。回到此阶段会清空 exploration_result。
-- phase_2 规划层：PM 基于已有采集结果制定 TaskPlan。回到此阶段不重采，只重排任务。
-- phase_3 报告层：PM 给 Reporter 下发 ReportTask（focus_dimensions / sections / SWOT 范围）。
-  采集+情感数据无误但报告任务不合理时回到此阶段。
+## Semantics of the three phases
+- phase_1 (collection layer): Collector fetches raw data online. Rolling back here clears exploration_result.
+- phase_2 (planning layer): PM builds a TaskPlan from existing collection results. Rolling back here doesn't re-collect, just re-plans tasks.
+- phase_3 (report layer): PM hands Reporter a ReportTask (focus_dimensions / sections /
+  SWOT scope). Roll back here when collection+sentiment data is fine but the report
+  task itself is unreasonable.
 
-## 决策规则
-- 单产品数据缺失 / URL 失效 / 抓错 → phase_2
-  （PM 重排 task_plan 加上缺失维度后 fanout 重采，不重做 exploration 以保留收敛过 debate 的 competitor_names）
-- 产品虚假 / 停服 → phase_1
-  （exploration 本身错，必须重做粗探索）
-- exploration_result 大面积数据不可用 → phase_1
-- 采集数据正确但 competitor_names / priority_dimensions / 任务分配有误 → phase_2
-- ReviewUnit 已通过但 ReportTask 的 focus_dimensions / sections 数据不足 → phase_3
-- 章节超出数据范围、SWOT 覆盖产品超出 profiles → phase_3
-- 默认偏好 phase_2 重采集，避免重做 exploration 丢失已收敛信息
+## Decision rules
+- single-product data missing / dead URL / wrong data scraped -> phase_2
+  (PM re-plans task_plan adding the missing dimension then fans out a re-collect,
+  without redoing exploration, to preserve the debate-converged competitor_names)
+- fake/discontinued product -> phase_1
+  (exploration itself was wrong, must redo the rough exploration)
+- exploration_result is broadly unusable -> phase_1
+- collected data is correct but competitor_names / priority_dimensions / task
+  allocation is wrong -> phase_2
+- ReviewUnit passed but ReportTask's focus_dimensions / sections have insufficient data -> phase_3
+- a section goes beyond the data's scope, or SWOT covers a product outside profiles -> phase_3
+- default preference is phase_2 re-collection, to avoid redoing exploration and
+  losing already-converged information
 """
 
 
 class RerouteDecision(BaseModel):
-    """reroute 输出：根因诊断 + 回溯指令。"""
+    """reroute's output: root-cause diagnosis + a rollback instruction."""
 
     target_phase: RerouteTarget = Field(
-        description="回溯阶段 phase_1 / phase_2 / phase_3，含义见 system prompt 中决策规则"
+        description="Rollback phase: phase_1 / phase_2 / phase_3; see the decision rules in the system prompt"
     )
-    root_cause: str = Field(description="根因分析，一句话")
+    root_cause: str = Field(description="Root-cause analysis, one sentence")
     fix_summary: dict = Field(
-        description="修正建议，key=需修改字段名，value=修正内容或方向"
+        description="Fix suggestions, key=field name to change, value=the fix's content or direction"
     )
-    rationale: str = Field(description="为什么回溯到该阶段而非其他阶段")
+    rationale: str = Field(description="Why roll back to this phase and not another")
 
 
 def reroute(signal: AgentSignal, state_json: str) -> RerouteDecision:
-    """分析事实性信号，输出回溯决策。state_json 为 state 的最小切片快照。"""
-    # method="function_calling" 显式指定，绕开 langchain-openai 0.3+ 默认 json_schema strict mode。
-    # strict mode 要求 dict 字段显式 additionalProperties=false，RerouteDecision.fix_summary 是裸 dict，
-    # 会被 strict mode 拒（400 BadRequest）。与 pm._invoke_pm 同样模式。
+    """Analyze a factual signal and produce a rollback decision. state_json is a minimal state slice snapshot."""
+    # method="function_calling" is explicit to bypass langchain-openai 0.3+'s default json_schema strict mode.
+    # Strict mode requires dict fields to explicitly set additionalProperties=false;
+    # RerouteDecision.fix_summary is a bare dict and gets rejected (400 BadRequest) by
+    # strict mode. Same pattern as pm._invoke_pm.
     llm = get_llm("gpt-5").with_structured_output(RerouteDecision, method="function_calling")
     user = json.dumps({"signal": signal.model_dump(), "state": state_json}, ensure_ascii=False)
     return cast(
@@ -71,7 +77,7 @@ def reroute(signal: AgentSignal, state_json: str) -> RerouteDecision:
 
 
 def apply_reroute(decision: RerouteDecision) -> dict:
-    """reroute 决策 → state 更新 dict。"""
+    """reroute decision -> state update dict."""
     updates: dict = {}
     if field := _PHASE_FIELD.get(decision.target_phase):
         updates[field] = None
@@ -80,9 +86,10 @@ def apply_reroute(decision: RerouteDecision) -> dict:
 
 
 def apply_reroute_phase(target_phase: RerouteTarget) -> dict:
-    """已知目标阶段时直接产 state 更新，跳过 LLM 诊断。
+    """Produce the state update directly when the target phase is already known, skipping the LLM diagnosis.
 
-    review_node 预检产的 data_gap 根因恒为 phase_2，无需再调一次 reroute LLM。
+    review_node's precheck-produced data_gap always has phase_2 as its root cause,
+    so there's no need to call the reroute LLM again.
     """
     updates: dict = {}
     if field := _PHASE_FIELD.get(target_phase):

@@ -1,10 +1,11 @@
-"""Collector Agent —— 两阶段 ReAct 联网采集。
+"""Collector Agent -- two-phase ReAct web collection.
 
-Phase 1 exploration_node：粗探索竞品 + 维度候选；产 CollectorExplorationResult。
-Phase 2 collect_one_product：单产品深采集；产 ProductProfile。
+Phase 1 exploration_node: rough competitor + dimension discovery; produces
+CollectorExplorationResult.
+Phase 2 collect_one_product: deep single-product collection; produces ProductProfile.
 
-domain_seed 非空时 phase 1 优先采用其中的 dimension_candidates / competitor_mentions
-作为起点，再联网验证补充；为空走纯联网发现路径。
+When domain_seed is present, phase 1 starts from its dimension_candidates /
+competitor_mentions and verifies them online; otherwise it's pure web discovery.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ def _load_prompt(name: str) -> str:
 
 
 def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
-    """收集指定工具调用结果中可解的 JSON。空 content / 非 JSON 跳过。"""
+    """Collect parseable JSON from calls to the given tool. Skips empty/non-JSON content."""
     out = []
     for msg in messages:
         if isinstance(msg, ToolMessage) and msg.name == tool_name and msg.content:
@@ -47,7 +48,7 @@ def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
 
 
 def _last_tool_json(messages: list, tool_name: str) -> dict | None:
-    """取指定工具最后一次成功调用的 JSON 结果。"""
+    """Get the JSON result of the last successful call to the given tool."""
     for msg in reversed(messages):
         if isinstance(msg, ToolMessage) and msg.name == tool_name and msg.content:
             try:
@@ -57,23 +58,24 @@ def _last_tool_json(messages: list, tool_name: str) -> dict | None:
     return None
 
 
-# ── cache key 稳定切片 ────────────────────────────────────────────────
-# 把"上游浮动 / 与 prompt 无关的字段"从 cache key 里挡掉，避免 replay miss 与
-# 上游 schema 扩展时的无意污染。原则：cache_key 字段集 = prompt 实际输入集。
+# ── stable cache-key slices ──────────────────────────────────────────
+# Strip upstream-volatile / prompt-irrelevant fields from the cache key so replay
+# doesn't miss and future schema growth doesn't pollute it. Rule: cache_key fields
+# = the fields the prompt actually consumes.
 
 _BRIEF_CACHE_FIELDS = ("product_name", "company", "website", "product_type")
 
 
 def _stable_domain_seed(seed: dict | None) -> dict | None:
-    """剔除 domain_seed 中的运行时浮动字段（extracted_at 等），保留 LLM 可见内容。"""
+    """Strip runtime-volatile fields (extracted_at etc.) from domain_seed, keep LLM-visible content."""
     if not seed:
         return seed
     return {k: v for k, v in seed.items() if k != "extracted_at"}
 
 
 def _stable_product_brief(brief: dict | None) -> dict | None:
-    """只取 _build_collect_message 实际灌进 prompt 的稳定字段；
-    未来扩 ProductBrief schema 时新字段不会无意污染 cache。"""
+    """Keep only the fields _build_collect_message actually feeds into the prompt,
+    so future ProductBrief schema growth doesn't silently pollute the cache."""
     if not brief:
         return brief
     return {k: brief.get(k) for k in _BRIEF_CACHE_FIELDS}
@@ -103,7 +105,8 @@ def _build_exploration_message(state: CCAState) -> str:
 
 
 def exploration_node(state: CCAState) -> dict:
-    """Phase 1：粗探索竞品 + 维度，产 CollectorExplorationResult + 可选 challenge 信号。"""
+    """Phase 1: rough competitor + dimension discovery, producing CollectorExplorationResult
+    plus optional challenge signals."""
     agent = create_react_agent(
         model=get_llm("deepseek"),
         tools=[web_search, fetch_url, finalize_exploration, challenge_pm],
@@ -150,11 +153,11 @@ def exploration_node(state: CCAState) -> dict:
     }
 
 
-# ── Phase 2：单产品深采集 ──────────────────────────────────────────────
+# ── Phase 2: deep single-product collection ───────────────────────────
 
 
 def _extract_finalized_profile(messages: list) -> dict | None:
-    """取 finalize_profile 最后一次成功提交的 profile（经 ToolMessage.artifact 回传）。"""
+    """Get the last profile submitted via finalize_profile (returned through ToolMessage.artifact)."""
     for msg in reversed(messages):
         if isinstance(msg, ToolMessage) and msg.name == "finalize_profile":
             artifact = getattr(msg, "artifact", None)
@@ -182,10 +185,10 @@ def _build_collect_message(task: CollectTask, context: dict) -> str:
 
 
 def collect_one_product(task: CollectTask, context: dict) -> dict:
-    """单产品 ReAct 深采集。
+    """Deep ReAct collection for a single product.
 
-    context 是 state 切片（target_product / domain_seed / product_brief），
-    便于 LangGraph Send fanout 时按产品 dispatch。
+    context is a state slice (target_product / domain_seed / product_brief) so
+    LangGraph's Send fanout can dispatch per product.
     """
     agent = create_react_agent(
         model=get_llm("deepseek"),
@@ -240,7 +243,7 @@ def collect_one_product(task: CollectTask, context: dict) -> dict:
 
 
 def build_collect_context(state: CCAState, product_name: str) -> dict:
-    """抽出跑单产品所需的最小 state 切片。"""
+    """Extract the minimal state slice needed to run a single product."""
     exploration = state.get("exploration_result") or {}
     brief = next(
         (b for b in exploration.get("initial_profiles", []) if b.get("product_name") == product_name),
@@ -251,7 +254,7 @@ def build_collect_context(state: CCAState, product_name: str) -> dict:
         "target_product": state["target_product"],
         "domain_seed": state.get("domain_seed"),
         "product_brief": brief,
-        # 软引导：让 Collector 知道 PM 预设的 bucket，尽量覆盖；非强制（不再事后字面卡覆盖）
+        # soft hint: lets Collector aim for PM's preset buckets; not enforced post-hoc
         "tentative_buckets": task_plan.get("tentative_buckets") or [],
     }
 

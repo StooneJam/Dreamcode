@@ -1,7 +1,8 @@
-"""HTTP 抓取 + 正文提取。抓取前查 robots.txt（合规要求）。
+"""HTTP fetch + body extraction. Checks robots.txt before fetching (for compliance).
 
-错误（robots 禁止 / 超时 / HTTP 错误 / 抽取失败）一律返回 {"url", "error", "fetched_at"}；
-ReAct agent 看到 error 自行换 URL，不在工具内重试。
+Any error (robots disallow / timeout / HTTP error / extraction failure) returns
+{"url", "error", "fetched_at"}; the ReAct agent sees the error and switches URLs
+itself -- no retrying inside the tool.
 """
 from __future__ import annotations
 
@@ -52,12 +53,13 @@ def _smart_truncate(text: str, limit: int) -> str:
 
 @lru_cache(maxsize=256)
 def _load_robots(robots_url: str) -> robotparser.RobotFileParser | None:
-    """按 domain 缓存 robots.txt 解析器。读不到 → 返回 None（保守视为允许）。"""
+    """Cache the robots.txt parser per domain. Returns None if unreadable (conservatively treated as allowed)."""
     rp = robotparser.RobotFileParser()
     rp.set_url(robots_url)
     try:
-        # 不用 rp.read()：其内部 urllib.urlopen 无超时，遇到慢吐/挂起的 robots 服务会无限阻塞，
-        # 卡死整个 ReAct 分支（gucci.com 即此情况）。改用带 _TIMEOUT 的 httpx 取回再 parse。
+        # not using rp.read(): its internal urllib.urlopen has no timeout, so a slow
+        # or hanging robots server blocks forever, freezing the whole ReAct branch
+        # (this happened with gucci.com). Fetch with httpx (which has _TIMEOUT) and parse instead.
         resp = httpx.get(
             robots_url, timeout=_TIMEOUT,
             headers={"User-Agent": _USER_AGENT}, follow_redirects=True,
@@ -70,14 +72,14 @@ def _load_robots(robots_url: str) -> robotparser.RobotFileParser | None:
 
 
 def _robots_check(url: str) -> str | None:
-    """robots.txt 检查。允许返回 None，禁止返回错误字符串。"""
+    """Check robots.txt. Returns None if allowed, an error string if disallowed."""
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         return f"非法 URL: {url}"
     robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
     rp = _load_robots(robots_url)
     if rp is None:
-        return None  # robots.txt 读不到，保守允许
+        return None  # robots.txt unreadable, conservatively allowed
     if not rp.can_fetch(_USER_AGENT, url):
         return f"robots.txt 禁止抓取 {url}"
     return None

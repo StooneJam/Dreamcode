@@ -1,4 +1,4 @@
-"""测试报告多轮 Q&A 逻辑 —— 用贴合 ChatModel 接口的本地 fake，不调真 API。"""
+"""Tests for the report's multi-turn Q&A logic -- uses a local fake matching the ChatModel interface, no real API calls."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -9,7 +9,7 @@ from cca.agents.qa_chat import answer_question, build_qa_messages, trim_history
 
 
 class _FakeChat:
-    """最简假 ChatModel：记下收到的 messages，返回带 .content 的对象。"""
+    """The simplest fake ChatModel: records the messages it receives, returns an object with .content."""
 
     def __init__(self, reply: str = "这是回答"):
         self.reply = reply
@@ -21,7 +21,7 @@ class _FakeChat:
 
 
 def test_build_messages_grounds_on_full_report_not_truncated() -> None:
-    """报告全文进 System，不再像旧 stub 那样截到 6000 字。"""
+    """The full report goes into System, no longer truncated to 6000 chars like the old stub did."""
     report = "报告正文" + "x" * 8000
     msgs = build_qa_messages(report, [], "定价多少？")
     assert isinstance(msgs[0], SystemMessage)
@@ -47,7 +47,7 @@ def test_build_messages_includes_history_in_order() -> None:
 def test_trim_history_keeps_last_n_turns() -> None:
     history = [{"role": "user", "content": str(i)} for i in range(40)]
     trimmed = trim_history(history, max_turns=3)
-    assert len(trimmed) == 6  # 3 轮 × 2 条
+    assert len(trimmed) == 6  # 3 turns x 2 messages
     assert trimmed[-1]["content"] == "39"
 
 
@@ -58,8 +58,8 @@ def test_answer_question_strips_reply_and_passes_history_and_report() -> None:
         {"role": "assistant", "content": "¥15/月"},
     ]
     ans = answer_question("报告全文ABC", history, "钉钉呢？", llm)
-    assert ans == "¥12/月"  # 已 strip
+    assert ans == "¥12/月"  # already stripped
     contents = [m.content for m in llm.seen]
-    assert "钉钉呢？" in contents              # 本轮问题
-    assert "飞书定价？" in contents            # 多轮：历史进了上下文
-    assert any("报告全文ABC" in c for c in contents)  # 报告 grounding
+    assert "钉钉呢？" in contents              # this round's question
+    assert "飞书定价？" in contents            # multi-turn: history made it into context
+    assert any("报告全文ABC" in c for c in contents)  # report grounding

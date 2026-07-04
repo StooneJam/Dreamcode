@@ -1,11 +1,12 @@
-"""Doubao 三种调用模式 smoke 验证 —— 开 CCA_DEV_MODEL_OVERRIDE=doubao 后先跑这个。
+"""Smoke test for Doubao's three call modes -- run this first after setting CCA_DEV_MODEL_OVERRIDE=doubao.
 
-验证 Doubao 模型对以下三种 API 行为的支持，决定 dev override 是否可用：
-    1. function_calling 简单 schema —— PM `_invoke_pm` 用
-    2. tool calling                  —— Collector / Insight 用 create_react_agent
-    3. function_calling 嵌套 schema   —— debate 新路径（D-040 切换后从 json_object 改走 function_calling）
+Verifies Doubao's support for these three API behaviors, to decide whether the dev override is usable:
+    1. function_calling with a simple schema -- used by PM's `_invoke_pm`
+    2. tool calling -- used by Collector/Insight's create_react_agent
+    3. function_calling with a nested schema -- debate's new path (after the D-040
+       switch from json_object to function_calling)
 
-任一环节挂掉就说明当前 Doubao model id 不支持对应能力，需换 model 或回退方案。
+If any of these fails, the current Doubao model id doesn't support that capability, and needs a different model or a fallback plan.
 
 Usage:
     $env:PYTHONPATH="src"; $env:CCA_DEV_MODEL_OVERRIDE="doubao"
@@ -35,17 +36,17 @@ def _fail(msg: str, err: Exception) -> None:
     print(f"  FAIL · {msg}\n    {type(err).__name__}: {err}", flush=True)
 
 
-# ── 1. function_calling（PM 路径）──────────────────────────────────────
+# ── 1. function_calling (PM's path) ───────────────────────────────────
 
 
 class _PMOutput(BaseModel):
-    """模拟 PM 阶段二 TaskPlanOutput 的精简版。"""
-    competitors: list[str] = Field(min_length=1, description="3 家头部竞品名")
-    rationale: str = Field(description="挑选理由一段话")
+    """A slimmed-down simulation of PM phase 2's TaskPlanOutput."""
+    competitors: list[str] = Field(min_length=1, description="Names of 3 leading competitors")
+    rationale: str = Field(description="One paragraph explaining the selection")
 
 
 def check_function_calling() -> bool:
-    _hr("1/3 function_calling (PM 路径)")
+    _hr("1/3 function_calling (PM's path)")
     from cca.llm.factory import gpt
     try:
         llm = gpt.with_structured_output(_PMOutput, method="function_calling")
@@ -62,17 +63,17 @@ def check_function_calling() -> bool:
         return False
 
 
-# ── 2. tool calling（Collector / Insight ReAct 路径）──────────────────
+# ── 2. tool calling (Collector/Insight's ReAct path) ──────────────────
 
 
 @tool
 def echo_tool(text: str) -> str:
-    """把输入原样返回，仅用于验证 LLM 能正确发起工具调用。"""
+    """Return the input unchanged; used only to verify the LLM can correctly initiate a tool call."""
     return f"echoed: {text}"
 
 
 def check_tool_calling() -> bool:
-    _hr("2/3 tool calling (ReAct 路径)")
+    _hr("2/3 tool calling (ReAct path)")
     from cca.llm.factory import deepseek
     try:
         agent = create_react_agent(model=deepseek, tools=[echo_tool])
@@ -94,23 +95,23 @@ def check_tool_calling() -> bool:
         return False
 
 
-# ── 3. function_calling 嵌套 schema（debate 新路径）───────────────────
+# ── 3. function_calling with a nested schema (debate's new path) ──────
 
 
 class _DebateVerdictLike(BaseModel):
-    """模拟 debate _phase_judge 输出的复杂嵌套 schema。"""
+    """A simulation of debate's _phase_judge output's complex nested schema."""
     final_verdict: Literal["accepted", "rejected", "accepted_with_revision"] = Field(
-        description="最终裁决",
+        description="The final verdict",
     )
-    judge_rationale: str = Field(description="裁决理由一段话")
+    judge_rationale: str = Field(description="One paragraph explaining the verdict")
     revised_output: dict = Field(
         default_factory=dict,
-        description="若 verdict=accepted_with_revision 则给出修订对象，否则空",
+        description="The revised object if verdict=accepted_with_revision, otherwise empty",
     )
 
 
 def check_debate_path() -> bool:
-    _hr("3/3 function_calling 嵌套 schema (debate 新路径)")
+    _hr("3/3 function_calling with a nested schema (debate's new path)")
     from cca.llm.factory import doubao
     try:
         llm = doubao.with_structured_output(_DebateVerdictLike, method="function_calling")
@@ -132,7 +133,7 @@ def check_debate_path() -> bool:
         return False
 
 
-# ── main ───────────────────────────────────────────────────────────────
+# ── main ──────────────────────────────────────────────────────────────
 
 
 def main() -> int:

@@ -1,4 +1,4 @@
-"""问卷分发 —— 将 Questionnaire 格式化为可读文本，供前端或日志展示。"""
+"""Questionnaire distribution -- formats a Questionnaire into readable text for the frontend or logs."""
 from __future__ import annotations
 
 from cca.skills.questionnaire.design import Questionnaire
@@ -11,7 +11,7 @@ _TYPE_LABEL = {
 
 
 def format_questionnaire(q: Questionnaire) -> str:
-    """将 Questionnaire 对象渲染为纯文本，便于展示给用户。"""
+    """Render a Questionnaire object as plain text, for showing to the user."""
     lines = [
         f"=== 用户调研问卷：{q.product_name} ===",
         f"参考竞品：{', '.join(q.competitor_names)}",

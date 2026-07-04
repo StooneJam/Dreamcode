@@ -1,8 +1,9 @@
-"""Report Agent —— 接收 Collector / Insight 全部产出 + PM 的 ReportTask，
-ReAct 工具循环完成横向排序 + SWOT + 图表 + MD + PDF + (可选) 豆包终审。
+"""Report Agent -- takes all Collector/Insight output + PM's ReportTask and runs a
+ReAct tool loop to produce cross-product ranking + SWOT + charts + MD + PDF +
+(optional) Doubao final review.
 
-原 Analyst 职责已并入：维度排序与 SWOT 由 submit_dimension_ranking /
-finalize_swot 工具产，由 Reporter ReAct 自主调度。
+The old Analyst role has been folded in: dimension ranking and SWOT are produced by
+the submit_dimension_ranking / finalize_swot tools, dispatched by Reporter's own ReAct loop.
 """
 from __future__ import annotations
 
@@ -39,11 +40,12 @@ def _load_system_prompt(report_language: str = "zh") -> str:
     return directive + base
 
 
-# ── profile 序列化（含 forced 标注） ───────────────────────────────────
+# ── profile serialization (with forced annotations) ───────────────────
 
 
 def _collect_forced_keys(review_state: list[dict]) -> set[str]:
-    """提取 forced 项组合键 'agent:product_name'，用于 profile 注入低置信度标记。"""
+    """Extract the 'agent:product_name' composite keys of forced items, for tagging
+    low-confidence profiles."""
     return {
         f"{ReviewUnit(**u).agent}:{ReviewUnit(**u).product_name}"
         for u in review_state
@@ -52,7 +54,7 @@ def _collect_forced_keys(review_state: list[dict]) -> set[str]:
 
 
 def _slim_profile(profile: dict) -> dict:
-    """压缩 profile：每条 Fact 只保留 statement + url，去除 snippet/fetched_at。"""
+    """Shrink a profile: each Fact keeps only statement + url, dropping snippet/fetched_at."""
     result = dict(profile)
     if dims := result.get("dimensions"):
         slimmed = []
@@ -91,7 +93,8 @@ def _slim_profile(profile: dict) -> dict:
 
 
 def _serialize_profiles(profiles: dict[str, dict], forced_keys: set[str]) -> str:
-    """profiles → JSON；forced 产品附 `_低置信度来源` 字段；Fact 仅含 statement + url。"""
+    """profiles -> JSON; forced products get a `_低置信度来源` (low-confidence-source)
+    field; Fact keeps only statement + url."""
     annotated: dict[str, dict] = {}
     for name, profile in profiles.items():
         entry = _slim_profile(profile)
@@ -102,11 +105,11 @@ def _serialize_profiles(profiles: dict[str, dict], forced_keys: set[str]) -> str
     return json.dumps(annotated, ensure_ascii=False, indent=2)
 
 
-# ── prompt 上下文段块拼装 ──────────────────────────────────────────────
+# ── prompt context block assembly ─────────────────────────────────────
 
 
 def _format_exploration(exp: dict | None) -> str:
-    """一轮探索回顾：竞品选择脉络 + 维度候选池。"""
+    """Phase-1 exploration recap: competitor-selection trail + dimension candidate pool."""
     if not exp:
         return ""
     lines = ["## 一轮探索回顾（Collector exploration_result）"]
@@ -129,7 +132,8 @@ def _format_exploration(exp: dict | None) -> str:
 
 
 def _format_task_plan(plan: dict | None) -> str:
-    """PM 阶段二决策回顾：权威 product_type + 每个产品的 priority_dimensions / target_platforms。"""
+    """PM phase-2 decision recap: authoritative product_type + each product's
+    priority_dimensions / target_platforms."""
     if not plan:
         return ""
     lines = ["## PM 阶段二决策回顾（task_plan 关键字段）"]
@@ -150,7 +154,7 @@ def _format_task_plan(plan: dict | None) -> str:
 
 
 def _format_review_state(review_state: list[dict]) -> str:
-    """PM 评审台账全量。forced 项需在报告中标注未充分审核。"""
+    """Full PM review ledger. forced items must be flagged as under-reviewed in the report."""
     if not review_state:
         return ""
     lines = ["## PM 评审台账（review_state 全量，forced 项需在报告中标注未充分审核）"]
@@ -168,7 +172,7 @@ def _format_review_state(review_state: list[dict]) -> str:
 
 
 def _invert_canonical_map(mapping: dict[str, str]) -> dict[str, list[str]]:
-    """{dim_name → bucket} → {bucket → [dim_name, ...]}。Reporter 按 bucket 抓 fact 用。"""
+    """{dim_name -> bucket} -> {bucket -> [dim_name, ...]}, for Reporter to pull facts by bucket."""
     inv: dict[str, list[str]] = {}
     for dim_name, bucket in mapping.items():
         inv.setdefault(bucket, []).append(dim_name)
@@ -176,7 +180,7 @@ def _invert_canonical_map(mapping: dict[str, str]) -> dict[str, list[str]]:
 
 
 def _format_canonical_mapping(mapping: dict[str, str]) -> str:
-    """Phase 2 mapping 段块：正向 + 反向索引，让 Reporter 按 bucket 横向排名。"""
+    """Phase-2 mapping block: forward + reverse index, so Reporter ranks by bucket."""
     if not mapping:
         return ""
     inv = _invert_canonical_map(mapping)
@@ -195,7 +199,7 @@ def _build_initial_message(
     task_plan: dict | None,
     review_state: list[dict],
 ) -> str:
-    """6 段拼装：ReportTask → exploration → task_plan → review_state → mapping → profiles JSON。"""
+    """Assemble 6 blocks: ReportTask -> exploration -> task_plan -> review_state -> mapping -> profiles JSON."""
     audience = task.target_audience or "产品团队"
     focus = "、".join(task.focus_dimensions) if task.focus_dimensions else "（自主判断）"
     sections = "、".join(task.sections) if task.sections else "（自主决定）"
@@ -229,12 +233,12 @@ def _build_initial_message(
     return "\n\n".join(b for b in blocks if b)
 
 
-# ── messages 抽取 helpers ──────────────────────────────────────────────
+# ── message extraction helpers ─────────────────────────────────────────
 
 
 def _extract_final_md(messages: list) -> str:
-    """从最后一次 render_pdf tool_call 的参数取 markdown_content。
-    LLM 未调 render_pdf 时，fallback 取最后一条以 # 开头的 AIMessage 文本。"""
+    """Get markdown_content from the last render_pdf tool_call's args.
+    If the LLM never called render_pdf, fall back to the last AIMessage starting with #."""
     for msg in reversed(messages):
         if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
             for tc in msg.tool_calls:
@@ -249,7 +253,7 @@ def _extract_final_md(messages: list) -> str:
 
 
 def _extract_pdf_path(messages: list) -> str | None:
-    """从 render_pdf ToolMessage 取返回的文件路径。"""
+    """Get the returned file path from the render_pdf ToolMessage."""
     for msg in messages:
         if isinstance(msg, ToolMessage) and msg.name == "render_pdf":
             return msg.content.strip()
@@ -257,7 +261,7 @@ def _extract_pdf_path(messages: list) -> str | None:
 
 
 def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
-    """通用：收集指定工具调用中可解的 JSON。"""
+    """Generic: collect parseable JSON from calls to the given tool."""
     out = []
     for msg in messages:
         if isinstance(msg, ToolMessage) and msg.name == tool_name and msg.content:
@@ -269,7 +273,8 @@ def _extract_tool_jsons(messages: list, tool_name: str) -> list[dict]:
 
 
 def _is_truncated(report_md: str) -> bool:
-    """报告是否被截断：缺少结尾章节（结论/数据来源）则视为不完整。"""
+    """Whether the report got cut off: missing a closing section (conclusion/sources)
+    counts as incomplete."""
     tail = report_md[-800:]
     end_markers = ("结论", "建议", "数据来源", "参考", "sources", "conclusion", "references")
     return not any(m in tail.lower() for m in end_markers)
@@ -278,10 +283,11 @@ def _is_truncated(report_md: str) -> bool:
 def _fallback_generate_report(
     messages: list, task: ReportTask, profiles_json: str
 ) -> str:
-    """ReAct 未产出报告正文时（Doubao 长上下文截断），一次性 LLM 调用生成 Markdown。"""
+    """When ReAct never produced report body text (Doubao long-context truncation),
+    make one extra LLM call to generate the Markdown."""
     from langchain_core.messages import HumanMessage
 
-    # 收集已完成的排名和 SWOT 工具产出
+    # gather the ranking and SWOT tool outputs already produced
     ranking_results, swot_result, chart_refs = [], "", []
     for msg in messages:
         if not isinstance(msg, ToolMessage) or not msg.content:
@@ -321,7 +327,7 @@ def _fallback_generate_report(
 
 
 def _extract_reviewer_result(messages: list) -> QAResult:
-    """取 call_reviewer 最后一次返回的 QAResult；未调用时返默认 passed。"""
+    """Get the QAResult from call_reviewer's last return; defaults to passed if never called."""
     for msg in reversed(messages):
         if isinstance(msg, ToolMessage) and msg.name == "call_reviewer" and msg.content:
             try:
@@ -331,22 +337,23 @@ def _extract_reviewer_result(messages: list) -> QAResult:
     return QAResult(product_name="__report__", passed=True, note="reviewer 未被调用")
 
 
-# ── 主节点 ─────────────────────────────────────────────────────────────
+# ── main node ───────────────────────────────────────────────────────────
 
 
 def report_node(state: CCAState) -> dict:
-    """Report Agent：分析 + 撰写 + 渲染 + 终审。"""
+    """Report Agent: analyze + write + render + final review."""
     report_task = ReportTask(**state["report_task"])
     review_state = state.get("review_state") or []
     forced = _collect_forced_keys(review_state)
     profiles_json = _serialize_profiles(state.get("profiles", {}), forced)
 
     reviewer_active = report_task.invoke_call_report_reviewer and cross_family_enabled()
-    reviewed = False  # 限制终审仅调用一次
+    reviewed = False  # cap final review at exactly one call
 
     @tool
     def call_reviewer(report_md: str) -> str:
-        """报告全部完成后调用豆包跨模型终审，检查图文一致性与事实可溯源性。只调用一次。"""
+        """Call Doubao for a cross-model final review once the report is fully done,
+        checking text/chart consistency and factual traceability. Call this only once."""
         nonlocal reviewed
         if not cross_family_enabled():
             return QAResult(

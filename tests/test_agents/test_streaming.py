@@ -1,4 +1,4 @@
-"""测试 _sum_usage 的缓存命中 token 统计（双 provider 路径）。"""
+"""Tests for _sum_usage's cache-hit token accounting (both provider paths)."""
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage
@@ -34,7 +34,7 @@ def test_sum_usage_reads_openai_cache_read() -> None:
 
 
 def test_sum_usage_falls_back_to_deepseek_cache_hit() -> None:
-    """OpenAI 风格字段缺失时回落 DeepSeek 的 prompt_cache_hit_tokens。"""
+    """When the OpenAI-style field is missing, falls back to DeepSeek's prompt_cache_hit_tokens."""
     usage = _sum_usage([_ai(100, 20, deepseek_hit=70)])
     assert usage["cached"] == 70
     assert usage["input"] == 100

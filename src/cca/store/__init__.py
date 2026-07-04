@@ -1,1 +1,1 @@
-"""持久化层：报告与 Q&A 对话的 sqlite 存储。"""
+"""Persistence layer: sqlite storage for reports and Q&A conversations."""

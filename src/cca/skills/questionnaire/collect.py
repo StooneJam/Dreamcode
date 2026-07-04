@@ -1,4 +1,4 @@
-"""问卷回收 —— 支持 LLM 自动填写或真实分发；问卷按产品名缓存到 SQLite。"""
+"""Questionnaire collection -- supports LLM auto-fill or real distribution; questionnaires are cached by product name in SQLite."""
 from __future__ import annotations
 
 import json
@@ -15,7 +15,7 @@ from cca.llm.structured import invoke_structured
 from cca.settings import load_config
 from cca.skills.questionnaire.design import Questionnaire, design_questionnaire
 
-# 模拟用户画像，让 LLM 填写时有角色背景
+# simulated user personas, giving the LLM a role background to fill the questionnaire from
 _PERSONAS = [
     "中型互联网公司产品经理，每天高频使用协同办公工具",
     "创业公司 CEO，10 人小团队，关注性价比和上手速度",
@@ -98,7 +98,7 @@ def get_or_create_questionnaire(
     competitor_names: list[str],
     dimensions: list[str],
 ) -> Questionnaire:
-    """从缓存读取该产品问卷；不存在则设计新问卷并写入缓存。"""
+    """Read this product's questionnaire from cache; if absent, design a new one and cache it."""
     with sqlite3.connect(_db_path()) as conn:
         _ensure_tables(conn)
         cached = _load_cached_questionnaire(conn, product_name)
@@ -121,7 +121,7 @@ def _persist_responses(conn: sqlite3.Connection, resp: SurveyResponse) -> None:
 
 
 def _autofill(q: Questionnaire, persona: str) -> SurveyResponse:
-    """让 LLM 以指定用户角色填写问卷，返回结构化回答。"""
+    """Have the LLM fill out the questionnaire as the given user persona, returning a structured response."""
     sys = (
         f"你是 {q.product_name} 的真实用户，背景：{persona}。"
         "请根据使用体验如实填写问卷。"
@@ -141,10 +141,11 @@ def collect_responses(
     n: int = 5,
     fill_mode: Literal["llm", "real"] = "llm",
 ) -> list[SurveyResponse]:
-    """自动填写 n 份问卷或准备真实分发。
+    """Auto-fill n questionnaires, or prepare for real distribution.
 
-    fill_mode="llm"  — LLM 模拟 n 位用户填写，持久化到 SQLite。
-    fill_mode="real" — 真实分发模式，返回空列表（问卷文本已由 subgraph 格式化）。
+    fill_mode="llm"  -- the LLM simulates n users filling it out, persisted to SQLite.
+    fill_mode="real" -- real distribution mode, returns an empty list (the
+    questionnaire text is already formatted by subgraph).
     """
     if fill_mode == "real":
         return []

@@ -1,4 +1,4 @@
-"""resolve_review_channel：product_type → 评论抓取渠道映射。"""
+"""resolve_review_channel: maps product_type -> a review-scraping channel."""
 from __future__ import annotations
 
 from cca.tools.review_channel import resolve_review_channel
@@ -15,7 +15,8 @@ class TestLocalLife:
         assert resolve_review_channel("餐饮连锁品牌").channel == "local_life"
 
     def test_local_life_wins_over_app_when_both_present(self):
-        # 幸运咖场景：品牌有自己的 App，但对比对象是咖啡 → 必须走本地生活，不抓 App Store
+        # the "Lucky Coffee" scenario: a brand has its own app, but the comparison
+        # object is coffee -> must go through local-life, not scrape App Store
         assert resolve_review_channel("连锁咖啡App").channel == "local_life"
 
 
@@ -55,5 +56,5 @@ class TestGeneralFallback:
         assert resolve_review_channel("区块链浏览器").channel == "general"
 
     def test_general_never_defaults_to_app_store(self):
-        # 核心防回归：未知赛道默认绝不落到 App Store
+        # core regression guard: an unknown category must never default to App Store
         assert resolve_review_channel("某种全新形态产品").use_app_store is False

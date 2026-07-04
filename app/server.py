@@ -1,11 +1,11 @@
-"""FastAPI 服务器：前端 ↔ LangGraph 桥梁。
+"""FastAPI server: the frontend <-> LangGraph bridge.
 
-端点：
-  POST /api/analyze                  → 启动 job，返回 {job_id}
-  GET  /api/stream/{job_id}          → SSE：实时推 Agent 日志 + done/error
-  GET  /api/report/pdf               → 内嵌预览或下载 PDF
-  POST /api/jobs/{job_id}/feedback   → Phase 1 用户修订意见 → resume graph
-  POST /api/jobs/{job_id}/question   → 报告多轮 Q&A（基于 report_md + qa_history）
+Endpoints:
+  POST /api/analyze                  -> start a job, returns {job_id}
+  GET  /api/stream/{job_id}          -> SSE: streams agent logs + done/error
+  GET  /api/report/pdf               -> inline preview or download the PDF
+  POST /api/jobs/{job_id}/feedback   -> phase-1 user revision feedback -> resume the graph
+  POST /api/jobs/{job_id}/question   -> multi-turn report Q&A (grounded in report_md + qa_history)
 """
 from __future__ import annotations
 
@@ -43,13 +43,13 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 _UPLOAD_DIR = _PROJECT_ROOT / "data" / "uploads"
 _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# job_id → {status, queue, result, creds, checkpointer, thread_config, feedback_event, feedback_data, finished_at}
+# job_id -> {status, queue, result, creds, checkpointer, thread_config, feedback_event, feedback_data, finished_at}
 _jobs: dict[str, dict] = {}
-# 按 (job_id, owner) 串行化同会话问答，避免历史交错与重复建会话
+# serializes Q&A per (job_id, owner) to avoid interleaved history or duplicate conversation creation
 _qa_locks: dict[str, asyncio.Lock] = {}
 
-_JOB_TTL = 3600  # 完成 1h 后清理内存（MemorySaver + queue 占用大）
-_MAX_RUN_EVENTS = 4000  # 单次运行落库的过程事件上限，防超长 job 撑爆 events blob
+_JOB_TTL = 3600  # clean up memory 1h after completion (MemorySaver + queue take significant space)
+_MAX_RUN_EVENTS = 4000  # cap on persisted process events per run, to keep an oversized job from blowing up the events blob
 
 
 def _cancel_job(job_id: str) -> None:
@@ -67,7 +67,7 @@ def _evict_old_jobs() -> None:
         _qa_locks.pop(f"{jid}:{_jobs.get(jid, {}).get('owner','')}", None)
 
 
-# ── Owner 解析（从 session token） ────────────────────────────────────────
+# ── Owner resolution (from the session token) ──────────────────────────
 
 
 def _resolve_owner(authorization: str = Header("", alias="Authorization")) -> str:
@@ -78,7 +78,7 @@ def _resolve_owner(authorization: str = Header("", alias="Authorization")) -> st
     return resolve_session(token) or "anonymous"
 
 
-# ── 凭证构建 ──────────────────────────────────────────────────────────────
+# ── Credential building ──────────────────────────────────────────────────
 
 
 def _build_creds(
@@ -102,7 +102,7 @@ def _build_creds(
     return creds or None
 
 
-# ── 同步 graph 调用（在线程池执行） ─────────────────────────────────────
+# ── Synchronous graph invocation (runs in a thread pool) ────────────────
 
 
 def _make_invoke(
@@ -113,14 +113,16 @@ def _make_invoke(
     thread_config: dict,
     on_run_id,
 ):
-    """返回一个可在线程池中安全调用的 graph.invoke 闭包。
+    """Return a graph.invoke closure that's safe to call from a thread pool.
 
-    每次 invoke 用 track_pipeline_tokens 包住，拿到本次 trace 的 root run id 回传 on_run_id
-    （供前端「查看完整 Trace」深链）。HITL 场景 phase1/phase2 各一次 invoke，取最后一次。
+    Each invoke is wrapped with track_pipeline_tokens to get this trace's root run id
+    and pass it to on_run_id (for the frontend's "view full trace" deep link). In the
+    HITL scenario, phase1/phase2 each invoke once; the last one wins.
 
-    on_run_id 放在 finally 里调用：graph.invoke 抛异常时 box 仍会被 track_pipeline_tokens
-    填充（见 logger.py 的 try/finally），这里必须同样不因异常提前退出而丢了 run_id——
-    失败的运行恰恰是最需要回查 trace 的场景。
+    on_run_id is called in a finally block: when graph.invoke raises, box still gets
+    filled by track_pipeline_tokens (see logger.py's try/finally), so this must
+    likewise not lose the run_id just because of an early exit from the exception --
+    a failed run is exactly the scenario where looking up the trace matters most.
     """
     def _invoke(input_value):
         graph = build_graph(checkpointer=checkpointer)
@@ -142,7 +144,7 @@ def _get_graph_state(checkpointer: MemorySaver, thread_config: dict):
     return graph.get_state(thread_config)
 
 
-# ── Job runner ────────────────────────────────────────────────────────────
+# ── Job runner ────────────────────────────────────────────────────────
 
 
 async def _run_job(
@@ -157,10 +159,10 @@ async def _run_job(
 ) -> None:
     queue: asyncio.Queue = _jobs[job_id]["queue"]
     loop = asyncio.get_event_loop()
-    events: list[dict] = []  # 落库回放用：同一份事件既推 SSE 也存下来
+    events: list[dict] = []  # for persisted replay: the same events are both pushed to SSE and stored
 
-    # emit_fn 把结构化 SSE 事件从线程安全地送入 asyncio 队列；
-    # 若 job 已被取消（客户端断开），抛 JobCancelled 中止图执行。
+    # emit_fn thread-safely pushes a structured SSE event into the asyncio queue;
+    # if the job was cancelled (client disconnected), raises JobCancelled to abort graph execution.
     def emit_fn(event: dict) -> None:
         if _jobs.get(job_id, {}).get("cancelled"):
             raise JobCancelled(job_id)
@@ -175,10 +177,11 @@ async def _run_job(
         _jobs[job_id]["langsmith_run_id"] = run_id
 
     async def _persist_and_emit_trace() -> None:
-        """登录用户落库过程事件流 + 实时推一条 LangSmith trace 链接。
+        """For logged-in users, persist the process event stream + push a live LangSmith trace link.
 
-        成功/失败都调用——失败时同样落库，且同样尝试推 trace_url，因为调用失败
-        恰恰是最需要点进 LangSmith 看细节的场景，不能只在 done 路径才做。
+        Called on both success and failure -- on failure it likewise persists and
+        tries to push trace_url, since a failed call is exactly the scenario where
+        clicking into LangSmith for details matters most, not just on the done path.
         """
         if owner == "anonymous":
             return
@@ -207,15 +210,15 @@ async def _run_job(
         initial_state = empty_state(user_query, target_product, user_files)
         initial_state["report_language"] = report_language
 
-        # ── Phase 1：跑到 human_gate interrupt ──────────────────────────
+        # ── Phase 1: run until human_gate's interrupt ───────────────────
         result = await loop.run_in_executor(None, ctx.run, _invoke, initial_state)
 
-        # 检查是否停在 interrupt 点
+        # check whether it's paused at the interrupt point
         snapshot = await loop.run_in_executor(
             None, _get_graph_state, checkpointer, thread_config
         )
 
-        if snapshot.next:  # 图在等 human_gate resume
+        if snapshot.next:  # the graph is waiting on human_gate's resume
             profiles = result.get("profiles") or {}
             names = list(profiles.keys())
             target = result.get("target_product", target_product)
@@ -226,7 +229,7 @@ async def _run_job(
             )
             await queue.put({"type": "phase1_checkpoint", "summary": summary})
 
-            # 等待用户反馈（最多 10 分钟，超时自动放行）
+            # wait for user feedback (up to 10 minutes, auto-passes through on timeout)
             try:
                 await asyncio.wait_for(feedback_event.wait(), timeout=600)
             except asyncio.TimeoutError:
@@ -234,7 +237,7 @@ async def _run_job(
 
             feedback_data = _jobs[job_id].get("feedback_data") or {"raw_feedback": None, "approved": True}
 
-            # ── Phase 2：带 feedback resume ─────────────────────────────
+            # ── Phase 2: resume with feedback ────────────────────────────
             result = await loop.run_in_executor(
                 None, ctx.run, _invoke, Command(resume=feedback_data)
             )
@@ -243,7 +246,7 @@ async def _run_job(
         _jobs[job_id]["result"] = result
         _jobs[job_id]["status"] = "done"
         _jobs[job_id]["finished_at"] = time.monotonic()
-        # 匿名（未登录）不持久化：报告留在内存 job，登录才入库存历史
+        # anonymous (not logged in) users aren't persisted: the report stays in the in-memory job; only logged-in users get stored history
         if owner != "anonymous":
             db.save_report(job_id, owner, target_product, result.get("report_md") or "", pdf)
         await _persist_and_emit_trace()
@@ -255,11 +258,11 @@ async def _run_job(
         await _persist_and_emit_trace()
         await queue.put({"type": "error", "message": str(exc)})
     finally:
-        await queue.put(None)  # 终止 SSE 生成器
+        await queue.put(None)  # terminate the SSE generator
         _evict_old_jobs()
 
 
-# ── FastAPI app ───────────────────────────────────────────────────────────
+# ── FastAPI app ─────────────────────────────────────────────────────────
 
 
 @asynccontextmanager
@@ -320,7 +323,7 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
             yield f'data: {json.dumps({"type":"error","message":"job not found"})}\n\n'
             return
         job = _jobs[job_id]
-        # 重连时 job 已完成：直接补发 done 事件，不等 queue
+        # if the job already finished by the time of a reconnect: send the done event directly, don't wait on the queue
         if job.get("status") == "done":
             result = job.get("result") or {}
             yield f'data: {json.dumps({"type":"done","has_pdf":bool(result.get("report_pdf_path"))})}\n\n'
@@ -336,7 +339,7 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     _cancel_job(job_id)
                     return
-                # 空闲心跳：发真实 data 帧，防止代理因无数据关闭连接
+                # idle heartbeat: send a real data frame so a proxy doesn't close the connection for lack of data
                 yield 'data: {"type":"heartbeat"}\n\n'
                 continue
             if msg is None:
@@ -351,7 +354,8 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
 
 
 def _resolve_owned_pdf(report_id: str, owner: str) -> str:
-    """本人报告的 PDF 路径：DB 优先，内存 job 兜底（匿名/未持久化场景）。均按 owner 校验。"""
+    """The PDF path for the caller's own report: DB first, falling back to the
+    in-memory job (anonymous/unpersisted case). Both paths check owner."""
     report = db.get_report(report_id, owner)
     if report:
         return report.get("pdf_path") or ""
@@ -363,7 +367,8 @@ def _resolve_owned_pdf(report_id: str, owner: str) -> str:
 
 @app.get("/api/report/pdf")
 async def get_pdf(report_id: str, owner: str = Depends(_resolve_owner)):
-    """按 report_id 取本人报告 PDF；路径只来自服务端记录，不收客户端文件路径。"""
+    """Get the caller's own report PDF by report_id; the path always comes from the
+    server's own record, never accepted from the client."""
     pdf_path = _resolve_owned_pdf(report_id, owner)
     if not pdf_path:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -399,7 +404,7 @@ async def question(
     if not q:
         return {"answer": "无法回答：问题为空。"}
 
-    # 报告优先从 DB 取（owner 隔离、跨重启可用）；同会话内存 job 兜底（须 owner 匹配）
+    # prefer the report from the DB (owner-isolated, survives restarts); fall back to the same-session in-memory job (owner must match)
     report = db.get_report(job_id, owner)
     report_md = report["report_md"] if report else ""
     job = _jobs.get(job_id)
@@ -415,8 +420,10 @@ async def question(
     async with _qa_locks[key]:
         conv_id = db.get_or_create_conversation(job_id, owner)
         history = db.get_messages(conv_id)
-        # 凭证优先级：请求体浏览器 key（重启后回看也能答）→ 内存 job → 项目 .env key。
-        # 末级回退是有意的：付费按次模式下用户不传 key，由项目自有 key 兜底计费。
+        # credential priority: request body's browser key (works even after a
+        # restart) -> in-memory job -> the project's own .env key.
+        # The last fallback is deliberate: in a pay-per-use model the user doesn't
+        # pass a key, and the project's own key covers billing.
         creds = _build_creds(
             body.get("gpt5_key"), body.get("deepseek_key"), body.get("doubao_key")
         ) or (job.get("creds") if job else None)
@@ -440,13 +447,13 @@ async def question(
 
 @app.get("/api/reports")
 async def reports_list(owner: str = Depends(_resolve_owner)) -> dict:
-    """该 owner 的历史报告列表（不含正文）。"""
+    """This owner's historical report list (excludes body text)."""
     return {"reports": db.list_reports(owner)}
 
 
 @app.get("/api/reports/{report_id}")
 async def report_detail(report_id: str, owner: str = Depends(_resolve_owner)):
-    """回看单份报告：正文 + 历史对话。owner 不匹配返 404。"""
+    """Look back at a single report: body + conversation history. Returns 404 if owner doesn't match."""
     report = db.get_report(report_id, owner)
     if not report:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -455,9 +462,10 @@ async def report_detail(report_id: str, owner: str = Depends(_resolve_owner)):
 
 @app.get("/api/reports/{report_id}/trace")
 async def report_trace(report_id: str, owner: str = Depends(_resolve_owner)):
-    """回放一次运行的 Agent 过程事件流 + LangSmith 深链。owner 不匹配返 404。
+    """Replay a run's agent process event stream + a LangSmith deep link. Returns 404
+    if owner doesn't match.
 
-    LangSmith URL 在此按需解析（一次网络往返），避免拖慢 job 收尾。
+    The LangSmith URL is resolved on demand here (one network round trip), to avoid slowing down the job's completion.
     """
     trace = db.get_run_trace(report_id, owner)
     if not trace:
@@ -469,7 +477,7 @@ async def report_trace(report_id: str, owner: str = Depends(_resolve_owner)):
     return {"events": json.loads(trace["events_json"] or "[]"), "trace_url": trace_url}
 
 
-# ── Auth endpoints ─────────────────────────────────────────────────────────
+# ── Auth endpoints ──────────────────────────────────────────────────────
 
 
 @app.post("/auth/register")
@@ -503,7 +511,7 @@ async def password_login(username: str = Form(...), password: str = Form(...)) -
 
 
 def _google_redirect_uri(request: Request) -> str:
-    """Railway 代理做 SSL 终止，url_for 可能生成 http://。优先用显式配置的环境变量。"""
+    """Railway's proxy terminates SSL, so url_for may generate http://. Prefer the explicitly configured env var."""
     return os.getenv("GOOGLE_REDIRECT_URI") or str(request.url_for("google_callback"))
 
 

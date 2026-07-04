@@ -1,8 +1,8 @@
-"""Markdown → PDF 渲染工具。
+"""Markdown -> PDF rendering tool.
 
-渲染链：weasyprint（Linux/Mac）→ ReportLab 直出（Windows 主路径）。
-中文：UnicodeCIDFont STSong-Light（宋体），英文/数字：Times-Roman/Times-Bold。
-不经过 xhtml2pdf（WinAnsiEncoding 导致 CJK 白色方框）。
+Render chain: weasyprint (Linux/Mac) -> direct ReportLab rendering (Windows's main path).
+Chinese: UnicodeCIDFont STSong-Light; English/digits: Times-Roman/Times-Bold.
+Doesn't go through xhtml2pdf (its WinAnsiEncoding renders CJK as white boxes).
 """
 from __future__ import annotations
 
@@ -17,19 +17,19 @@ _OUTPUT_DIR = Path("output")
 
 @tool
 def render_pdf(markdown_content: str, target_product: str) -> str:
-    """将完整的 Markdown 报告转换为 PDF 文件。
+    """Convert the full Markdown report into a PDF file.
 
-    在报告全部写完后调用一次，不要按章节分段调用。
+    Call this once after the entire report is written, not per section.
 
     Args:
-        markdown_content: 完整的报告 Markdown 文本。
-        target_product: 目标产品名称，用于构建输出文件名。
+        markdown_content: the full report's Markdown text.
+        target_product: the target product's name, used to build the output filename.
 
     Returns:
-        生成的 PDF 文件的完整路径。
+        The full path to the generated PDF file.
     """
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    # uuid 后缀：同产品多份报告不互相覆盖（路径不可猜）
+    # uuid suffix: multiple reports for the same product don't overwrite each other (and the path isn't guessable)
     pdf_path = _OUTPUT_DIR / f"report_{target_product}_{uuid4().hex[:8]}.pdf"
     if not _try_weasyprint(markdown_content, pdf_path):
         _reportlab_pdf(markdown_content, pdf_path)
@@ -37,7 +37,7 @@ def render_pdf(markdown_content: str, target_product: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# WeasyPrint 路径（Linux/Mac）
+# WeasyPrint path (Linux/Mac)
 # ---------------------------------------------------------------------------
 
 def _try_weasyprint(md: str, output_path: Path) -> bool:
@@ -61,9 +61,10 @@ def _try_weasyprint(md: str, output_path: Path) -> bool:
             'sup{font-size:8pt;color:#2E86AB;}'
             f'</style></head><body>{body}</body></html>'
         )
-        # base_url 必传：图片引用是相对路径 output/charts/*.png（相对 CWD）。
-        # 不给 base_url，weasyprint 无法解析相对 URL，会静默丢弃所有 <img>。
-        # 末尾分隔符不能省，否则 urljoin 会吃掉 CWD 末段。
+        # base_url is required: image references are relative paths
+        # output/charts/*.png (relative to CWD). Without base_url, weasyprint can't
+        # resolve relative URLs and silently drops every <img>. The trailing slash
+        # can't be omitted, or urljoin eats the last segment of CWD.
         base_url = str(Path.cwd()) + "/"
         weasyprint.HTML(string=html, base_url=base_url).write_pdf(str(output_path))
         return True
@@ -72,7 +73,7 @@ def _try_weasyprint(md: str, output_path: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# ReportLab 直出路径（Windows）
+# Direct ReportLab rendering path (Windows)
 # ---------------------------------------------------------------------------
 
 def _reportlab_pdf(md: str, output_path: Path) -> None:
@@ -103,7 +104,7 @@ def _reportlab_pdf(md: str, output_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 文本处理
+# Text processing
 # ---------------------------------------------------------------------------
 
 def _esc(text: str) -> str:
@@ -111,7 +112,7 @@ def _esc(text: str) -> str:
 
 
 def _mix_latin(markup: str, lat_font: str) -> str:
-    """将已有 XML markup 中不在标签内的 Latin/数字序列包裹为指定字体。"""
+    """Wrap Latin/digit runs outside existing XML tags in the given font."""
     parts = re.split(r'(<[^>]+>|&\w+;|&#\d+;)', markup)
     result = []
     for part in parts:
@@ -127,11 +128,11 @@ def _mix_latin(markup: str, lat_font: str) -> str:
 
 
 def _inline(text: str, lat_font: str = "Times-Roman") -> str:
-    """Markdown inline → ReportLab XML，同时对 Latin 字符应用 lat_font。"""
+    """Markdown inline -> ReportLab XML, applying lat_font to Latin characters."""
     text = _esc(text)
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
-    # [N] 角标 → 上标
+    # [N] footnote marker -> superscript
     text = re.sub(r"\[(\d+)\]", r'<super><font size="8">[\1]</font></super>', text)
     return _mix_latin(text, lat_font)
 
@@ -145,7 +146,7 @@ def _sub_bullet_text(content: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 表格渲染
+# Table rendering
 # ---------------------------------------------------------------------------
 
 def _render_table(table_lines: list[str], styles: dict) -> list:
@@ -156,7 +157,7 @@ def _render_table(table_lines: list[str], styles: dict) -> list:
 
     rows: list[list[str]] = []
     for line in table_lines:
-        if re.match(r"^\|[-| :]+\|$", line):   # 分隔行，跳过
+        if re.match(r"^\|[-| :]+\|$", line):   # separator row, skip
             continue
         cells = [c.strip() for c in line.split("|")[1:-1]]
         if cells:
@@ -166,7 +167,7 @@ def _render_table(table_lines: list[str], styles: dict) -> list:
         return []
 
     num_cols = max(len(r) for r in rows)
-    rows = [r + [""] * (num_cols - len(r)) for r in rows]   # 补齐列数
+    rows = [r + [""] * (num_cols - len(r)) for r in rows]   # pad rows to a uniform column count
 
     cell_style = ParagraphStyle("tc", parent=styles["body"], fontSize=9, leading=14, spaceAfter=0)
     hdr_style  = ParagraphStyle("th", parent=cell_style, textColor=colors.white)
@@ -196,7 +197,7 @@ def _render_table(table_lines: list[str], styles: dict) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Markdown → Platypus 元素
+# Markdown -> Platypus elements
 # ---------------------------------------------------------------------------
 
 def _md_to_elements(md: str, styles: dict) -> list:
@@ -204,7 +205,7 @@ def _md_to_elements(md: str, styles: dict) -> list:
     from reportlab.platypus import HRFlowable, Image, Paragraph, Spacer
 
     class _BoldPara(Paragraph):
-        """STSong-Light 无粗体变体，用 PDF fill+stroke（Tr=2）合成粗体。"""
+        """STSong-Light has no bold variant; synthesizes bold via PDF fill+stroke (Tr=2)."""
         stroke_width: float = 0.3
 
         def draw(self) -> None:
@@ -234,7 +235,7 @@ def _md_to_elements(md: str, styles: dict) -> list:
             i += 1
             continue
 
-        # 图片
+        # image
         img_m = re.fullmatch(r"!\[([^\]]*)\]\(([^)]+)\)", stripped)
         if img_m:
             img_path = Path(img_m.group(2))
@@ -252,7 +253,7 @@ def _md_to_elements(md: str, styles: dict) -> list:
             i += 1
             continue
 
-        # 表格：收集连续的 | 开头行
+        # table: collect consecutive lines starting with |
         if stripped.startswith("|"):
             table_lines: list[str] = []
             while i < len(lines) and lines[i].strip().startswith("|"):
@@ -261,7 +262,7 @@ def _md_to_elements(md: str, styles: dict) -> list:
             elements.extend(_render_table(table_lines, styles))
             continue
 
-        # 标题
+        # heading
         if stripped.startswith("# ") and not stripped.startswith("##"):
             elements.append(_h(_inline(stripped[2:], "Times-Bold"), styles["h1"], sw=0.45))
             elements.append(HRFlowable(width="100%", thickness=1.5, color="#2E86AB", spaceAfter=6))

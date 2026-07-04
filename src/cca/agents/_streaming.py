@@ -1,21 +1,21 @@
-"""ReAct agent 流式执行 helper + 节点级 cache hook。
+"""ReAct agent streaming helper + per-node cache hook.
 
-`stream_react(agent, messages, label, cache_key=...)` 三种行为，按 CCA_CACHE_MODE 派发：
-    off/write : 走 agent.stream，逐 step inline 打印；write 模式跑完后写缓存
-    replay    : 跳过 LLM，从缓存读 messages list 直接逐条打印（秒级）
-    auto      : 先查缓存命中即重放；未命中走 stream + 写缓存
+`stream_react(agent, messages, label, cache_key=...)` dispatches on CCA_CACHE_MODE:
+    off/write : agent.stream, print each step inline; write mode persists cache after
+    replay    : skip the LLM, print the cached messages list directly (instant)
+    auto      : try cache first; on miss, stream + write
 
-若 cache_key=None 则永不走缓存路径，跟无 hook 版本一样。
+cache_key=None always skips the cache path (same as no hook).
 
-打印格式：
+Print format:
     [Collector] start (recursion_limit=40)
     [Collector] thinking: ...
-    [Collector] call web_search({"query": "钉钉 官网"})
-    [Collector] ret finalize_exploration (628B) {"target_product":"飞书"...
+    [Collector] call web_search({"query": "..."})
+    [Collector] ret finalize_exploration (628B) {"target_product":"..."...
     [Collector] done (8 messages)
-    [Collector] (cache replay)         # 仅 replay/auto 命中时
+    [Collector] (cache replay)         # only on replay/auto hit
 
-若 MagicMock 的 .stream 返不出 dict（测试场景），自动 fallback 到 agent.invoke。
+Falls back to agent.invoke if a MagicMock's .stream doesn't yield dicts (test scenario).
 """
 from __future__ import annotations
 
@@ -35,17 +35,17 @@ _THINKING_PREVIEW = 120
 _TOOL_ARG_PREVIEW = 180
 _TOOL_RESP_PREVIEW = 80
 
-# 服务器层在 graph.invoke 外层设置此 contextvar，让每条日志同时推到 SSE 队列。
+# Set by the server around graph.invoke so each log line also reaches the SSE queue.
 _sse_emit: ContextVar[Callable[[dict], None] | None] = ContextVar("cca_sse_emit", default=None)
 
 
 class JobCancelled(RuntimeError):
-    """由 emit_fn 抛出，在节点间隙中止图执行（客户端已断开）。"""
+    """Raised by emit_fn to abort graph execution between nodes (client disconnected)."""
 
 
 @contextmanager
 def set_sse_emitter(fn: Callable[[dict], None]):
-    """在 with 块内把所有流式日志也发往 SSE 队列。fn 必须是线程安全的。"""
+    """Stream all logs to the SSE queue within this with-block. fn must be thread-safe."""
     token = _sse_emit.set(fn)
     try:
         yield
@@ -59,7 +59,7 @@ def _emit(event: dict) -> None:
         try:
             fn(event)
         except JobCancelled:
-            raise  # 让取消信号穿透图执行，停止后续 LLM 调用
+            raise  # let cancellation propagate and stop further LLM calls
         except Exception:
             pass
 
@@ -76,13 +76,13 @@ def _short(text: str, n: int) -> str:
 
 def _print(label: str, line: str) -> None:
     print(f"  [{label}] {line}", flush=True)
-    # thinking / call / ret 由 _print_message 发结构化事件，这里只发通用 log
+    # thinking/call/ret events are emitted by _print_message; this is the generic log path
     if not (line.startswith("thinking:") or line.startswith("call ") or line.startswith("ret ")):
         _emit({"type": "log", "agent": label, "text": line})
 
 
 def _print_message(msg: Any, label: str) -> None:
-    """AIMessage / ToolMessage → 简短摘要 + SSE 结构化事件。"""
+    """AIMessage/ToolMessage -> short summary + structured SSE event."""
     if isinstance(msg, AIMessage):
         if tool_calls := getattr(msg, "tool_calls", None):
             for tc in tool_calls:
@@ -102,7 +102,7 @@ def _print_message(msg: Any, label: str) -> None:
 
 
 def _stream_iter(agent: Any, messages: list, recursion_limit: int):
-    """agent.stream(values)；yield 非 dict 则 raise 让上层 fallback。"""
+    """agent.stream(values); raise if a non-dict chunk is yielded so the caller can fall back."""
     chunks = agent.stream(
         {"messages": messages},
         config={"recursion_limit": recursion_limit},
@@ -115,8 +115,8 @@ def _stream_iter(agent: Any, messages: list, recursion_limit: int):
 
 
 def _cache_read_tokens(msg: AIMessage) -> int:
-    """缓存命中的 input token。OpenAI/Doubao 走 input_token_details.cache_read，
-    DeepSeek 走 response_metadata.token_usage.prompt_cache_hit_tokens；都缺 → 0。"""
+    """Cache-hit input tokens. OpenAI/Doubao use input_token_details.cache_read,
+    DeepSeek uses response_metadata.token_usage.prompt_cache_hit_tokens; else 0."""
     meta = getattr(msg, "usage_metadata", None) or {}
     hit = (meta.get("input_token_details") or {}).get("cache_read")
     if hit is None:
@@ -137,7 +137,7 @@ def _sum_usage(messages: list) -> dict[str, int]:
 
 
 def _run_real(agent: Any, messages: list, label: str, recursion_limit: int) -> list:
-    """真跑 ReAct：优先 .stream，失败 fallback .invoke。"""
+    """Run ReAct for real: prefer .stream, fall back to .invoke on failure."""
     from langgraph.errors import GraphRecursionError
     seen = 0
     final_messages: list = []
@@ -151,8 +151,8 @@ def _run_real(agent: Any, messages: list, label: str, recursion_limit: int) -> l
             seen = len(msgs)
             final_messages = msgs
     except GraphRecursionError:
-        # 撞步数上限：返回已收集到的 messages，不中断整体流程
-        _print(label, f"WARN: recursion_limit={recursion_limit} reached，返回已有产出")
+        # hit the step limit: return what we collected, don't abort the whole pipeline
+        _print(label, f"WARN: recursion_limit={recursion_limit} reached, returning partial output")
         got_any_chunk = bool(final_messages)
     except (AttributeError, TypeError):
         got_any_chunk = False
@@ -170,7 +170,7 @@ def _run_real(agent: Any, messages: list, label: str, recursion_limit: int) -> l
 
 
 def _serialize_messages(messages: list) -> str:
-    """LangChain message → JSON 串（保留类型信息，用 langchain_core.load.dump）。"""
+    """LangChain message -> JSON string (preserves type info via langchain_core.load.dump)."""
     return lc_dumps(messages)
 
 
@@ -187,14 +187,14 @@ def stream_react(
     cache_key: dict | None = None,
     cache_node: str | None = None,
 ) -> list:
-    """流式跑 ReAct agent。提供 cache_key + cache_node 时按 CCA_CACHE_MODE 走 cache 分支。
+    """Stream a ReAct agent run. With cache_key + cache_node, dispatches on CCA_CACHE_MODE.
 
-    返回最终 messages 列表（与 agent.invoke()["messages"] 等价）。
+    Returns the final messages list (equivalent to agent.invoke()["messages"]).
     """
     mode = react_cache.get_mode()
     use_cache = cache_key is not None and cache_node is not None
 
-    # ── replay / auto 命中尝试 ──
+    # -- replay / auto: try a cache hit --
     if use_cache and mode in ("replay", "auto"):
         cached = react_cache.get(cache_node, cache_key)
         if cached is not None:
@@ -207,11 +207,11 @@ def stream_react(
             return messages_list
         if mode == "replay":
             raise RuntimeError(
-                f"[react_cache] mode=replay 但缓存未命中：node={cache_node} "
-                f"key={react_cache.hash_key(cache_key)}。请先用 mode=write 跑一次。"
+                f"[react_cache] mode=replay but cache missed: node={cache_node} "
+                f"key={react_cache.hash_key(cache_key)}. Run with mode=write first."
             )
 
-    # ── 真跑路径 ──
+    # -- real run path --
     _print(label, f"start (recursion_limit={recursion_limit})")
     sys.stdout.flush()
     final_messages = _run_real(agent, messages, label, recursion_limit)
@@ -226,7 +226,7 @@ def stream_react(
         )
         _emit({"type": "token_usage", "agent": label, **usage})
 
-    # ── write / auto 写缓存 ──
+    # -- write / auto: persist cache --
     if use_cache and mode in ("write", "auto"):
         react_cache.put(cache_node, cache_key, {
             "messages_json": _serialize_messages(final_messages),

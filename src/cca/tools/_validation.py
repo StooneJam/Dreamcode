@@ -1,7 +1,7 @@
-"""LLM 工具入参的 JSON parse + Pydantic validate；失败返回 LLM-friendly 错误字符串。
+"""JSON parse + Pydantic validate for LLM tool arguments; returns an LLM-friendly error string on failure.
 
-在 create_react_agent 里 raise 异常会中断 ReAct loop，工具应 return 错误信息
-作为 ToolMessage，让 LLM 看到后自修参数重试。
+Raising inside create_react_agent aborts the ReAct loop, so a tool should return the
+error as a ToolMessage instead, letting the LLM see it and retry with corrected arguments.
 """
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ from pydantic import BaseModel, ValidationError
 
 T = TypeVar("T", bound=BaseModel)
 
-# LLM（尤其豆包）反复错填的结构修复，按 key 名约定，不新增/篡改语义数据。
+# structural repairs for mistakes the LLM (especially Doubao) repeatedly makes,
+# keyed by field name convention; never adds or alters semantic data.
 _EVIDENCE_URL_ALIASES = ("source_url", "url", "link", "href", "uri")
 _EVIDENCE_KEYS = ("evidence", "sources")
 _THEME_LIST_KEYS = ("positive_themes", "negative_themes", "included_features")
@@ -21,10 +22,12 @@ _SPLIT_RE = re.compile(r"[,，、;；\n]+")
 
 
 def _coerce_evidence(item: object) -> object:
-    """『该填 Evidence 的地方』归一成含 source_url 的对象。
+    """Normalize anything that belongs in an Evidence slot into an object with source_url.
 
-    URL 字符串 / {url|link|href:...} → {source_url:...}；已含 source_url 的对象原样返回。
-    这是豆包最高频的错填（把 Evidence 填成裸 URL），归一后第一次就过校验、免去 retry。
+    A URL string / {url|link|href:...} -> {source_url:...}; an object that already
+    has source_url passes through unchanged. This is Doubao's most frequent mistake
+    (filling Evidence with a bare URL); normalizing it here passes validation on the
+    first try and avoids a retry.
     """
     if isinstance(item, str):
         return {"source_url": item}
@@ -37,12 +40,13 @@ def _coerce_evidence(item: object) -> object:
 
 
 def repair_llm_json(raw: object) -> object:
-    """递归修复 LLM 常见结构错填（按 key 名），让 Pydantic 第一次就过、减少 ReAct retry：
+    """Recursively repair common LLM structural mistakes (by field name), so Pydantic
+    passes on the first try and ReAct retries are reduced:
 
-    - evidence / sources：Evidence 列表 —— 元素是裸 URL 串或 {url:...} → {source_url:...}；
-      误填成单个对象（非列表）→ 包成列表
-    - source：单个 Evidence —— 同上归一
-    - positive_themes / negative_themes / included_features：误填成单串 → 按分隔符切成列表
+    - evidence / sources: an Evidence list -- elements that are bare URL strings or
+      {url:...} become {source_url:...}; a single object (not a list) gets wrapped in one
+    - source: a single Evidence -- normalized the same way
+    - positive_themes / negative_themes / included_features: a single string gets split into a list by delimiter
     """
     if isinstance(raw, list):
         return [repair_llm_json(x) for x in raw]
@@ -63,7 +67,7 @@ def repair_llm_json(raw: object) -> object:
 
 
 def _format_decode_error(json_str: str, e: json.JSONDecodeError) -> str:
-    """JSONDecodeError → 含位置上下文的 LLM 可自修错误信息。"""
+    """JSONDecodeError -> an LLM-fixable error message that includes positional context."""
     pos = e.pos
     ctx_start = max(0, pos - 40)
     ctx_end = min(len(json_str), pos + 40)
@@ -79,7 +83,7 @@ def _format_decode_error(json_str: str, e: json.JSONDecodeError) -> str:
 
 
 def _scan_structure(s: str) -> tuple[list[str], bool]:
-    """扫描 JSON 字符串，返回 (需要补全的括号列表, 是否在字符串内部结束)。"""
+    """Scan a JSON string, returning (brackets that need closing, whether it ends inside a string)."""
     stack: list[str] = []
     in_str = False
     esc = False
@@ -103,17 +107,19 @@ def _scan_structure(s: str) -> tuple[list[str], bool]:
 
 
 def _try_recover_truncated(json_str: str) -> tuple[dict | list | None, None]:
-    """截断恢复：从末尾逐字符回退，找到合法边界后补全引号+括号。
+    """Truncation recovery: back off character by character from the end until a
+    valid boundary is found, then close quotes+brackets.
 
-    Doubao token 上限导致 JSON 截断，可能在字符串内部（需补 `"`）或括号
-    内部（需补 `}` / `]`）。最多回退 1200 字符；无法恢复返 (None, None)。
+    Doubao's token limit can truncate JSON either inside a string (needs a closing
+    `"`) or inside brackets (needs `}` / `]`). Backs off at most 1200 characters;
+    returns (None, None) if unrecoverable.
     """
     s = json_str.rstrip()
     for trim in range(0, min(1200, len(s))):
         candidate = s[: len(s) - trim] if trim else s
         closing_brackets, ends_in_str = _scan_structure(candidate)
         closing = "".join(closing_brackets)
-        # 同时尝试：直接补括号 / 先关引号再补括号
+        # try both: close brackets directly / close the string first then brackets
         variants = [candidate + closing]
         if ends_in_str:
             variants.append(candidate + '"' + closing)
@@ -126,35 +132,37 @@ def _try_recover_truncated(json_str: str) -> tuple[dict | list | None, None]:
 
 
 def _try_parse_lenient(json_str: str) -> tuple[dict | list | None, str | None]:
-    """三阶段 JSON parse：
-    1. 严格 json.loads
-    2. 'Extra data' → raw_decode 取第一个完整对象，丢弃尾部杂质
-    3. 其他错误（含中途截断）→ 倒退补全括号后再试；仍失败才返回错误
+    """Three-stage JSON parse:
+    1. strict json.loads
+    2. 'Extra data' -> raw_decode grabs the first complete object, discarding trailing junk
+    3. other errors (including mid-truncation) -> back off and close brackets, retry; only errors if that also fails
 
-    返回 (parsed_obj, None) 或 (None, llm_friendly_error)。
+    Returns (parsed_obj, None) or (None, llm_friendly_error).
     """
     try:
         return json.loads(json_str), None
     except json.JSONDecodeError:
         pass
 
-    # 尾部杂质 → 救
+    # trailing junk -> rescue
     try:
         obj, _end = json.JSONDecoder().raw_decode(json_str.lstrip())
         return obj, None
     except json.JSONDecodeError:
         pass
 
-    # 中途截断（Doubao token 上限）→ 倒退补全。仅当末端确实未闭合（有未配对括号
-    # 或停在字符串内）才尝试，否则像 {"score": } 这种"结构完整但值缺失"的畸形 JSON
-    # 会被一路回退救成 {}，把模型本可自修的真错误静默掩盖掉。
+    # mid-truncation (Doubao's token limit) -> back off and close. Only attempted
+    # when the tail is genuinely unclosed (unpaired brackets or ends inside a
+    # string) -- otherwise malformed-but-structurally-complete JSON like
+    # {"score": } (a real error the model could fix itself) would get silently
+    # rescued down to {} by backing off too far.
     pending, ends_in_str = _scan_structure(json_str)
     if pending or ends_in_str:
         recovered, _ = _try_recover_truncated(json_str)
         if recovered is not None:
             return recovered, None
 
-    # 所有救援均失败，返回原始错误供 LLM 修复
+    # every rescue failed, return the original error for the LLM to fix
     try:
         json.loads(json_str)
     except json.JSONDecodeError as e:
@@ -170,10 +178,10 @@ def safe_load_validate(
     hint: str = "",
     max_errors_shown: int = 20,
 ) -> tuple[T | None, str | None]:
-    """parse JSON → 可选清洗 → Pydantic validate。
+    """parse JSON -> optional cleanup -> Pydantic validate.
 
-    返回 (obj, None) 或 (None, llm_friendly_error_str)。
-    Extra data 类错误会先尝试 raw_decode 救（丢弃尾部杂质），失败再返错。
+    Returns (obj, None) or (None, llm_friendly_error_str).
+    'Extra data' errors are first rescued via raw_decode (discarding trailing junk); errors otherwise.
     """
     raw, err = _try_parse_lenient(json_str)
     if err:
@@ -200,7 +208,7 @@ def safe_load_list(
     *,
     pre_clean: Callable[[object], object] | None = None,
 ) -> tuple[list[T] | None, str | None]:
-    """parse JSON 数组 → 可选清洗 → 每项 Pydantic validate；任一失败返回错误字符串。"""
+    """parse a JSON array -> optional cleanup -> Pydantic validate each item; any failure returns an error string."""
     raw, err = _try_parse_lenient(json_str)
     if err:
         return None, err

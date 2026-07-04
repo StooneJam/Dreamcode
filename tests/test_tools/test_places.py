@@ -1,4 +1,4 @@
-"""scrape_local_life：Google Places Text Search + Top-N 加权平均（全程不触网）。"""
+"""scrape_local_life: Google Places Text Search + Top-N weighted average (never touches the network)."""
 from __future__ import annotations
 
 import json
@@ -18,7 +18,7 @@ def _fake_resp(body: dict):
 
 @pytest.fixture(autouse=True)
 def _isolate_cache(monkeypatch):
-    """用内存 dict 替掉 sqlite 缓存，避免触碰 store.db。"""
+    """Replace the sqlite cache with an in-memory dict, to avoid touching store.db."""
     store: dict = {}
 
     def fake_get(node, key):
@@ -45,8 +45,8 @@ class TestAggregateRating:
     def test_skips_stores_without_rating_or_reviews(self):
         results = [
             {"rating": 4.5, "user_ratings_total": 10},
-            {"rating": None, "user_ratings_total": 999},  # 无评分
-            {"rating": 3.0, "user_ratings_total": 0},     # 无评论
+            {"rating": None, "user_ratings_total": 999},  # no rating
+            {"rating": 3.0, "user_ratings_total": 0},     # no reviews
             {"name": "缺字段"},
         ]
         agg = places._aggregate_rating(results)

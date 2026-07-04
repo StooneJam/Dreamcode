@@ -1,4 +1,4 @@
-"""测试 LLM factory 的派发逻辑（不调真 API）。"""
+"""Tests for the LLM factory's dispatch logic (no real API calls)."""
 from __future__ import annotations
 
 import pytest
@@ -32,7 +32,7 @@ def test_doubao_uses_ark_base_url() -> None:
     assert "volces" in str(factory.doubao.root_client.base_url)
 
 
-# ── per-run 凭证注入 ────────────────────────────────────────────────────
+# ── per-run credential injection ────────────────────────────────────────
 
 
 def test_no_creds_falls_back_to_env_singletons() -> None:
@@ -45,7 +45,7 @@ def test_single_key_disables_cross_family_and_collapses_families() -> None:
     creds = {"gpt-5": factory.LLMCredential(api_key="k1", model="qwen-max")}
     with factory.use_credentials(creds):
         assert factory.cross_family_enabled() is False
-        # 三个角色槽全塌到唯一 endpoint
+        # all three role slots collapse to the single endpoint
         assert factory.get_llm("deepseek").model_name == "qwen-max"
         assert factory.get_llm("doubao").model_name == "qwen-max"
 
@@ -59,7 +59,7 @@ def test_two_keys_enable_cross_family_and_fallback_fills_empty_slot() -> None:
         assert factory.cross_family_enabled() is True
         assert factory.get_llm("gpt-5").model_name == "qwen-max"
         assert factory.get_llm("deepseek").model_name == "glm-4"
-        # 空 doubao 槽按 _FALLBACK_ORDER 借 gpt-5
+        # the empty doubao slot borrows gpt-5 per _FALLBACK_ORDER
         assert factory.get_llm("doubao").model_name == "qwen-max"
 
 

@@ -1,4 +1,5 @@
-"""Report Agent 开发用 mock CCAState —— 模拟 Phase 2 结束后 PM 下发 ReportTask 的时刻。"""
+"""Mock CCAState for Report Agent development -- simulates the moment PM hands down
+ReportTask after phase 2 completes."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -26,7 +27,7 @@ def _evidence(url: str, snippet: str) -> Evidence:
 
 
 def _make_profile(name: str, rating: float, price: float) -> dict:
-    """构造 Collector + Insight owner 字段齐全的 profile（不含 SWOT，Reporter 工具产）。"""
+    """Build a profile with every Collector + Insight owned field filled in (no SWOT, which Reporter's tool produces)."""
     ev = _evidence(f"https://{name}.com/pricing", f"{name} Pro {price}元/用户/月")
     fact = Fact(statement=f"{name} Pro 版按用户每月 {price} 元", evidence=[ev])
     dimension = Dimension(
@@ -63,9 +64,9 @@ def _make_profile(name: str, rating: float, price: float) -> dict:
 
 
 def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
-    """构造完整 CCAState，代表 PM 完成 Phase 2 QA 并下发 ReportTask 后的状态。
+    """Build a complete CCAState representing the state after PM finishes phase-2 QA and hands down ReportTask.
 
-    企业微信的 collector 数据被标为 forced（retry>2），用于验证置信度标注逻辑。
+    WeCom's collector data is marked forced (retry>2), to test the confidence-annotation logic.
     """
     profiles = {
         "钉钉": _make_profile("钉钉", rating=4.2, price=30.0),
@@ -82,7 +83,7 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         target_audience="产品负责人",
         sections=["执行摘要", "核心功能对比", "定价结构", "用户口碑", "SWOT 分析", "结论与建议"],
         invoke_call_report_reviewer=invoke_reviewer,
-        # Phase 2 mapping：profile 中 dim.name 是"视频会议人数上限"，归 "视频会议" bucket
+        # Phase 2 mapping: the profile's dim.name is "max video call participants", grouped into the "video conferencing" bucket
         dimension_canonical_map={"视频会议人数上限": "视频会议"},
     )
     review_state = [
@@ -100,17 +101,17 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         user_files=None,
         domain_seed=None,
         competitor_names=["钉钉", "企业微信"],
-        # PM 阶段一/一点五（mock 中已略过，设为 None）
+        # PM phase 1/1.5 (skipped in this mock, set to None)
         initial_brief=None,
         exploration_result=None,
-        # PM 阶段二~三任务
+        # PM phase 2-3 tasks
         task_plan=TaskPlan(
             target_product="飞书",
             product_type="协作办公SaaS",
             competitor_names=["钉钉", "企业微信"],
             collect_tasks=[CollectTask(product_name="钉钉"), CollectTask(product_name="企业微信")],
             insight_tasks=[InsightTask(product_name="钉钉"), InsightTask(product_name="企业微信")],
-            # tentative_buckets 作为 Reporter canonical_map 的软引导
+            # tentative_buckets serves as soft guidance for Reporter's canonical_map
             tentative_buckets=["视频会议", "定价"],
         ).model_dump(),
         report_task=report_task.model_dump(),
@@ -121,7 +122,7 @@ def make_mock_state(invoke_reviewer: bool = False) -> CCAState:
         report_status="pending",
         report_md=None,
         report_pdf_path=None,
-        # 累加型 reducer 字段，初始为空列表
+        # accumulating reducer fields, start as empty lists
         analysis_start_ts=datetime.now(timezone.utc).isoformat(),
         analysis_end_ts=None,
         qa_notes=["企业微信定价数据来源不稳定，已 forced 放行"],

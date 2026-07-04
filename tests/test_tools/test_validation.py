@@ -1,10 +1,10 @@
-"""LLM 工具入参 JSON parse + validate 的容错回归。
+"""Regression tests for LLM tool argument JSON parse + validate's error tolerance.
 
-关键不变量：
-- 合法 JSON happy path
-- "Extra data"（尾部杂质）应被 raw_decode 救回，不暴露错误给 LLM
-- 真坏 JSON 仍返 LLM-friendly 错（含位置 + 上下文）
-- Pydantic 校验失败按字段路径列出
+Key invariants:
+- valid JSON happy path
+- "Extra data" (trailing junk) should be rescued by raw_decode, without exposing an error to the LLM
+- genuinely broken JSON still returns an LLM-friendly error (with position + context)
+- Pydantic validation failures are listed by field path
 """
 from __future__ import annotations
 
@@ -26,15 +26,16 @@ def test_happy_path() -> None:
 
 
 def test_extra_data_trailing_brace_is_recovered() -> None:
-    """LLM 在合法 JSON 后追加多余 `}` —— 应该被 raw_decode 救，不报错。
-    这是 finalize_profile 死循环的根因，回归保护。"""
+    """The LLM appends an extra `}` after valid JSON -- should be rescued by
+    raw_decode without erroring. This was the root cause of finalize_profile's
+    infinite loop; regression guard."""
     obj, err = safe_load_validate('{"name": "x", "score": 1}}', _Sample)
     assert err is None
     assert obj.name == "x"
 
 
 def test_extra_data_trailing_text_is_recovered() -> None:
-    """LLM 在合法 JSON 后追加解释文本（如 markdown / 注释） —— 应被救回。"""
+    """The LLM appends explanatory text after valid JSON (e.g. markdown/comments) -- should be rescued."""
     obj, err = safe_load_validate(
         '{"name": "x", "score": 1}\n以上是我的答案。',
         _Sample,
@@ -44,18 +45,20 @@ def test_extra_data_trailing_text_is_recovered() -> None:
 
 
 def test_malformed_json_returns_friendly_error_with_context() -> None:
-    """非 Extra data 类的 JSON 错应返带位置上下文的 LLM-friendly 错误。"""
+    """A non-Extra-data JSON error should return an LLM-friendly error with positional context."""
     obj, err = safe_load_validate('{"name": "x", "score": }', _Sample)
     assert obj is None
     assert err is not None
-    assert "char" in err  # 含位置
-    assert "出错位置附近的内容" in err  # 含上下文
-    assert "只输出一个完整的 JSON 对象" in err  # 含 actionable hint
+    assert "char" in err  # includes position
+    assert "出错位置附近的内容" in err  # includes context
+    assert "只输出一个完整的 JSON 对象" in err  # includes an actionable hint
 
 
 def test_truncated_json_unclosed_at_end_is_recovered() -> None:
-    """Doubao 撞 token 上限把 JSON 截在末尾（括号未闭合）→ 倒退补全救回，不报错。
-    与上面 malformed 用例成对：截断（末端未闭合）救，畸形（结构完整值缺失）响亮报错。"""
+    """Doubao hits its token limit and truncates JSON at the end (unclosed brackets)
+    -> backing off and closing rescues it, no error. Pairs with the malformed test
+    case above: truncation (unclosed at the end) is rescued, malformed (structurally
+    complete but a missing value) errors loudly."""
     obj, err = safe_load_validate('{"name": "x", "score": 1', _Sample)
     assert err is None
     assert obj.name == "x"
@@ -63,7 +66,7 @@ def test_truncated_json_unclosed_at_end_is_recovered() -> None:
 
 
 def test_pydantic_validation_error_lists_field_paths() -> None:
-    """Pydantic 失败按 'field.path: msg' 格式列出，LLM 能定位字段。"""
+    """A Pydantic failure is listed as 'field.path: msg', so the LLM can locate the field."""
     obj, err = safe_load_validate('{"name": "x", "score": -1}', _Sample)
     assert obj is None
     assert err is not None
@@ -72,7 +75,7 @@ def test_pydantic_validation_error_lists_field_paths() -> None:
 
 
 def test_safe_load_list_recovers_extra_data() -> None:
-    """list 入参同样支持 Extra data 救援。"""
+    """A list argument likewise supports Extra data rescue."""
     items, err = safe_load_list('[{"name": "a", "score": 1}]]', _Sample)
     assert err is None
     assert len(items) == 1
@@ -95,7 +98,7 @@ def test_hint_appended_on_validation_failure() -> None:
 
 
 # ---------------------------------------------------------------------------
-# repair_llm_json：豆包高频结构错填的容忍式修复
+# repair_llm_json: tolerant repair of Doubao's frequent structural mistakes
 # ---------------------------------------------------------------------------
 
 class TestRepairLLMJson:
@@ -134,7 +137,7 @@ class TestRepairLLMJson:
 
 
 def test_safe_load_list_applies_pre_clean() -> None:
-    """pre_clean=repair_llm_json：evidence 裸 URL 串第一次就过校验。"""
+    """pre_clean=repair_llm_json: a bare URL string in evidence passes validation on the first try."""
     from cca.schema import Fact
     items, err = safe_load_list(
         '[{"statement": "s", "evidence": ["https://x.com/a"]}]',

@@ -1,9 +1,14 @@
-"""Google Places 结构化口碑取数 —— 本地生活渠道（大众点评/美团 类）的品牌级评分。
+"""Google Places structured sentiment data -- brand-level ratings for local-life
+channels (Dianping/Meituan-type venues).
 
-官方 Text Search API 直接返回每家门店的 rating + user_ratings_total，全球覆盖，
-对出海竞品远好过高德/大众点评爬取。品牌级用 Top-N 加权平均聚合多家门店。
-只回评分+评论数，不回评论正文——情感主题的评论文本仍走 web_search。
-结果缓存进 store.db（复用 react_cache）防重复计费；key 缺失 fail-soft，LLM 自然降级。
+The official Text Search API returns each venue's rating + user_ratings_total
+directly, with global coverage -- far better for cross-border competitors than
+scraping Amap/Dianping. Brand-level scores are aggregated across venues via a
+top-N weighted average.
+Only returns rating + review count, never review text -- sentiment-theme review
+text still goes through web_search.
+Results are cached in store.db (reusing react_cache) to avoid repeat billing; a
+missing key fails soft and the LLM naturally falls back.
 """
 from __future__ import annotations
 
@@ -22,7 +27,7 @@ _TOP_N = 20
 
 
 def _aggregate_rating(results: list[dict], top_n: int = _TOP_N) -> dict | None:
-    """Top-N 加权平均：按评论数加权各门店星级。无可用门店返 None。"""
+    """Top-N weighted average: weights each venue's rating by its review count. Returns None if no venue is usable."""
     usable = [
         (r["rating"], r["user_ratings_total"])
         for r in results
@@ -44,7 +49,7 @@ def _aggregate_rating(results: list[dict], top_n: int = _TOP_N) -> dict | None:
 
 
 def _search_places(brand: str, api_key: str, region: str, language: str) -> dict:
-    """调 Places Text Search。失败返 {"error": ...} 而非 raise。"""
+    """Call Places Text Search. Returns {"error": ...} on failure instead of raising."""
     params = {"query": brand, "key": api_key, "language": language}
     if region:
         params["region"] = region
@@ -64,13 +69,16 @@ def _search_places(brand: str, api_key: str, region: str, language: str) -> dict
 
 @tool
 def scrape_local_life(brand: str, region: str = "", language: str = "zh-CN") -> str:
-    """从 Google Maps 取本地生活品牌的聚合口碑评分（大众点评/美团 类对象用此）。
+    """Get a local-life brand's aggregated sentiment rating from Google Maps (for Dianping/Meituan-type venues).
 
-    返回 JSON，含 aggregate_rating（1–5）/ rating_review_count / store_count / source_url。
-    只回评分与评论数，不回评论正文——评论文本请另用 web_search 采集后自行研判情感。
-    region 可填 ISO 国家码（如 "us"/"sg"）做地域偏置，留空为全球搜索。
-    取不到（无 key / 该品牌 Google 上无门店数据 / API 错误）会返 {"found": false, ...}，
-    调用方应降级 web_search，多次尝试仍无则按缺失诚信标注。
+    Returns JSON with aggregate_rating (1-5) / rating_review_count / store_count / source_url.
+    Only returns rating and review count, never review text -- collect review text
+    separately via web_search and judge sentiment from it yourself.
+    region accepts an ISO country code (e.g. "us"/"sg") to bias the search; leave
+    empty for a global search.
+    Returns {"found": false, ...} on failure (no key / no venue data for this brand
+    on Google / API error); the caller should fall back to web_search, and note the
+    gap honestly if repeated attempts still find nothing.
     """
     cached = react_cache.get("places", {"brand": brand, "region": region})
     if cached is not None:

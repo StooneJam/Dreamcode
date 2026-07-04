@@ -1,6 +1,7 @@
-"""PM Agent —— 三阶段规划 + 信号分发，纯结构化 LLM 调用，无 ReAct 工具。
+"""PM Agent -- three-phase planning + signal dispatch, pure structured LLM calls, no ReAct tools.
 
-阶段节点：initial_brief / task_plan / report_task。下游信号统一进 handle_signal_node。
+Phase nodes: initial_brief / task_plan / report_task. Downstream signals all
+funnel into handle_signal_node.
 """
 from __future__ import annotations
 
@@ -42,29 +43,29 @@ _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "pm.md"
 PM_FAMILY: AgentFamily = "gpt-5"
 CHALLENGER_FAMILY: AgentFamily = "deepseek"
 
-# signal.target → debate target
+# signal.target -> debate target
 _TARGET_TO_DEBATE = {
     "initial_brief": "pm_initial_brief",
     "task_plan": "pm_taskplan",
     "report_task": "report",
 }
-# debate target → 对应的 state 任务字段
+# debate target -> corresponding state task field
 _DEBATE_TARGET_TO_TASK_FIELD = {
     "pm_initial_brief": "initial_brief",
     "pm_taskplan": "task_plan",
     "report": "report_task",
 }
 
-# 单文档截断保护，防 prompt 爆
+# truncate a single uploaded doc so the prompt doesn't blow up
 _MAX_FILE_CHARS = 50_000
 
 PMPhase = Literal["initial_brief", "task_plan", "review", "report_task"]
 
-# review_node 配置
-_REROUTE_HARD_LIMIT = 2          # state.reroute_count 达此值后 needs_retry → forced
-_PER_UNIT_RETRY_LIMIT = 2        # 单 (agent, product) 历史返工次数达此值后 needs_retry → forced
-_SENTIMENT_MIN_REVIEWS = 1       # Insight sentiment 评论样本下限（1 条即可，不足时报告标注 forced）
-_REVIEW_INVOKE_ATTEMPTS = 2      # review 有代码层兜底，LLM 不死磕：1 首次 + 1 retry，失败即降级
+# review_node config
+_REROUTE_HARD_LIMIT = 2          # once state.reroute_count hits this, needs_retry -> forced
+_PER_UNIT_RETRY_LIMIT = 2        # once a single (agent, product)'s retry count hits this, needs_retry -> forced
+_SENTIMENT_MIN_REVIEWS = 1       # min review sample for Insight sentiment (1 is enough; below this, flagged forced)
+_REVIEW_INVOKE_ATTEMPTS = 2      # review has a code-layer fallback, so don't over-retry the LLM: 1 + 1 retry, then degrade
 
 
 def _load_system_prompt() -> str:
@@ -76,7 +77,7 @@ def _phase_prefix(phase: str) -> str:
 
 
 def _stamp_decisions(records: list[DecisionRecord], phase: PMPhase) -> list[dict]:
-    """落盘前强制覆盖 phase 字段，防 LLM 自报错值。"""
+    """Force-overwrite the phase field before persisting, in case the LLM reports it wrong."""
     out = []
     for r in records:
         d = r.model_dump()
@@ -86,7 +87,8 @@ def _stamp_decisions(records: list[DecisionRecord], phase: PMPhase) -> list[dict
 
 
 def _load_user_file(state: CCAState) -> tuple[str | None, str | None, list[dict]]:
-    """读 state.user_files 第一个文件 → (path, text, audit)。多文件 / 失败仅记 audit，不抛。"""
+    """Read the first file in state.user_files -> (path, text, audit). Multi-file / failure
+    only logs to audit, never raises."""
     files = state.get("user_files") or []
     if not files:
         return None, None, []
@@ -119,7 +121,7 @@ _PM_INVOKE_MAX_RETRIES = int(os.getenv("PM_INVOKE_MAX_RETRIES", "4"))
 
 
 def _extract_json_block(text: str) -> str:
-    """从自由文本里抠出 JSON 对象：第一个 { 到最后一个 }。"""
+    """Pull a JSON object out of free text: first { to last }."""
     start, end = text.find("{"), text.rfind("}")
     return text[start:end + 1] if start != -1 and end > start else text
 
@@ -127,12 +129,15 @@ def _extract_json_block(text: str) -> str:
 def _invoke_structured(
     output_type, phase_label: str, base_messages: list, attempts: int,
 ) -> tuple[object | None, str | None]:
-    """function_calling 自修循环。返回 (结构化结果, 末次错误)；耗尽返 (None, 末次错误)。
+    """function_calling self-repair loop. Returns (structured result, last error);
+    returns (None, last error) once attempts are exhausted.
 
-    ValidationError —— LLM 漏 required 字段：回灌错误详情让其修。
-    返 None —— LLM 没发 function_call（Doubao/Ark 偶发不兑现 forced tool_choice）：强调必须调函数。
-    OutputParserException —— Doubao 把 tool name 填成嵌套类型名（如 InitialBrief 而非
-        InitialBriefOutput），parser 查不到。重试同样翻车，直接结束结构化通道交 JSON 直出兜底。
+    ValidationError -- LLM omitted a required field: feed the error back for it to fix.
+    Returns None -- LLM didn't emit a function_call (Doubao/Ark occasionally ignores a
+        forced tool_choice): re-emphasize the function call is mandatory.
+    OutputParserException -- Doubao names the tool after the nested type (e.g. InitialBrief
+        instead of InitialBriefOutput) and the parser can't find it. Retrying hits the same
+        wall, so bail out of the structured channel straight to the JSON fallback.
     """
     llm = get_llm(PM_FAMILY).with_structured_output(output_type, method="function_calling")
     last_error: str | None = None
@@ -164,10 +169,12 @@ def _invoke_structured(
 
 
 def _invoke_json_fallback(output_type, base_messages: list):
-    """结构化通道耗尽后的换招：让模型直出 JSON，本地用 pydantic 校验。
+    """Fallback once the structured channel is exhausted: have the model emit raw JSON,
+    validated locally with pydantic.
 
-    绕开 tool_call 通道——Doubao/Ark 偶发不兑现 forced tool_choice、改用自由文本应答时
-    function_calling 恒返 None，死磕无意义。产出的仍是 LLM 真实对象，非代码层 stub。
+    Bypasses the tool_call channel -- when Doubao/Ark occasionally ignores a forced
+    tool_choice and answers in free text, function_calling always returns None, so
+    retrying there is pointless. The result is still the LLM's real output, not a stub.
     """
     schema = json.dumps(output_type.model_json_schema(), ensure_ascii=False)
     instruction = HumanMessage(content=(
@@ -184,10 +191,11 @@ def _invoke_json_fallback(output_type, base_messages: list):
 
 
 def _invoke_pm(output_type, phase_label: str, payload: dict, *, max_attempts: int | None = None):
-    """PM 统一调用：function_calling 自修，耗尽后切 JSON 直出通道再试，仍失败 → raise。
+    """Unified PM call: function_calling self-repair, then JSON fallback, then raise.
 
-    max_attempts 控制 function_calling 总尝试数（含首次）。默认 _PM_INVOKE_MAX_RETRIES；
-    有代码层兜底的节点（review）传小值快速失败、不死磕。不接 cache，保留判断灵活度。
+    max_attempts caps total function_calling tries (including the first). Defaults to
+    _PM_INVOKE_MAX_RETRIES; nodes with a code-layer fallback (review) pass a small value
+    to fail fast instead of grinding. Not cached, to keep judgment flexible.
     """
     attempts = max_attempts or _PM_INVOKE_MAX_RETRIES
     base_messages = [
@@ -211,7 +219,8 @@ def _invoke_pm(output_type, phase_label: str, payload: dict, *, max_attempts: in
 
 
 def initial_brief_node(state: CCAState) -> dict:
-    """阶段一：消化 user_query + 可选文档，产 InitialBrief + 决策档案 + 可选 DomainSeed。"""
+    """Phase 1: digest user_query + optional doc, producing InitialBrief + decision
+    records + optional DomainSeed."""
     file_path, file_text, file_audit = _load_user_file(state)
     payload: dict = {"user_query": state["user_query"]}
     if file_text is not None:
@@ -223,15 +232,16 @@ def initial_brief_node(state: CCAState) -> dict:
 
     updates: dict = {
         "initial_brief": result.initial_brief.model_dump(),
-        # 回写精炼后的 target_product，作为 phase 1 之后的单一来源：下游（Collector 探索 /
-        # 报告 / 前端摘要）统一读 state.target_product，避免「PM 精炼了 target 但报告读的还是
-        # 入口原值」的分叉。原始用户输入仍保留在 state.user_query，不丢信息。
+        # write back the refined target_product as the single source of truth after phase 1:
+        # downstream (Collector exploration / report / frontend summary) all read
+        # state.target_product, avoiding a split where PM refined the target but the report
+        # still reads the raw entry value. The original user input stays in state.user_query.
         "target_product": result.initial_brief.target_product,
         "decision_log": _stamp_decisions(result.decision_records, "initial_brief"),
     }
     if result.domain_seed is not None and file_path is not None:
         ds = result.domain_seed.model_dump()
-        ds["source_files"] = [file_path]  # 代码端强制覆盖
+        ds["source_files"] = [file_path]  # force-overwritten at the code layer
         updates["domain_seed"] = ds
         emit_sse({"type": "domain_seed",
                   "product_type_hint": ds.get("product_type_hint"),
@@ -245,7 +255,7 @@ def initial_brief_node(state: CCAState) -> dict:
 
 
 def _human_feedback_text(state: CCAState) -> str | None:
-    """state.human_review_feedback → 有实质修订时返原文，否则 None。"""
+    """state.human_review_feedback -> raw text if it has substantive revisions, else None."""
     raw = state.get("human_review_feedback")
     if not raw:
         return None
@@ -254,10 +264,10 @@ def _human_feedback_text(state: CCAState) -> str | None:
 
 
 def task_plan_node(state: CCAState) -> dict:
-    """阶段二：基于 exploration_result 产出 TaskPlan + 决策档案。
+    """Phase 2: build TaskPlan + decision records from exploration_result.
 
-    若 state.human_review_feedback 含用户修订意见（feedback 驱动的 reroute 重排），
-    把原文注入 payload，PM 据此解析分栏并调整 collect/insight 任务。
+    If state.human_review_feedback carries user revisions (a feedback-driven reroute),
+    inject the raw text into the payload so PM can parse it and adjust collect/insight tasks.
     """
     payload: dict = {
         "user_query": state["user_query"],
@@ -284,10 +294,12 @@ _FALLBACK_BUCKET = "其他"
 def _ensure_mapping_coverage(
     report_task: ReportTask, profiles: dict[str, dict],
 ) -> tuple[ReportTask, list[str]]:
-    """Phase 2 校正：dimension_canonical_map 必须覆盖 profiles 中所有 dim 名。
+    """Phase 2 fixup: dimension_canonical_map must cover every dim name in profiles.
 
-    缺漏的 dim 名自动归 _FALLBACK_BUCKET（"其他"），返新 report_task + fallback dim 名列表（供 audit）。
-    Reporter 端遇到 _FALLBACK_BUCKET 时按"补充信息"形式处理，不进主排名（见 report_agent.md）。
+    Missing dim names are auto-assigned to _FALLBACK_BUCKET; returns the updated
+    report_task + the list of fallback dim names (for audit). Reporter treats
+    _FALLBACK_BUCKET entries as supplementary info, excluded from the main ranking
+    (see report_agent.md).
     """
     all_dim_names = {
         dim.get("name") for p in profiles.values()
@@ -306,13 +318,15 @@ def _ensure_mapping_coverage(
 
 
 def report_task_node(state: CCAState) -> dict:
-    """阶段三：基于 profiles + review_state 产 ReportTask（含分析任务）+ 决策档案。
+    """Phase 3: build ReportTask (with analysis tasks) + decision records from
+    profiles + review_state.
 
-    Analyst 已并入 Reporter——ReportTask 同时携带 focus_dimensions / require_swot
-    和 sections / target_audience，Reporter ReAct 据此调内部分析工具。
+    Analyst has been folded into Reporter -- ReportTask carries both
+    focus_dimensions/require_swot and sections/target_audience, which Reporter's
+    ReAct loop uses to drive its internal analysis tools.
 
-    Phase 2：invoke 后用 _ensure_mapping_coverage 校正 dimension_canonical_map，
-    缺漏 dim 名自动归 "其他" 桶。
+    After invoke, _ensure_mapping_coverage fixes up dimension_canonical_map,
+    auto-assigning missing dim names to the fallback bucket.
     """
     profiles = state.get("profiles") or {}
     task_plan = state.get("task_plan") or {}
@@ -324,7 +338,7 @@ def report_task_node(state: CCAState) -> dict:
             "competitor_names": state.get("competitor_names", []),
             "profiles": profiles,
             "review_state": state.get("review_state", []),
-            # 让 LLM 知道 PM 阶段二定的 buckets，产 dimension_canonical_map 时优先沿用
+            # tell the LLM about the buckets PM set in phase 2 so it reuses them in dimension_canonical_map
             "tentative_buckets": task_plan.get("tentative_buckets") or [],
         },
     ))
@@ -343,19 +357,21 @@ def report_task_node(state: CCAState) -> dict:
     return updates
 
 
-# ── 阶段 2.5 人在环关卡（human_gate）─────────────────────────────────
+# ── Phase 2.5 human-in-the-loop gate (human_gate) ─────────────────────
 
 
 def _human_review_enabled() -> bool:
-    """是否启用交互式人在环（Streamlit/交互 runner 显式开启）。
+    """Whether interactive human-in-the-loop is on (explicitly enabled by Streamlit/interactive runner).
 
-    默认关闭——脚本/测试/cache-fill 等非交互路径不暂停，避免无 checkpointer 时 interrupt 崩。
+    Off by default -- non-interactive paths (scripts/tests/cache-fill) must not pause,
+    since interrupt() crashes without a checkpointer.
     """
     return os.getenv("CCA_HUMAN_REVIEW", "").lower() in ("1", "true", "on", "yes")
 
 
 def _parse_feedback(raw: object) -> HumanReviewFeedback:
-    """interrupt resume 值 → HumanReviewFeedback。容错：str 当原文，dict 走校验，空 → approved。"""
+    """interrupt resume value -> HumanReviewFeedback. Tolerant: str is raw text, dict is
+    validated, empty -> approved."""
     if not raw:
         return HumanReviewFeedback(approved=True)
     if isinstance(raw, str):
@@ -366,7 +382,8 @@ def _parse_feedback(raw: object) -> HumanReviewFeedback:
 
 
 def _profiles_digest(profiles: dict[str, dict]) -> list[dict]:
-    """给前端展示用的摘要表：每个产品一行，列维度名 / 评论数 / 抓取平台。"""
+    """Frontend-facing summary table: one row per product with dimension names /
+    review count / scraped platforms."""
     digest = []
     for name, profile in profiles.items():
         sentiment = profile.get("sentiment") or {}
@@ -383,11 +400,13 @@ def _profiles_digest(profiles: dict[str, dict]) -> list[dict]:
 
 
 def human_gate_node(state: CCAState) -> dict:
-    """阶段 2.5 前的人在环关卡：一次性收集用户对 Collector/Insight 产出的修订意见。
+    """Human-in-the-loop gate before phase 2.5: collects the user's revision feedback
+    on Collector/Insight output, once.
 
-    仅 CCA_HUMAN_REVIEW 开启时 interrupt 暂停；非交互模式直接放行。
-    human_review_done 守卫保证只暂停一次——feedback 驱动重采后第二次到达直接 pass-through。
-    守卫必须在 interrupt() 之前判断，否则第二次到达会是全新 interrupt 再度暂停。
+    Only pauses via interrupt() when CCA_HUMAN_REVIEW is on; non-interactive mode passes
+    straight through. The human_review_done guard ensures a single pause -- the second
+    arrival after a feedback-driven re-collect passes through directly. The guard must
+    be checked before interrupt(), or the second arrival would trigger a brand-new pause.
     """
     if state.get("human_review_done"):
         return {}
@@ -406,18 +425,21 @@ def human_gate_node(state: CCAState) -> dict:
     }
 
 
-# ── 阶段 2.5 Review ─────────────────────────────────────────────────
+# ── Phase 2.5 Review ────────────────────────────────────────────────
 
 
 def _check_data_completeness(
     profiles: dict[str, dict],
     task_plan: dict | None,
 ) -> dict[str, list[str]]:
-    """代码层数据完整度预检，产 pre_flags：{f"{agent}:{product}": ["data_missing: ...", ...]}。
+    """Code-layer data-completeness precheck, producing pre_flags:
+    {f"{agent}:{product}": ["data_missing: ...", ...]}.
 
-    只查客观、不依赖命名的数据质量：dimensions 有 fact / profile 有 sources / sentiment 有足够 reviews。
-    维度对齐（bucket 归并）不在此 —— 那是 Reporter 的 dimension_canonical_map 语义任务，
-    不该用字面匹配在采集后阻断重采（见 reroute / report_task）。
+    Only checks objective, naming-independent data quality: dimensions have facts /
+    profile has sources / sentiment has enough reviews. Dimension alignment (bucket
+    merging) is out of scope here -- that's Reporter's semantic dimension_canonical_map
+    job and shouldn't block a re-collect via literal matching post-collection
+    (see reroute / report_task).
     """
     flags: dict[str, list[str]] = {}
     if not task_plan:
@@ -461,7 +483,7 @@ def _check_data_completeness(
 
 
 def _compute_retry_count(review_state: list[dict], agent: str, product: str) -> int:
-    """该 (agent, product) 历史 needs_retry / forced 累计次数。"""
+    """Cumulative historical needs_retry / forced count for this (agent, product)."""
     return sum(
         1 for u in review_state
         if u.get("agent") == agent and u.get("product_name") == product
@@ -470,7 +492,7 @@ def _compute_retry_count(review_state: list[dict], agent: str, product: str) -> 
 
 
 def _enumerate_expected_units(task_plan: dict | None) -> list[tuple[str, str]]:
-    """从 task_plan 枚举本轮应产的全部 (agent, product_name) 对。"""
+    """Enumerate every (agent, product_name) pair this round should produce, from task_plan."""
     if not task_plan:
         return []
     expected: list[tuple[str, str]] = []
@@ -489,11 +511,11 @@ def _coerce_review_unit(
     retry_count: int,
     reroute_count: int,
 ) -> ReviewUnit:
-    """B 方案强约束：
-    1. pre_flags 全量并入 qa_flags（不允许 LLM 遗漏）
-    2. pre_flags 非空 → 禁止 passed
-    3. retry_count 强制覆盖为代码层值
-    4. reroute_count 或 unit retry_count 达上限 → needs_retry 升 forced
+    """Plan-B hard constraints:
+    1. all pre_flags get merged into qa_flags (the LLM can't drop any)
+    2. non-empty pre_flags -> passed is disallowed
+    3. retry_count is force-overwritten with the code-layer value
+    4. reroute_count or unit retry_count at the limit -> needs_retry escalates to forced
     """
     merged_flags = list(unit.qa_flags)
     for pf in pre_flags:
@@ -524,9 +546,10 @@ def _now_iso() -> str:
 
 
 def _build_retry_signal(unit: ReviewUnit) -> dict:
-    """needs_retry ReviewUnit → AgentSignal(data_gap) → 直接回 phase_2 重排（跳过 reroute LLM）。
+    """needs_retry ReviewUnit -> AgentSignal(data_gap) -> straight back to phase_2 (skips the reroute LLM).
 
-    review 预检已知根因恒为 phase_2，reroute_phase 直填，handle_signal 不再调 LLM 诊断。
+    review's precheck always knows the root cause is phase_2, so reroute_phase is
+    filled in directly and handle_signal skips the LLM diagnosis call.
     """
     return AgentSignal(
         from_agent=unit.agent,
@@ -544,13 +567,13 @@ def _build_retry_signal(unit: ReviewUnit) -> dict:
 
 
 def review_node(state: CCAState) -> dict:
-    """阶段 2.5：评审 Collector + Insight 并发产出。
+    """Phase 2.5: review Collector + Insight's concurrent output.
 
-    流程：
-    1. 代码层 _check_data_completeness → pre_flags
-    2. LLM ReviewOutput 评审（含 pre_flags + retry_counts + profiles 上下文）
-    3. B 方案 post-check：pre_flags 非空禁 passed；retry 上限自动升 forced
-    4. needs_retry 单元 → AgentSignal(data_gap) → 下一节点 handle_signal 走 reroute
+    Flow:
+    1. code-layer _check_data_completeness -> pre_flags
+    2. LLM ReviewOutput review (with pre_flags + retry_counts + profiles context)
+    3. Plan-B post-check: non-empty pre_flags disallows passed; retry limit auto-escalates to forced
+    4. needs_retry units -> AgentSignal(data_gap) -> next node (handle_signal) reroutes
     """
     profiles = state.get("profiles") or {}
     task_plan = state.get("task_plan")
@@ -564,7 +587,7 @@ def review_node(state: CCAState) -> dict:
         for agent, product in expected
     }
 
-    # 用户一次性修订意见：仅在未消费时参与本轮判定，采纳后置 consumed=True 不再复用
+    # user's one-shot revision feedback: only counts this round if unconsumed; marked consumed=True after
     feedback_text = _human_feedback_text(state)
     use_feedback = bool(feedback_text) and not state.get("human_feedback_consumed")
 
@@ -580,8 +603,9 @@ def review_node(state: CCAState) -> dict:
     }
     if use_feedback:
         payload["human_review_feedback"] = feedback_text
-    # review 有完整代码层兜底（pre_flags 足以独立判 passed/needs_retry），
-    # 所以 LLM 不死磕：少量重试，连续失败即降级为纯代码层判定，绝不让 Doubao 抽风崩掉整条流程。
+    # review has a full code-layer fallback (pre_flags alone can decide passed/needs_retry),
+    # so the LLM isn't over-retried: a few attempts, then degrade to pure code-layer judgment
+    # rather than let a flaky Doubao call take down the whole pipeline.
     try:
         result = cast(ReviewOutput, _invoke_pm(
             ReviewOutput, "阶段 2.5 Review", payload, max_attempts=_REVIEW_INVOKE_ATTEMPTS,
@@ -600,7 +624,7 @@ def review_node(state: CCAState) -> dict:
         )]
         llm_degraded = True
 
-    # 索引 LLM 输出，按 (agent, product) 校正；缺失的 expected unit 用代码层兜底产 ReviewUnit
+    # index LLM output by (agent, product) and coerce; missing expected units get a code-layer fallback ReviewUnit
     coerced: list[ReviewUnit] = []
     for agent, product in expected:
         key = f"{agent}:{product}"
@@ -609,7 +633,7 @@ def review_node(state: CCAState) -> dict:
         if (agent, product) in llm_index:
             coerced.append(_coerce_review_unit(llm_index[(agent, product)], pre, rc, reroute_count))
         else:
-            # LLM 漏审 → 代码层兜底；存在 pre_flag 时按上限规则定 status
+            # LLM missed this unit -> code-layer fallback; status decided by the limit rules if pre_flags exist
             status = "passed" if not pre else (
                 "forced" if rc >= _PER_UNIT_RETRY_LIMIT or reroute_count >= _REROUTE_HARD_LIMIT
                 else "needs_retry"
@@ -641,7 +665,8 @@ def review_node(state: CCAState) -> dict:
             "used_human_feedback": use_feedback,
         }],
     }
-    # feedback 一旦参与本轮判定即标消费：后续轮次回归纯数据评审，避免同段意见反复触发返工
+    # once feedback influences this round's judgment, mark it consumed: later rounds go
+    # back to pure data review so the same feedback doesn't keep re-triggering retries
     if use_feedback:
         updates["human_feedback_consumed"] = True
     emit_sse({"type": "review_update", "units": [u.model_dump() for u in coerced]})
@@ -649,11 +674,11 @@ def review_node(state: CCAState) -> dict:
     return updates
 
 
-# ── 信号处理：debate（主观）+ reroute（事实性） ──────────────────────
+# ── Signal handling: debate (subjective) + reroute (factual) ─────────
 
 
 def _read_defense(target: str, state: CCAState) -> DebatePosition:
-    """从 decision_log 同 phase 决策聚合 PM 的辩护立场，零 LLM 调用。"""
+    """Aggregate PM's defense position from same-phase decisions in decision_log, no LLM call."""
     log = state.get("decision_log") or []
     relevant = [d for d in log if d.get("phase") == target]
     if not relevant:
@@ -684,7 +709,7 @@ def _read_defense(target: str, state: CCAState) -> DebatePosition:
 
 
 def _apply_debate_result(result: DebateResult) -> dict:
-    """debate 结果 → state 更新：rejected 清空 task；revision 写回；accepted 仅记账。"""
+    """debate result -> state update: rejected clears the task; revision writes back; accepted just logs."""
     updates: dict = {
         "debate_results": [result.model_dump()],
         "audit_log": [{
@@ -707,7 +732,8 @@ def _apply_debate_result(result: DebateResult) -> dict:
 
 
 def _handle_debate_signal(signal: AgentSignal, state: CCAState) -> dict:
-    """主观信号 → 跨家族 debate。单 key 模式（cross_family 关闭）跳过，保留原输出。"""
+    """Subjective signal -> cross-family debate. Skipped in single-key mode (cross_family off),
+    keeping the original output."""
     if not cross_family_enabled():
         return {"audit_log": [{
             "agent": "pm", "event": "cross_family_review_skipped",
@@ -735,16 +761,17 @@ _REROUTE_CONTEXT_KEYS = (
 
 
 def _build_reroute_context(state: CCAState) -> str:
-    """提供 reroute 根因分析所需的最小 state 切片——剔除 profiles / log 等大对象。"""
+    """Minimal state slice needed for reroute's root-cause analysis -- excludes big objects like profiles/logs."""
     slice_ = {k: state.get(k) for k in _REROUTE_CONTEXT_KEYS}
     return json.dumps(slice_, ensure_ascii=False, default=str)
 
 
 def _handle_reroute_signal(signal: AgentSignal, state: CCAState) -> dict:
-    """事实性信号 → 阶段回溯。
+    """Factual signal -> phase rollback.
 
-    signal.reroute_phase 非空（review 预检 data_gap）→ 直接回该阶段，跳过 LLM 诊断；
-    否则（如 Collector request_product_replacement，phase_1/2 有歧义）→ reroute LLM 诊断。
+    If signal.reroute_phase is set (review's precheck data_gap) -> go straight back
+    to that phase, skipping the LLM diagnosis; otherwise (e.g. Collector's
+    request_product_replacement, ambiguous between phase_1/2) -> ask the reroute LLM.
     """
     if signal.reroute_phase:
         return apply_reroute_phase(signal.reroute_phase)
@@ -752,7 +779,7 @@ def _handle_reroute_signal(signal: AgentSignal, state: CCAState) -> dict:
 
 
 def _phase_from_partial(partial: dict) -> str:
-    """推断 reroute 回溯的目标阶段（从被清空的字段反推）。"""
+    """Infer reroute's target phase by working backward from which field got cleared."""
     if "exploration_result" in partial:
         return "phase_1"
     if "task_plan" in partial:
@@ -763,10 +790,11 @@ def _phase_from_partial(partial: dict) -> str:
 
 
 def handle_signal_node(state: CCAState) -> dict:
-    """处理下游 AgentSignal。
+    """Handle downstream AgentSignals.
 
-    去重：state.consumed_signal_ids 中的信号本次跳过；新处理的 signal_id 累加回写。
-    顺序：reroute 先（清脏数据）→ debate 后（基于干净状态裁决）。
+    Dedup: signals already in state.consumed_signal_ids are skipped this round;
+    newly-handled signal_ids are appended back.
+    Order: reroute first (clears bad data) -> debate after (judges on clean state).
     """
     raw = state.get("agent_signals") or []
     if not raw:
@@ -783,8 +811,9 @@ def handle_signal_node(state: CCAState) -> dict:
 
     debate_results, audit_log = [], []
     scalar_updates: dict = {}
-    # reroute_count 每轮 handle_signal_node 最多 +1（一次循环 = 一次 reroute 周期）：
-    # 防止一批 5 个 signal 同时触发 reroute 把 reroute_count 直接跳到 5 绕过 HARD_LIMIT=2。
+    # reroute_count increments by at most 1 per handle_signal_node call (one loop = one
+    # reroute cycle): stops a batch of 5 signals all triggering reroute at once from
+    # jumping reroute_count straight to 5 and bypassing HARD_LIMIT=2.
     did_reroute = False
     new_reroute_count = (state.get("reroute_count") or 0) + 1
     for sig in ordered:

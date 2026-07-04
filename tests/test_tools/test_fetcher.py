@@ -1,6 +1,6 @@
-"""测试 fetch_url 工具 —— monkeypatch httpx + trafilatura + robotparser，不调真网络。
+"""Tests for the fetch_url tool -- monkeypatches httpx + trafilatura + robotparser, no real network calls.
 
-覆盖 5 个分支：robots 禁止 / HTTP 错误 / 抽取失败 / 成功 / 非法 URL。
+Covers 5 branches: robots disallow / HTTP error / extraction failure / success / invalid URL.
 """
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ from cca.tools.fetcher import fetch_url
 
 @pytest.fixture(autouse=True)
 def _clear_robots_cache() -> None:
-    """每个测试前清 lru_cache，避免跨测试污染。"""
+    """Clear the lru_cache before every test, to avoid cross-test contamination."""
     fetcher._load_robots.cache_clear()
 
 
 def _patch_robots_allow_all(monkeypatch: pytest.MonkeyPatch) -> None:
-    """robotparser 永远返回 allowed。"""
+    """robotparser always returns allowed."""
     mock_rp = MagicMock()
     mock_rp.can_fetch.return_value = True
     monkeypatch.setattr(fetcher, "_load_robots", lambda _url: mock_rp)
@@ -44,7 +44,7 @@ def test_fetch_url_robots_denied_returns_error(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_fetch_url_invalid_url_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """缺少 scheme/netloc 的 URL 直接拒掉，不走 HTTP。"""
+    """A URL missing scheme/netloc is rejected directly, never reaching HTTP."""
     result = fetch_url.invoke({"url": "not-a-url"})
 
     assert "error" in result
@@ -66,7 +66,7 @@ def test_fetch_url_http_error_returns_error(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_fetch_url_extract_returns_none_means_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """trafilatura 抽不出正文（SPA / 纯图片）→ 返回 error。"""
+    """trafilatura can't extract a body (SPA/image-only page) -> returns an error."""
     _patch_robots_allow_all(monkeypatch)
     mock_response = MagicMock()
     mock_response.text = "<html><body><script>app()</script></body></html>"
@@ -102,16 +102,16 @@ def test_fetch_url_success_returns_snippets_and_metadata(
     assert "error" not in result
     assert result["url"] == "https://feishu.cn/pricing"
     assert result["title"] == "飞书定价"
-    # 整页正文（_smart_truncate 后）原样进 snippets 单条，无蒸馏
+    # the full page body (after _smart_truncate) goes into snippets as a single entry, unmodified
     assert result["snippets"] == ["Pro 30元/月"]
-    assert "text" not in result  # 仍只留 snippets 字段，不暴露 text
+    assert "text" not in result  # only the snippets field is kept, text is never exposed
     assert "fetched_at" in result
 
 
 def test_robots_check_allows_when_robots_unreadable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """robots.txt 读不到（404 / DNS fail）时保守视为允许，跟随业界惯例。"""
+    """When robots.txt is unreadable (404/DNS failure), conservatively treat it as allowed, following industry convention."""
     monkeypatch.setattr(fetcher, "_load_robots", lambda _url: None)
 
     err = fetcher._robots_check("https://nodejs.example.com/page")

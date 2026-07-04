@@ -1,6 +1,7 @@
 """
-竞品分析系统数据模型
-通用骨架不硬编码行业字段；维度由 Agent 运行时发现；每条结论必须绑定证据。
+Competitive analysis system data models.
+Generic skeleton -- no hardcoded industry fields; dimensions are discovered by
+agents at runtime; every conclusion must be tied to evidence.
 """
 
 from __future__ import annotations
@@ -13,63 +14,67 @@ from pydantic import BaseModel, Field, field_validator
 
 
 def _now_iso() -> str:
-    """当前时刻 ISO 8601 UTC 时间戳，供 default_factory 用。"""
+    """Current ISO 8601 UTC timestamp, for default_factory."""
     return datetime.now(UTC).isoformat()
 
-# 三家族标识，用于 debate 类型约束
+# the three model families, used to constrain debate typing
 AgentFamily = Literal["gpt-5", "deepseek", "doubao"]
 
 
 class Evidence(BaseModel):
-    """单条证据：来源 URL + 支撑该结论的原文片段。"""
+    """A single piece of evidence: source URL + the original snippet backing the claim."""
 
     source_url: str
-    snippet: str | None = Field(None, description="来源页面中支撑该结论的原文摘录")
+    snippet: str | None = Field(None, description="Original excerpt from the source page backing this claim")
     fetched_at: str = Field(
         default_factory=_now_iso,
-        description="ISO 8601 时间戳，默认填写当前时刻",
+        description="ISO 8601 timestamp, defaults to the current time",
     )
 
 
 class Fact(BaseModel):
-    """可验证的客观陈述，必须绑定至少一条证据。"""
+    """A verifiable objective statement; must be backed by at least one piece of evidence."""
 
-    statement: str = Field(description="客观事实陈述，不含主观判断，如'飞书视频会议最大支持300人'")
+    statement: str = Field(description="An objective statement with no subjective judgment, e.g. 'Feishu video calls support up to 300 participants'")
     evidence: list[Evidence] = Field(min_length=1)
 
 
 class Dimension(BaseModel):
     """
-    单个分析维度，由 domain_seed_node 蒸馏（用户上传文档）或 Collector 联网发现。
-    category 为开放字符串，典型值：'功能' / '定价' / '用户口碑' / '生态' / '市场定位' / '技术架构'。
+    A single analysis dimension, distilled by domain_seed_node (from a user-uploaded
+    doc) or discovered online by Collector.
+    category is an open string, typical values: 'features' / 'pricing' / 'user
+    sentiment' / 'ecosystem' / 'market position' / 'tech architecture'.
     """
 
-    name: str = Field(description="维度名称，如'视频会议人数上限'、'移动端离线能力'")
-    category: str = ""  # 采集期放松：开放分类、模型常漏，缺失不该毁掉整个维度
+    name: str = Field(description="Dimension name, e.g. 'max video call participants', 'mobile offline support'")
+    category: str = ""  # relaxed during collection: open classification the model often misses; a missing value shouldn't kill the whole dimension
     facts: list[Fact] = Field(default_factory=list)
     cross_product_note: str | None = Field(
         None,
-        description="跨产品的事实性对比结论，必须基于 facts 中的数据推导，不引入主观判断",
+        description="A factual cross-product comparison conclusion, must be derived from the data in facts, no subjective judgment",
     )
 
 
 class PricingTier(BaseModel):
-    """单个定价档位，数据来自官网或公开定价页。
+    """A single pricing tier, sourced from the official site or a public pricing page.
 
-    采集期宽松：无价格数字的档位也允许（报告边界再决定是否纳入成本对比）。
+    Relaxed during collection: tiers with no price number are allowed too (the report
+    stage decides whether to include them in cost comparisons).
     """
 
     name: str
     price_per_user_monthly: float | None = None
     price_per_user_yearly: float | None = None
-    currency: str | None = Field(None, description="ISO 4217 货币代码，如 'CNY'、'USD'、'EUR'")
-    user_limit: int | None = Field(None, description="None 表示不限人数")
+    currency: str | None = Field(None, description="ISO 4217 currency code, e.g. 'CNY', 'USD', 'EUR'")
+    user_limit: int | None = Field(None, description="None means unlimited users")
     included_features: list[str] = Field(default_factory=list)
     source: Evidence | None = None
 
 
 class PricingInfo(BaseModel):
-    """产品完整定价结构。采集期放松：has_free_tier 可缺省，非法 pricing_model 归 unknown。"""
+    """A product's full pricing structure. Relaxed during collection: has_free_tier
+    can be omitted, invalid pricing_model falls back to unknown."""
 
     has_free_tier: bool | None = None
     pricing_model: Literal["per_user", "per_team", "custom", "unknown"] = "unknown"
@@ -78,62 +83,64 @@ class PricingInfo(BaseModel):
     @field_validator("pricing_model", mode="before")
     @classmethod
     def _coerce_unknown_model(cls, v: object) -> object:
-        """模型常给枚举外的值；归一到 unknown，不让单字段毁掉整段 pricing。"""
+        """The model often returns values outside the enum; normalize to unknown so
+        one bad field doesn't ruin the whole pricing block."""
         return v if v in {"per_user", "per_team", "custom", "unknown"} else "unknown"
 
 
 class ReviewSample(BaseModel):
-    """单条用户评论原文。"""
+    """The raw text of a single user review."""
 
     text: str
     rating: int | None = Field(None, ge=1, le=5)
     platform: str = Field(
         default="other",
         description=(
-            "评论来源平台，开放字符串：不预设产品领域。"
-            "App 'appstore_cn'/'appstore_us'，社交 'zhihu'/'weibo'，电商 'tmall'/'jd'/'amazon'，"
-            "垂类/专业测评站或任意自定义来源名；未知填 'other'"
+            "The review's source platform, an open string with no assumed product "
+            "domain. Apps: 'appstore_cn'/'appstore_us'; social: 'zhihu'/'weibo'; "
+            "e-commerce: 'tmall'/'jd'/'amazon'; a niche/specialist review site or any "
+            "custom source name; use 'other' if unknown"
         ),
     )
     source: Evidence | None = None
 
 
 class UserSentiment(BaseModel):
-    """用户口碑聚合，全部数据须来自公开渠道的客观抓取。"""
+    """Aggregated user sentiment; all data must come from objective scraping of public channels."""
 
     aggregate_rating: float | None = Field(
         None, ge=1, le=5,
-        description="渠道聚合评分，统一归一到 1–5（App Store 评分 / 电商星级 / 垂类评分皆可）",
+        description="Channel-aggregated rating, normalized to 1-5 (App Store rating / e-commerce stars / niche-site rating all fit)",
     )
-    rating_review_count: int | None = Field(None, description="评分对应的评论/打分样本量")
+    rating_review_count: int | None = Field(None, description="Sample size (review/rating count) behind the rating")
     rating_source: str | None = Field(
         None,
-        description="评分来源渠道，开放字符串，如 'appstore_cn' / 'tmall' / 'jd' / 'amazon' / 'fragrantica'",
+        description="The rating's source channel, an open string, e.g. 'appstore_cn' / 'tmall' / 'jd' / 'amazon' / 'fragrantica'",
     )
     positive_themes: list[str] = Field(
         default_factory=list,
-        description="用户好评的主题归纳，由 LLM 直接研判正面评论后归纳",
+        description="Themes distilled from positive reviews, judged and summarized directly by the LLM",
     )
     negative_themes: list[str] = Field(
         default_factory=list,
-        description="用户槽点的主题归纳，由 LLM 直接研判负面评论后归纳",
+        description="Themes distilled from negative reviews (complaints), judged and summarized directly by the LLM",
     )
     representative_reviews: list[ReviewSample] = Field(default_factory=list)
     sources: list[Evidence] = Field(default_factory=list)
 
 
 class SWOTPoint(BaseModel):
-    """单条 SWOT 观点，必须关联支撑它的事实陈述。"""
+    """A single SWOT point; must reference the fact statements that support it."""
 
     point: str
     supporting_fact_statements: list[str] = Field(
         min_length=1,
-        description="引用 Dimension.facts 中 statement 原文，确保可溯源",
+        description="Quotes the original statement text from Dimension.facts, to keep it traceable",
     )
 
 
 class SWOT(BaseModel):
-    """SWOT 四象限：每个象限是 SWOTPoint 列表。"""
+    """The four SWOT quadrants; each is a list of SWOTPoint."""
 
     strengths: list[SWOTPoint]
     weaknesses: list[SWOTPoint]
@@ -143,52 +150,52 @@ class SWOT(BaseModel):
 
 class ProductProfile(BaseModel):
     """
-    单个产品的竞品分析档案，适用于任意产品领域。
-    填写时序：
-        1. PM 起草：product_name 必填；company 可选 hint
-        2. Collector 联网验证 + 填实：product_type / target_users / dimensions / pricing / sources / website
-           Collector 可挑战 PM 的 hint，通过 debate 修正
-        3. Insight 填：sentiment
-        4. PM debate-review 填：qa_flags / data_confidence
+    A single product's competitive-analysis profile, generic across any product domain.
+    Fill order:
+        1. PM drafts: product_name required; company is an optional hint
+        2. Collector verifies online + fills in: product_type / target_users /
+           dimensions / pricing / sources / website (may challenge PM's hint via debate)
+        3. Insight fills: sentiment
+        4. PM's debate-review fills: qa_flags / data_confidence
 
-    SWOT 不再是 profile owner 字段 —— Reporter 在生成报告时通过工具产出，直接写入 MD，
-    不回写到 state.profiles。
+    SWOT is no longer an owned profile field -- Reporter produces it via a tool at
+    report time and writes it straight into the MD, never back into state.profiles.
     """
 
-    # PM Agent 起草（凭训练知识；company 是 hint，Collector 可挑战）
+    # drafted by PM Agent (from training knowledge; company is a hint Collector may challenge)
     product_name: str
-    company: str | None = Field(None, description="PM 训练知识 seed，Collector 联网验证")
+    company: str | None = Field(None, description="A seed from PM's training knowledge, verified online by Collector")
 
-    # Collector Agent 联网验证 + 填实
-    product_type: str | None = Field(None, description="Collector 联网推断，PM debate 收敛")
-    target_users: str | None = Field(None, description="目标用户，来自官网原文")
-    website: str | None = Field(None, description="官网 URL，Collector 联网查找")
+    # verified and filled in online by Collector Agent
+    product_type: str | None = Field(None, description="Inferred online by Collector, converged via PM debate")
+    target_users: str | None = Field(None, description="Target users, taken verbatim from the official site")
+    website: str | None = Field(None, description="Official site URL, found online by Collector")
     dimensions: list[Dimension] = Field(default_factory=list)
     pricing: PricingInfo | None = None
     sources: list[Evidence] = Field(default_factory=list)
 
-    # Insight Agent 填写
+    # filled by Insight Agent
     sentiment: UserSentiment | None = None
     key_events: list[Fact] = Field(
         default_factory=list,
-        description="关键事件与经营矛盾/利益冲突语料，客观陈述+证据；因果定性交 Report",
+        description="Material events and business conflicts/interest disputes -- objective statement + evidence; causal interpretation is left to Report",
     )
 
-    # PM debate-review 填写
+    # filled by PM's debate-review
     qa_flags: list[str] = Field(
         default_factory=list,
-        description="未通过的校验项描述，如'定价信息与原始数据不一致'",
+        description="Description of a failed check, e.g. 'pricing info inconsistent with raw data'",
     )
     data_confidence: float | None = Field(
         None,
         ge=0,
         le=1,
-        description="PM 评定的整体数据可信度",
+        description="PM's overall data-confidence rating",
     )
 
 
 class QAResult(BaseModel):
-    """QA Agent 对单个产品档案的校验结论。"""
+    """QA Agent's verdict on a single product profile."""
 
     product_name: str
     passed: bool
@@ -197,21 +204,22 @@ class QAResult(BaseModel):
     note: str | None = None
 
 
-# PM 一轮下发 Collector 的初版分析简报，指导 Collector 的联网探索；Collector 可接受也可挑战
+# PM's first-round brief handed to Collector, guiding its web exploration; Collector may accept or challenge it
 class InitialBrief(BaseModel):
     """
-    PM 拿到用户输入后起草的初版分析简报，指导 Collector一轮输出。
+    PM's first-draft analysis brief after receiving user input, guiding Collector's
+    first-round output.
     """
 
     target_product: str
     company_hint: str | None = Field(
-        None, description="PM 凭训练知识给的公司 seed，Collector 可挑战"
+        None, description="A company seed from PM's training knowledge; Collector may challenge it"
     )
-    user_query: str = Field(description="原始用户输入，给collector理解意图")
+    user_query: str = Field(description="The raw user input, for Collector to understand intent")
 
 
 class ProductBrief(BaseModel):
-    """Collector 第一轮粗探索产出的最小竞品档案。"""
+    """The minimal competitor profile produced by Collector's first-round rough exploration."""
 
     product_name: str
     company: str | None = None
@@ -221,407 +229,432 @@ class ProductBrief(BaseModel):
 
 class CollectorExplorationResult(BaseModel):
     """
-    Collector 第一轮 ReAct 联网探索的产出。
-    经 PM debate 收敛后写回 state，作为 PM 阶段二 TaskPlan 的输入。
+    Output of Collector's first ReAct round of web exploration.
+    Written back to state after converging via PM debate, feeding PM phase 2's TaskPlan.
     """
 
     target_product: str
-    product_type: str = Field(description="Collector 联网推断的产品赛道")
-    competitor_names: list[str] = Field(description="Collector 联网发现的主要竞品")
-    discovered_dimensions: list[str] = Field(description="Collector 联网总结的对比维度候选")
+    product_type: str = Field(description="Product category inferred online by Collector")
+    competitor_names: list[str] = Field(description="Main competitors discovered online by Collector")
+    discovered_dimensions: list[str] = Field(description="Comparison dimension candidates summarized online by Collector")
     initial_profiles: list[ProductBrief] = Field(
-        description="一轮输出，包括product_name，company，website，product_type"
+        description="First-round output, including product_name, company, website, product_type"
     )
     rationale: str | None = None
 
 
-# PM 二轮下发 Collector/Insight 的任务细化，指导下一轮产出；Collector/Insight 可接受也可挑战
+# PM's second-round task refinement handed to Collector/Insight, guiding the next round's output; they may accept or challenge it
 class CollectTask(BaseModel):
-    """PM 分配给 Collector 的单项采集任务。"""
+    """A single collection task PM assigns to Collector."""
 
     product_name: str
     priority_dimensions: list[str] = Field(
         default_factory=list,
-        description="PM 根据产品类型和 DomainPack 确定的重点维度；为空则由 Collector 自主判断",
+        description="Priority dimensions PM determined from product type and DomainPack; empty means Collector decides on its own",
     )
     allow_self_extension: bool = Field(
         True,
-        description="Collector 可否自主追加搜索/抓取",
+        description="Whether Collector may add its own extra searches/fetches",
     )
 
 
 class InsightTask(BaseModel):
-    """PM 分配给 Insight 的单项分析任务。"""
+    """A single analysis task PM assigns to Insight."""
 
     product_name: str
     target_platforms: list[str] = Field(
         default_factory=list,
         description=(
-            "PM 给的数据源 hint，开放字符串（App Store / 电商 / 垂类社区 / 任意来源名），"
-            "不预设产品领域；Insight 可拒绝 / 扩展 / 替换；为空则由 Insight 自主决定"
+            "A data-source hint from PM, an open string (App Store / e-commerce / "
+            "niche community / any source name), no assumed product domain; Insight "
+            "may reject/extend/replace it; empty means Insight decides on its own"
         ),
     )
     priority_dimensions: list[str] = Field(
         default_factory=list,
-        description="PM 根据产品类型和 DomainPack 确定的重点维度；为空则由 Insight 自主判断",
+        description="Priority dimensions PM determined from product type and DomainPack; empty means Insight decides on its own",
     )
     allow_self_extension: bool = Field(
         True,
-        description="Insight 可否自主追加平台/主题",
+        description="Whether Insight may add its own extra platforms/themes",
     )
 
 
 class TaskPlan(BaseModel):
     """
-    PM 阶段二：基于 CollectorExplorationResult 给 Collector 和 Insight 下发的细粒度任务包
+    PM phase 2: the fine-grained task package handed to Collector and Insight,
+    built from CollectorExplorationResult.
     """
 
     target_product: str
-    product_type: str = Field(description="一轮 debate 收敛后的权威产品类型")
-    competitor_names: list[str] = Field(description="一轮debate 收敛后的权威竞品列表")
+    product_type: str = Field(description="Authoritative product type after this round's debate converges")
+    competitor_names: list[str] = Field(description="Authoritative competitor list after this round's debate converges")
     collect_tasks: list[CollectTask]
     insight_tasks: list[InsightTask]
     tentative_buckets: list[str] = Field(
         default_factory=list,
         max_length=8,
         description=(
-            "PM 预设的 canonical bucket 列表，≤8，作为 Collector/Insight 采集时的软引导，"
-            "并供 Reporter 阶段 dimension_canonical_map 语义对齐时优先沿用。"
-            "非强制：维度对齐由 Reporter 语义归并负责，采集不被 bucket 命名绑架。"
+            "PM's preset list of canonical buckets (<=8), a soft guide for Collector/"
+            "Insight during collection, and reused as a preference by Reporter's "
+            "dimension_canonical_map semantic alignment step. Not enforced: dimension "
+            "alignment is Reporter's semantic-merge job, so collection isn't held "
+            "hostage to bucket naming."
         ),
     )
 
 
-# PM 三轮下发 Report 的分析 + 撰写任务。原 AnalystTask 字段（focus_dimensions /
-# require_swot / cross_product_comparison_required）已合并进此处——Reporter ReAct
-# 同时承担横向排序、SWOT 分析与正文撰写。
+# PM's third-round analysis + writing task handed to Report. The old AnalystTask
+# fields (focus_dimensions / require_swot / cross_product_comparison_required) have
+# been merged in here -- Reporter's ReAct loop now handles ranking, SWOT analysis,
+# and writing the body all at once.
 class ReportTask(BaseModel):
-    """PM 阶段三：Collector+Insight QA 通过后下发的分析 + 报告任务。"""
+    """PM phase 3: the analysis + report task handed down once Collector+Insight pass QA."""
 
-    target_product: str = Field(description="目标分析产品")
-    competitors: list[str] = Field(description="竞品名称列表")
+    target_product: str = Field(description="The product being analyzed")
+    competitors: list[str] = Field(description="List of competitor names")
     product_names: list[str] = Field(
         default_factory=list,
         description=(
-            "参与对比的产品名，通常 = [target_product] + competitors。"
-            "用于 dimension_ranking / SWOT 工具确定覆盖范围；为空时由 Reporter 自行推断"
+            "Product names included in the comparison, usually = [target_product] + "
+            "competitors. Used by the dimension_ranking / SWOT tools to determine "
+            "coverage; if empty, Reporter infers it"
         ),
     )
     focus_dimensions: list[str] = Field(
         default_factory=list,
         description=(
-            "PM 指定的高亮对比维度。Reporter 据此决定 submit_dimension_ranking 覆盖哪些维度；"
-            "为空时由 Reporter 自主判断"
+            "Dimensions PM wants highlighted. Reporter uses this to decide which "
+            "dimensions submit_dimension_ranking covers; if empty, Reporter decides on its own"
         ),
     )
     require_swot: bool = Field(
         True,
-        description="是否要求 Reporter 调 finalize_swot 工具产 SWOT 段落",
+        description="Whether Reporter must call finalize_swot to produce the SWOT section",
     )
     cross_product_comparison_required: bool = Field(
         True,
-        description="是否要求生成跨竞品横向对比章节",
+        description="Whether a cross-product comparison section is required",
     )
     output_formats: list[Literal["markdown", "pdf"]] = Field(
         default_factory=lambda: ["markdown", "pdf"],
     )
     target_audience: str | None = Field(
         None,
-        description="读者类型，如'产品负责人'、'技术评审'，影响 Reporter 语气",
+        description="Reader type, e.g. 'product lead', 'technical reviewer' -- affects Reporter's tone",
     )
     sections: list[str] = Field(
         default_factory=list,
-        description="报告应含章节；为空则由 Reporter 自主组织",
+        description="Sections the report should include; if empty, Reporter organizes it on its own",
     )
     invoke_call_report_reviewer: bool = Field(
         True,
-        description="是否调用 call_report_reviewer skill（Doubao 终审）；默认开启，始终执行且只执行一次",
+        description="Whether to call the call_report_reviewer skill (Doubao final review); on by default, always runs exactly once",
     )
     dimension_canonical_map: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "profiles[*].dimensions[*].name → canonical bucket 的映射。PM 阶段三基于真实采集到的 "
-            "dim 名产出；代码层校验覆盖率 100%，缺漏自动归 '其他' 桶。Reporter 据此按 bucket 横向排名。"
+            "Maps profiles[*].dimensions[*].name -> canonical bucket. Produced by PM "
+            "phase 3 from the actually-collected dim names; the code layer enforces "
+            "100% coverage, auto-assigning any gaps to the fallback bucket. Reporter "
+            "ranks by bucket using this map."
         ),
     )
 
 
-# review 结果：PM 对 Collector/Insight 产出的评审结论，包含返工建议和 QA 结果；用于 PM 自身记录和后续分析，也可供用户查询了解 PM 的评审逻辑
+# Review result: PM's verdict on Collector/Insight output, including rework
+# suggestions and QA results; used for PM's own record-keeping and later analysis,
+# and can be queried by users to understand PM's review logic
 ReviewStatus = Literal["passed", "needs_retry", "forced"]
 
 
 class ReviewUnit(BaseModel):
     """
-    PM 对某次 (agent, product) 产出的评审判定。
-    PM 在 Collector+Insight 并行完成后统一评审一轮；needs_retry 触发返工，
-    返工完毕 PM 再次评审 append 新 ReviewUnit；retry_count > 2 时标 forced。
+    PM's review verdict on one (agent, product) round's output.
+    PM reviews once Collector+Insight finish a parallel round; needs_retry triggers
+    rework, after which PM reviews again and appends a new ReviewUnit; retry_count > 2
+    is marked forced.
     """
 
     agent: Literal["collector", "insight"]
     product_name: str
     status: ReviewStatus
-    retry_count: int = Field(description="本次评审前该 (agent, product) 已发生的返工次数")
+    retry_count: int = Field(description="How many reworks this (agent, product) had before this review")
     qa_flags: list[str] = Field(
         default_factory=list,
-        description="未通过的校验项描述，如'定价信息与原始数据不一致'",
+        description="Description of a failed check, e.g. 'pricing info inconsistent with raw data'",
     )
     pm_note: str | None = None
-    reviewed_at: str | None = Field(None, description="ISO 8601 时间戳")
+    reviewed_at: str | None = Field(None, description="ISO 8601 timestamp")
 
 
 class HumanReviewFeedback(BaseModel):
-    """用户在 phase 2.5 对 Collector/Insight 产出的一次性自由文本修订意见。
+    """The user's one-shot free-text revision feedback on Collector/Insight output at phase 2.5.
 
-    前端只给一个文本框（降低认知成本），不预分类——分栏（哪些针对采集、
-    哪些针对情感分析、哪些是竞品增删）由 PM 在 review / 重排时自行解析。
+    The frontend offers a single text box (to keep cognitive load low) with no
+    pre-classification -- splitting it out (which parts target collection, which
+    target sentiment analysis, which are competitor add/remove requests) is left to
+    PM to parse during review/re-routing.
     """
 
-    raw_feedback: str | None = Field(None, description="用户原文修订意见，不预分类")
-    approved: bool = Field(False, description="True = 无修订，直接放行")
+    raw_feedback: str | None = Field(None, description="The user's raw revision text, unclassified")
+    approved: bool = Field(False, description="True = no revisions, pass straight through")
 
     def has_revisions(self) -> bool:
-        """是否有需 PM 采纳的实质修订（approved 直接放行不算）。"""
+        """Whether there's a substantive revision for PM to adopt (approved passing
+        through doesn't count)."""
         return not self.approved and bool(self.raw_feedback and self.raw_feedback.strip())
 
 
-# 决策档案：PM 每阶段产出 task 时同步落盘"为什么这么决定"，
-# 支撑离线 Q&A（用户问"为什么选这几家竞品"）+ debate defense（PM 应辩时回读 rationale）
+# Decision record: whenever PM produces a task at each phase, it also persists "why
+# this decision was made", backing offline Q&A (user asks "why these competitors?")
+# and debate defense (PM reads its own rationale back when defending)
 
 
 class DecisionAlternative(BaseModel):
-    """考虑过但被拒绝的备选项。"""
+    """An option that was considered but rejected."""
 
-    option: str = Field(description="备选项内容，如'腾讯会议'、'按维度优先级 A 方案'")
-    rejected_reason: str = Field(description="为什么没选这个，一句话讲清拒绝逻辑")
+    option: str = Field(description="The alternative, e.g. 'Tencent Meeting', 'plan A ranked by dimension priority'")
+    rejected_reason: str = Field(description="Why it wasn't chosen, one sentence of clear reasoning")
 
 
 class DecisionRecord(BaseModel):
     """
-    PM 单次决策档案。一个 phase 通常含多条 DecisionRecord（如 task_plan 阶段
-    同时决定竞品列表 / 维度优先级 / 任务分配，应拆 3 条而非塞进一条）。
+    A single PM decision record. One phase usually has several DecisionRecords (e.g.
+    task_plan simultaneously decides the competitor list / dimension priority / task
+    allocation -- these should be 3 separate records, not crammed into one).
     """
 
     decision_id: str = Field(
         default_factory=lambda: f"D-{uuid4().hex[:8]}",
-        description="决策唯一标识，可被报告段落引用（如脚注 [D-a1b2c3d4]）",
+        description="Unique decision id, citable from report sections (e.g. footnote [D-a1b2c3d4])",
     )
     phase: Literal["initial_brief", "task_plan", "review", "report_task"] | None = Field(
         None,
-        description="由代码端 _stamp_decisions 强制覆盖，LLM 无需填写",
+        description="Force-overwritten by the code layer's _stamp_decisions; the LLM doesn't need to fill it",
     )
     decision_type: str = Field(
         description=(
-            "决策类型，自由字符串。建议从以下值中选取以保持一致性："
-            "competitor_selection（竞品列表选取）/ "
-            "product_type_inference（产品赛道判定）/ "
-            "dimension_priority（维度优先级）/ "
-            "task_allocation（任务分派）/ "
-            "analysis_focus（报告分析重点维度 / 是否需 SWOT）/ "
-            "report_structure（报告章节组织）/ "
-            "audience_choice（读者类型）/ "
-            "other（未归类）"
+            "Decision type, a free string. Prefer picking from these for consistency: "
+            "competitor_selection / product_type_inference / dimension_priority / "
+            "task_allocation / analysis_focus (report's analysis focus dimensions / "
+            "whether SWOT is needed) / report_structure (report section organization) / "
+            "audience_choice / other (uncategorized)"
         )
     )
-    chosen: dict = Field(description="最终选择，结构因 decision_type 而异")
+    chosen: dict = Field(description="The final choice; its structure varies by decision_type")
     alternatives_considered: list[DecisionAlternative] = Field(
         default_factory=list,
-        description="考虑过但拒绝的备选项；为空表示没有显式备选",
+        description="Alternatives considered but rejected; empty means no explicit alternatives",
     )
-    rationale: str = Field(description="为什么这么决定，一段话讲清逻辑，必填")
+    rationale: str = Field(description="Why this was decided, one paragraph of clear reasoning, required")
     inputs_used: list[str] = Field(
         default_factory=list,
         description=(
-            "决策依据的 state 字段路径，便于 Q&A 回读原始上下文。"
-            "格式：点路径，如 'exploration_result.competitor_names' / "
-            "'profiles.飞书.dimensions[0].facts'"
+            "State field paths this decision drew on, for Q&A to read back the "
+            "original context. Format: dotted path, e.g. "
+            "'exploration_result.competitor_names' / 'profiles.Feishu.dimensions[0].facts'"
         ),
     )
     ts: str = Field(
         default_factory=_now_iso,
-        description="ISO 8601 时间戳，未填则用当前时刻",
+        description="ISO 8601 timestamp, defaults to the current time if omitted",
     )
 
 
-# 用户文档蒸馏产物 (D-032 修订版)
-# 由 PM phase 1 多模态消化用户上传文档时产出；下游 Collector / Insight / Reporter 共享。
+# Distillate of a user-uploaded doc (D-032 revision)
+# Produced when PM phase 1 digests a user-uploaded doc multimodally; shared by
+# downstream Collector / Insight / Reporter.
 
 
 class DomainSeed(BaseModel):
-    """用户上传文档蒸馏出的领域 hint，供下游 agent 在做 dimension / competitor 选择时参考。
+    """A domain hint distilled from a user-uploaded doc, for downstream agents to
+    reference when choosing dimensions/competitors.
 
-    生产者：PM `initial_brief_node`（D-032 修订后由 PM 直接消化文档，不再走独立节点）。
-    消费者：Collector exploration_node（优先采用 dimension_candidates 而非凭空联网发现）、
-            PM TaskPlan / ReportTask（结合 exploration_result 决策）。
+    Producer: PM's `initial_brief_node` (after the D-032 revision, PM digests the
+    doc directly, no separate node).
+    Consumers: Collector's exploration_node (prefers dimension_candidates over
+    discovering from scratch online), PM's TaskPlan / ReportTask (decides using it
+    alongside exploration_result).
 
-    state 控制在 ~2KB，不存原文 —— `source_files` 留 lazy 重读通道。
+    Kept to ~2KB in state, doesn't store the raw text -- `source_files` is the lazy
+    re-read channel.
     """
 
     source_files: list[str] = Field(
-        description="PM 消化的文件路径（绝对或相对项目根），给后续 agent lazy 重读用。代码端覆盖，LLM 不填",
+        description="File paths PM digested (absolute or relative to project root), for downstream agents to lazily re-read. Overwritten by the code layer, not filled by the LLM",
     )
     dimension_candidates: list[str] = Field(
         default_factory=list,
         max_length=20,
-        description="用户文档中提到的对比维度候选，如『视频会议人数』『AI 助手』",
+        description="Comparison-dimension candidates mentioned in the user's doc, e.g. 'video call participant limit', 'AI assistant'",
     )
     competitor_mentions: list[str] = Field(
         default_factory=list,
         max_length=10,
-        description="用户文档中提到的竞品名，未联网验证，仅作 hint",
+        description="Competitor names mentioned in the user's doc, unverified online, just a hint",
     )
     product_type_hint: str | None = Field(
         None,
-        description="一句话产品赛道判断，从文档语境推断",
+        description="A one-sentence product-category judgment, inferred from the doc's context",
     )
     terminology: dict[str, str] = Field(
         default_factory=dict,
-        description="领域术语表，key=术语 value=简短解释；≤ 30 条",
+        description="Domain glossary, key=term value=short explanation; <=30 entries",
     )
     extracted_at: str = Field(default_factory=_now_iso)
 
 
-# PM 4 阶段节点的联合输出：task 主体 + 该阶段产生的若干 DecisionRecord。
-# 用 with_structured_output(*Output) 一次 LLM 调用同时拿到任务和决策档案，
-# 避免双倍 token 成本。decision_records min_length=1 强制 LLM 至少落一条决策。
+# Combined output of PM's 4 phase nodes: the task body + the DecisionRecords produced
+# in that phase. Using with_structured_output(*Output), one LLM call returns both the
+# task and the decision records, avoiding double the token cost. decision_records'
+# min_length=1 forces the LLM to log at least one decision.
 
 
 class InitialBriefOutput(BaseModel):
-    """阶段一联合输出：InitialBrief + 决策档案 + （可选）用户文档蒸馏 DomainSeed。
+    """Phase-1 combined output: InitialBrief + decision records + (optional) DomainSeed
+    distilled from the user's doc.
 
-    D-032 修订版：PM phase 1 多模态消化用户上传文档，同次 LLM 调用产出全部三块。
-    domain_seed 仅在用户上传文件时填，否则为 None。
+    D-032 revision: PM phase 1 digests a user-uploaded doc multimodally, producing
+    all three parts in the same LLM call. domain_seed is only filled when the user
+    uploaded a file, otherwise None.
     """
 
     initial_brief: InitialBrief
     decision_records: list[DecisionRecord] = Field(min_length=1)
     domain_seed: DomainSeed | None = Field(
         None,
-        description="若 prompt 含 uploaded_file 内容则填，否则 None；source_files 字段由代码端覆盖",
+        description="Filled if the prompt includes uploaded_file content, otherwise None; source_files is overwritten by the code layer",
     )
 
 
 class TaskPlanOutput(BaseModel):
-    """阶段二联合输出：TaskPlan + 决策档案。"""
+    """Phase-2 combined output: TaskPlan + decision records."""
 
     task_plan: TaskPlan
     decision_records: list[DecisionRecord] = Field(min_length=1)
 
 
 class ReportTaskOutput(BaseModel):
-    """阶段三联合输出：ReportTask + 决策档案。"""
+    """Phase-3 combined output: ReportTask + decision records."""
 
     report_task: ReportTask
     decision_records: list[DecisionRecord] = Field(min_length=1)
 
 
 class ReviewOutput(BaseModel):
-    """阶段 2.5 PM 评审联合输出：本轮全部 ReviewUnit + 决策档案。
+    """Phase-2.5 PM review combined output: this round's full set of ReviewUnits + decision records.
 
-    LLM 一次性产出所有 (agent, product) 对的评审结论，不分次调用。
-    review_units 顺序无要求；代码层按 (agent, product_name) 索引。
+    The LLM produces the verdict for every (agent, product) pair in one shot, not
+    called repeatedly. review_units order doesn't matter; the code layer indexes by
+    (agent, product_name).
     """
 
     review_units: list[ReviewUnit] = Field(min_length=1)
     decision_records: list[DecisionRecord] = Field(min_length=1)
 
 
-# debate 应用于 2 个 checkpoint：
-#    1. pm_taskplan：下游对 PM 阶段二 TaskPlan 的主观挑战（竞品列表 / 产品赛道 / 维度优先级）
-#    2. report：Reporter 对 PM 阶段三 ReportTask 的挑战，或 call_report_reviewer skill 终审
+# debate applies at 2 checkpoints:
+#    1. pm_taskplan: a downstream subjective challenge to PM phase 2's TaskPlan
+#       (competitor list / product category / dimension priority)
+#    2. report: Reporter's challenge to PM phase 3's ReportTask, or the
+#       call_report_reviewer skill's final review
 
 
 class DebatePosition(BaseModel):
-    """4 阶段 debate 中单个辩方在某一轮的观点。"""
+    """One debater's position in a single round of the 4-phase debate."""
 
     agent_family: AgentFamily
-    claim: str = Field(description="辩方的核心主张")
-    evidence: list[str] = Field(min_length=1, description="支撑 claim 的事实/引用，至少 1 条")
+    claim: str = Field(description="The debater's core claim")
+    evidence: list[str] = Field(min_length=1, description="Facts/citations backing the claim, at least 1")
 
 
 class DebateRound(BaseModel):
-    """debate 单轮：双方独立给观点 → 互相批驳 → 修订。"""
+    """A single debate round: both sides state their position independently -> critique each other -> revise."""
 
-    round: int = Field(description="第几轮，从 1 开始")
+    round: int = Field(description="Round number, starting from 1")
     positions: list[DebatePosition]
     critiques: dict[AgentFamily, str] = Field(
-        description="每个辩方对其他方观点的批驳，key ：被批驳方的家族名",
+        description="Each debater's critique of the other's position, keyed by the family being critiqued",
     )
     refinements: dict[AgentFamily, str] = Field(
-        description="每个辩方看到批驳后的修订观点，key ：修订方的家族名",
+        description="Each debater's revised position after seeing the critique, keyed by the family that revised",
     )
 
 
 class DebateResult(BaseModel):
-    """完整 debate 结果：N 轮 + 第三家族仲裁。"""
+    """The full debate result: N rounds + a third-family judge."""
 
-    target: Literal["pm_taskplan", "report", "pm_initial_brief"] = Field(description="被审对象类型")
+    target: Literal["pm_taskplan", "report", "pm_initial_brief"] = Field(description="Type of the object under review")
     rounds: list[DebateRound]
     final_verdict: Literal["accepted", "rejected", "accepted_with_revision"]
     judge_family: AgentFamily | None = Field(
-        description="仲裁方家族，应异于两个辩方。未触发仲裁时为 None",
+        description="The judging family, should differ from both debaters. None if judging was never triggered",
     )
     judge_rationale: str
     revised_output: dict | None = Field(
         None,
-        description="若 verdict 是 accepted_with_revision，给出修订版内容",
+        description="If verdict is accepted_with_revision, the revised content",
     )
 
 
-# Collector/Insight/Reporter 主动向 PM 表达需求或挑战
+# Collector/Insight/Reporter proactively raising a request or challenge to PM
 
 
 class ChallengePayload(BaseModel):
     """
-    AgentSignal.payload 的结构化载荷。事实性信号和主观信号共用同一形态：
-    - 事实性信号（reroute 路径）：claim 描述问题，evidence 列已观测的数据/URL
-    - 主观信号（debate 路径）：claim 为挑战方的核心主张，evidence 为支撑材料
+    The structured payload of AgentSignal.payload. Factual and subjective signals
+    share the same shape:
+    - factual signal (reroute path): claim describes the problem, evidence lists observed data/URLs
+    - subjective signal (debate path): claim is the challenger's core argument, evidence is supporting material
 
-    强约束 evidence 至少 1 条，避免出现"零证据挑战"的空壳调用。
+    evidence is hard-constrained to at least 1 entry, to prevent an "evidence-free challenge" empty call.
     """
 
-    claim: str = Field(description="挑战或问题的核心陈述")
+    claim: str = Field(description="The core statement of the challenge or problem")
     evidence: list[str] = Field(
         min_length=1,
-        description="支撑 claim 的事实/观测/数据点，至少 1 条",
+        description="Facts/observations/data points backing the claim, at least 1",
     )
     observed_data: dict = Field(
         default_factory=dict,
-        description="挑战方观测到的额外结构化数据，因 kind 而异，可为空",
+        description="Extra structured data the challenger observed, varies by kind, may be empty",
     )
     suggested_fix: str | None = Field(
         None,
-        description="可选：建议的修订方向",
+        description="Optional: a suggested direction for the fix",
     )
 
 
 class AgentSignal(BaseModel):
     """
-    Agent 反向通道信号。
-    事实性信号（kind=data_gap）走 reroute skill；
-    主观判断信号（requires_debate=True）触发 PM 启动 debate。
+    An agent's back-channel signal.
+    Factual signals (kind=data_gap) go through the reroute skill;
+    subjective-judgment signals (requires_debate=True) trigger PM to start a debate.
 
-    signal_id 用于 PM 的消费去重：handle_signal_node 处理后会把 signal_id 写入
-    state.consumed_signal_ids，下次扫描时跳过；信号本体保留在 agent_signals 里
-    供回溯审计。
+    signal_id is used for PM's consumption dedup: after handle_signal_node processes
+    a signal, its signal_id is written to state.consumed_signal_ids and skipped on
+    the next scan; the signal itself stays in agent_signals for audit/replay.
     """
 
     signal_id: str = Field(
         default_factory=lambda: str(uuid4()),
-        description="信号唯一标识，PM 消费去重用；默认自动生成 UUID",
+        description="Unique signal id for PM's consumption dedup; auto-generated UUID by default",
     )
     from_agent: Literal["collector", "insight", "report"]
     kind: Literal["data_gap", "pm_challenge", "insight_lead", "other"]
-    target: str = Field(description="信号所指的 task_id 或 agent 名")
-    payload: ChallengePayload = Field(description="结构化挑战/问题载荷")
+    target: str = Field(description="The task_id or agent name this signal targets")
+    payload: ChallengePayload = Field(description="Structured challenge/problem payload")
     requires_debate: bool = Field(
         False,
-        description="主观判断时 True，触发跨家族 debate；事实性信号 False",
+        description="True for a subjective judgment, triggering cross-family debate; False for a factual signal",
     )
     reroute_phase: Literal["phase_1", "phase_2", "phase_3"] | None = Field(
         None,
         description=(
-            "非空时跳过 reroute LLM 诊断，直接回溯该阶段。"
-            "review_node 预检产的 data_gap 已知根因恒为 phase_2，无需再让 LLM 判一遍。"
+            "When set, skips the reroute LLM diagnosis and rolls back to this phase "
+            "directly. review_node's precheck-produced data_gap always has phase_2 as "
+            "its known root cause, so there's no need to make the LLM judge it again."
         ),
     )
-    ts: str = Field(description="ISO 8601 时间戳")
+    ts: str = Field(description="ISO 8601 timestamp")

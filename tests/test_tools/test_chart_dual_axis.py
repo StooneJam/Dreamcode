@@ -1,4 +1,4 @@
-"""dual_axis_bar：缺失值（None）渲染为缺口而非误导性的 0。"""
+"""dual_axis_bar: missing values (None) render as a gap, not a misleading 0."""
 from __future__ import annotations
 
 import json
@@ -19,7 +19,7 @@ class TestPlotValue:
 
 class TestDualAxisMissing:
     def test_none_values_render_without_crash(self):
-        # 蜜雪/古茗评分缺失，沪上阿姨有数据：缺失不应被画成 0 柱
+        # Mixue/Gu Ming's ratings are missing, Auntea Jenny has data: missing shouldn't render as a 0 bar
         data = {
             "labels": ["蜜雪冰城", "古茗", "沪上阿姨"],
             "left": {"name": "评论量（条）", "values": [None, None, 89000]},

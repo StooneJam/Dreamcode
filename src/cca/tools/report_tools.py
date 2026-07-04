@@ -1,7 +1,8 @@
-"""Reporter 内部分析工具 —— 维度横向排序 + SWOT。
+"""Reporter's internal analysis tools -- cross-product dimension ranking + SWOT.
 
-Reporter ReAct 按 ReportTask.focus_dimensions 和 require_swot 自主调度。
-两工具只校验 + 透传 JSON，不写 state；Reporter 把产出嵌进 MD 正文。
+Reporter's ReAct loop dispatches these on its own based on ReportTask.focus_dimensions
+and require_swot. Both tools only validate + pass through JSON, never write to state;
+Reporter embeds the output straight into the MD body.
 """
 from __future__ import annotations
 
@@ -15,16 +16,16 @@ from cca.tools._validation import safe_load_list, safe_load_validate
 
 
 class RankingEntry(BaseModel):
-    """单产品在某维度的排名。"""
+    """A single product's rank on one dimension."""
 
     product_name: str
-    rank: int = Field(ge=1, description="排名，1 为最优")
-    note: str = Field(description="一句话说明排名依据，不超过 50 字")
+    rank: int = Field(ge=1, description="Rank, 1 is best")
+    note: str = Field(description="One sentence explaining the ranking rationale, under 50 chars")
 
 
 @tool
 def submit_dimension_ranking(dimension_name: str, rankings_json: str) -> str:
-    """提交单维度跨产品横向排序。rankings_json 每项 {product_name, rank, note}。"""
+    """Submit a cross-product ranking for a single dimension. Each rankings_json item is {product_name, rank, note}."""
     entries, err = safe_load_list(rankings_json, RankingEntry)
     if err:
         return err
@@ -36,10 +37,10 @@ def submit_dimension_ranking(dimension_name: str, rankings_json: str) -> str:
 
 @tool
 def finalize_swot(product_name: str, swot_json: str) -> str:
-    """提交单产品 SWOT。require_swot=True 时 product_names 中每个产品调一次。
+    """Submit a single product's SWOT. Called once per product in product_names when require_swot=True.
 
-    四象限各至少 1 条 SWOTPoint；supporting_fact_statements 必须逐字引用
-    profiles 中 dimensions.facts.statement 原文。
+    Each of the four quadrants needs at least 1 SWOTPoint; supporting_fact_statements
+    must quote profiles' dimensions.facts.statement verbatim.
     """
     swot, err = safe_load_validate(
         swot_json, SWOT,

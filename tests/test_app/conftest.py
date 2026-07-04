@@ -1,4 +1,4 @@
-"""tests/test_app 共享 fixture：临时 db + patch get_report_llm + TestClient，不调真 API。"""
+"""Shared fixtures for tests/test_app: a temp db + patched get_report_llm + TestClient, no real API calls."""
 from __future__ import annotations
 
 import sys
@@ -8,11 +8,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # 让 `app` 包可导入
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # makes the `app` package importable
 
 
 def _fake_get_report_llm():
-    """假 ChatModel：回声最后一条 HumanMessage，便于断言 grounding 与历史。"""
+    """A fake ChatModel: echoes back the last HumanMessage, making it easy to assert on grounding and history."""
     def _invoke(messages):
         human = [m for m in messages if type(m).__name__ == "HumanMessage"]
         return SimpleNamespace(content=f"answer to: {human[-1].content}")
@@ -21,7 +21,7 @@ def _fake_get_report_llm():
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    """返回 (TestClient, db)，db 指向本测试独享的临时库。"""
+    """Returns (TestClient, db), with db pointing at a temp database exclusive to this test."""
     from cca.store import db
     db.configure(tmp_path / "t.db")
     db.init_db()
@@ -32,9 +32,9 @@ def env(tmp_path, monkeypatch):
 
 @pytest.fixture
 def auth():
-    """工厂：为 owner 建一个 session，返回新鉴权契约的 Authorization 头（Bearer token）。
+    """Factory: creates a session for an owner, returning an Authorization header (Bearer token) per the new auth contract.
 
-    owner 解析已从 X-Owner header 改为 Authorization session token（见 server._resolve_owner）。
+    Owner resolution has moved from the X-Owner header to an Authorization session token (see server._resolve_owner).
     """
     def _make(owner: str) -> dict:
         from cca.auth.session import create_session

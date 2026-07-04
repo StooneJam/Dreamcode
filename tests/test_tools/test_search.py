@@ -1,6 +1,6 @@
 """
-测试 web_search @tool 包装 —— monkeypatch Tavily，不调真 API。
- web_search 是 BaseTool 对象.
+Tests for the web_search @tool wrapper -- monkeypatches Tavily, no real API calls.
+web_search is a BaseTool object.
 """
 from __future__ import annotations
 from unittest.mock import MagicMock
@@ -27,7 +27,7 @@ def test_web_search_returns_results_list(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_web_search_truncates_long_content(monkeypatch: pytest.MonkeyPatch) -> None:
-    """content 全程驻留 history，超 cap 的本地截断（降本）。"""
+    """content stays in history throughout; anything over the cap is truncated locally (cost control)."""
     long_content = "价" * 5000
     mock_client = MagicMock()
     mock_client.search.return_value = {
@@ -41,7 +41,7 @@ def test_web_search_truncates_long_content(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_web_search_caps_max_results(monkeypatch: pytest.MonkeyPatch) -> None:
-    """LLM 传超大 max_results 被服务端夹到 _MAX_RESULTS_CAP。"""
+    """When the LLM passes an oversized max_results, the server clamps it to _MAX_RESULTS_CAP."""
     mock_client = MagicMock()
     mock_client.search.return_value = {"results": []}
     monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
@@ -52,7 +52,7 @@ def test_web_search_caps_max_results(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_web_search_drops_extraneous_keys(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tavily 结果里的 raw_content / score 等噪声不进 history，只留 title/url/content。"""
+    """Noise fields like raw_content/score in Tavily's result don't enter history, only title/url/content are kept."""
     mock_client = MagicMock()
     mock_client.search.return_value = {
         "results": [{
@@ -99,7 +99,7 @@ def test_web_search_uses_env_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_web_search_prefers_run_uploaded_key_over_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """用户上传的 per-run key 优先于 .env 项目 key。"""
+    """A user-uploaded per-run key takes priority over the .env project key."""
     captured = {}
 
     def fake_client(api_key: str) -> MagicMock:
@@ -120,7 +120,7 @@ def test_web_search_prefers_run_uploaded_key_over_env(
 def test_web_search_falls_back_to_env_when_no_run_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """没上传（contextvar 为 None）走项目自己的 .env key。"""
+    """When nothing was uploaded (contextvar is None), falls back to the project's own .env key."""
     captured = {}
 
     def fake_client(api_key: str) -> MagicMock:
@@ -151,7 +151,7 @@ def test_validate_tavily_key_returns_none_when_ok(
 def test_validate_tavily_key_returns_error_string_when_invalid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """非法 key 返回错误串供前端提示用户重传，不 raise。"""
+    """An invalid key returns an error string for the frontend to prompt a re-upload, without raising."""
     from tavily.errors import InvalidAPIKeyError
 
     mock_client = MagicMock()
@@ -167,7 +167,8 @@ def test_validate_tavily_key_returns_error_string_when_invalid(
 def test_web_search_returns_error_string_on_rate_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """D-035：限流（运营类）必须返错误串而非 raise，否则一次外部失败打死整张图。"""
+    """D-035: a rate limit (operational) must return an error string instead of
+    raising, or one external failure would kill the entire graph."""
     from tavily.errors import UsageLimitExceededError
 
     mock_client = MagicMock()
@@ -184,7 +185,7 @@ def test_web_search_returns_error_string_on_rate_limit(
 def test_web_search_returns_error_string_on_network_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """瞬时网络失败（ConnectionError）同样降级为错误串。"""
+    """A transient network failure (ConnectionError) likewise degrades to an error string."""
     mock_client = MagicMock()
     mock_client.search.side_effect = requests.ConnectionError("connection reset")
     monkeypatch.setattr(search, "TavilyClient", lambda api_key: mock_client)
@@ -196,7 +197,8 @@ def test_web_search_returns_error_string_on_network_error(
 
 
 def test_web_search_propagates_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """配置/认证类（InvalidAPIKeyError）故意不吞，响亮 raise（CLAUDE.md §1 失败要响亮）。"""
+    """A config/auth error (InvalidAPIKeyError) is deliberately not swallowed -- it
+    raises loudly (CLAUDE.md §1: failures should be loud)."""
     from tavily.errors import InvalidAPIKeyError
 
     mock_client = MagicMock()
@@ -208,10 +210,10 @@ def test_web_search_propagates_auth_error(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_web_search_is_a_langchain_tool() -> None:
-    """验证 @tool 装饰生效，可被 LLM bind_tools 使用。"""
+    """Verifies the @tool decorator took effect, so it can be used by the LLM's bind_tools."""
     from langchain_core.tools import BaseTool
 
     assert isinstance(web_search, BaseTool)
     assert web_search.name == "web_search"
-    # docstring 第一段应能作为 description 给 LLM 看
+    # the docstring's first paragraph should work as the description shown to the LLM
     assert "Search the public web" in (web_search.description or "")

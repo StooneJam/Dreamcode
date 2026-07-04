@@ -1,18 +1,23 @@
-"""三个模型家族的客户端统一入口。
+"""Unified client entry point for the three model families.
 
-Agent / skill 一律在节点内调 get_llm(family) / get_report_llm() 取 LLM，
-不允许 import 模块常量抓死引用——否则前端注入的 per-run 凭证无法生效。
+Agents/skills must always call get_llm(family) / get_report_llm() inside the node --
+never import a module-level constant directly, or frontend-injected per-run
+credentials won't take effect.
 
-凭证两条路径：
-    无 run creds（离线 demo / 测试）：走 .env 单例，行为与历史完全一致。
-    有 run creds（前端注入）：按用户上传的 endpoint 现建客户端（带缓存）。
+Two credential paths:
+    no run creds (offline demo / tests): uses the .env singleton, behavior unchanged.
+    run creds present (frontend-injected): builds a client from the user's uploaded
+        endpoint (cached).
 
-family 是“角色槽位”而非 provider：gpt-5/deepseek/doubao 分别是规划 / 执行 / 仲裁角色。
-用户上传时每个槽位可放任意 provider（OpenAI / Qwen / GLM ...）；三槽填不同 provider
-即满足跨家族 bias 隔离。distinct endpoint < 2 时 cross_family_enabled() 返回 False，
-上层跳过 debate / call_report_reviewer。
+family is a "role slot", not a provider: gpt-5/deepseek/doubao are the planning /
+execution / arbiter roles respectively. When a user uploads credentials, each slot
+can hold any provider (OpenAI / Qwen / GLM ...); filling the three slots with
+distinct providers is what gives cross-family bias isolation. cross_family_enabled()
+returns False when fewer than 2 distinct endpoints are set, and the layer above
+skips debate / call_report_reviewer.
 
-dev override（`CCA_DEV_MODEL_OVERRIDE=doubao`）：仅作用于 .env 路径，把全部客户端指向豆包。
+Dev override (`CCA_DEV_MODEL_OVERRIDE=doubao`): only affects the .env path, pointing
+all clients at Doubao.
 """
 from __future__ import annotations
 
@@ -30,44 +35,47 @@ from cca.schema import AgentFamily
 
 load_dotenv(override=True)
 
-# 单次 LLM 调用超时（秒）。Collector / Insight ReAct 跑到后几轮 context 会膨胀，
-# DeepSeek 高峰期延迟也可能上来；180s 给个宽余量，必要时按家族通过环境变量调。
+# per-call LLM timeout (seconds). Collector/Insight's ReAct context grows in later
+# rounds, and DeepSeek's peak-hour latency can spike too; 180s+ gives headroom,
+# tune per-family via env vars if needed.
 _GPT_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "600"))
 _DEEPSEEK_TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT", "600"))
 _DOUBAO_TIMEOUT = int(os.getenv("DOUBAO_TIMEOUT", "600"))
 
-# 单次 LLM 调用网络层 retry。1 次重试 = 最坏情况 timeout × 2；
-# 改大会让整个 job 挂更久，Railway 上宁可快速失败让用户重跑。
+# network-layer retry per LLM call. 1 retry = worst case 2x timeout;
+# raising this makes a whole job hang longer -- on Railway, fail fast and let the user re-run.
 _MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "1"))
 
 _DEV_OVERRIDE = (os.getenv("CCA_DEV_MODEL_OVERRIDE") or "").lower()
 
-# 公开 flag —— 业务代码（如 debate skill）按此选 LLM API 路径：
-# Doubao 不支持 response_format=json_object，dev override 时所有结构化输出都得走 function_calling。
-# 三家族原路径下保留 json_mode / response_format=json_object（DeepSeek/GPT-5 容错更好）。
+# public flag -- business code (e.g. the debate skill) picks its LLM API path from this:
+# Doubao doesn't support response_format=json_object, so under dev override all
+# structured output must go through function_calling. The normal three-family path
+# keeps json_mode / response_format=json_object (DeepSeek/GPT-5 tolerate it better).
 DEV_DOUBAO_OVERRIDE: bool = _DEV_OVERRIDE == "doubao"
 
 _DOUBAO_MAX_TOKENS = int(os.getenv("DOUBAO_MAX_TOKENS", "32768"))
 
 _DOUBAO_THINKING = (os.getenv("DOUBAO_THINKING", "disabled") or "").lower()
 
-# 各角色槽位的默认 temperature。creds 路径建客户端时复用，保持与 .env 单例一致。
+# default temperature per role slot. Reused by the creds path when building clients, to stay consistent with the .env singletons.
 _FAMILY_TEMP: dict[AgentFamily, float] = {"gpt-5": 0.2, "deepseek": 0.3, "doubao": 0.2}
 _REPORT_TEMP = 0.8
 
-# 缺失家族的 fallback 优先级（用户只填 1-2 槽时，空槽借这个顺序里已填的）
+# fallback priority for a missing family (when the user only fills 1-2 slots, an empty slot borrows from whichever of these is filled)
 _FALLBACK_ORDER: tuple[AgentFamily, ...] = ("gpt-5", "deepseek", "doubao")
 
 
 class LLMCredential(BaseModel):
-    """用户为单个角色槽位上传的 endpoint。base_url=None 用 provider 默认。"""
+    """The endpoint a user uploaded for a single role slot. base_url=None uses the provider's default."""
 
     api_key: str
     base_url: str | None = None
     model: str
 
 
-# 三个槽位的固定默认值，服务器层按槽位名 + 用户 api_key 构造 LLMCredential 时使用。
+# fixed defaults for the three slots, used by the server layer when building an
+# LLMCredential from a slot name + the user's api_key.
 SLOT_DEFAULTS: dict[AgentFamily, dict] = {
     "gpt-5":     {"model": "gpt-5",                       "base_url": None},
     "deepseek": {"model": "deepseek-v4-pro",             "base_url": "https://api.deepseek.com"},
@@ -76,14 +84,14 @@ SLOT_DEFAULTS: dict[AgentFamily, dict] = {
 
 
 def _make_doubao(temperature: float, *, no_thinking: bool = False) -> ChatOpenAI:
-    """构造一个 Doubao 客户端。dev override 时三个家族都用它。
+    """Build a Doubao client. Under dev override, all three families use this.
 
-    no_thinking=True 强制不传 thinking 参数（用于 tool_choice 兼容场景）。
-    Doubao API 限制：extra_body 中带任何 thinking 键时，不支持 tool_choice。
+    no_thinking=True forces the thinking param to be omitted (for tool_choice compatibility).
+    Doubao API constraint: any thinking key in extra_body disables tool_choice support.
     """
     thinking_type = "disabled" if no_thinking else _DOUBAO_THINKING
     extra: dict = {}
-    # disabled 时不传 extra_body，避免与 tool_choice 冲突；只有明确启用时才传
+    # when disabled, don't pass extra_body at all, to avoid conflicting with tool_choice; only pass it when explicitly enabled
     if thinking_type in ("enabled", "auto"):
         extra["extra_body"] = {"thinking": {"type": thinking_type}}
     return ChatOpenAI(
@@ -99,11 +107,11 @@ def _make_doubao(temperature: float, *, no_thinking: bool = False) -> ChatOpenAI
 
 
 if _DEV_OVERRIDE == "doubao":
-    # dev override 下所有 agent（含 ReAct 工具调用）都走豆包。
-    # 思考模式与 tool_choice 不兼容，强制关闭，保证 ReAct loop 正常运行。
+    # under dev override, every agent (including ReAct tool calls) goes through Doubao.
+    # thinking mode is incompatible with tool_choice, so it's force-disabled to keep the ReAct loop working.
     print(
-        "[factory] DEV OVERRIDE active: 全部 LLM 走 Doubao；"
-        "流程稳定后 unset CCA_DEV_MODEL_OVERRIDE 切回原配置。",
+        "[factory] DEV OVERRIDE active: all LLMs routed to Doubao; "
+        "unset CCA_DEV_MODEL_OVERRIDE once things stabilize to switch back.",
         flush=True,
     )
     gpt = _make_doubao(temperature=0.2, no_thinking=True)
@@ -111,7 +119,7 @@ if _DEV_OVERRIDE == "doubao":
     doubao = _make_doubao(temperature=0.2, no_thinking=True)
     report_llm = _make_doubao(temperature=0.8, no_thinking=True)
 else:
-    # Report Agent 专用 GPT-5 客户端。temperature=0.8 提升语言组织与表达质量。
+    # dedicated GPT-5 client for the Report Agent. temperature=0.8 for better writing quality.
     report_llm = ChatOpenAI(
         model=os.getenv("OPENAI_MODEL", "gpt-5"),
         api_key=os.getenv("OPENAI_API_KEY"),
@@ -119,9 +127,11 @@ else:
         temperature=0.8,
         max_retries=_MAX_RETRIES,
     )
-    # GPT-5 —— PM Agent / Report Agent / debate 辩方
-    # temperature=0.2：稍偏低保证规划稳定性，同时保留 PM 在竞品选择 / 维度优先级 /
-    # 章节组织等判断点上的灵活度。D-039 撤回原 temperature=0（扼杀分析创造性）。
+    # GPT-5 -- PM Agent / Report Agent / debate debater
+    # temperature=0.2: slightly low for planning stability, while keeping PM's
+    # flexibility on judgment calls like competitor selection / dimension priority /
+    # section organization. D-039 reverted the original temperature=0 (it killed
+    # analytical creativity).
     gpt = ChatOpenAI(
         model=os.getenv("OPENAI_MODEL", "gpt-5"),
         api_key=os.getenv("OPENAI_API_KEY"),
@@ -130,7 +140,7 @@ else:
         max_retries=_MAX_RETRIES,
     )
 
-    # DeepSeek —— Collector / Insight ReAct / debate 辩方
+    # DeepSeek -- Collector / Insight ReAct / debate debater
     deepseek = ChatOpenAI(
         model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro"),
         api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -141,11 +151,11 @@ else:
         extra_body={"thinking": {"type": "disabled"}},
     )
 
-    # Doubao（火山方舟 Ark）—— debate judge / report 终审
+    # Doubao (Volcengine Ark) -- debate judge / report final review
     doubao = _make_doubao(temperature=0.2)
 
 
-# 离线 .env 路径的角色 → 单例映射。creds 缺省时返回这些。
+# role -> singleton mapping for the offline .env path. Returned when creds are absent.
 _ENV_CLIENTS: dict[AgentFamily, ChatOpenAI] = {
     "gpt-5": gpt,
     "deepseek": deepseek,
@@ -153,21 +163,22 @@ _ENV_CLIENTS: dict[AgentFamily, ChatOpenAI] = {
 }
 
 
-# ── per-run 凭证注入 ────────────────────────────────────────────────────
+# ── per-run credential injection ───────────────────────────────────────
 
 _run_creds: ContextVar[dict[AgentFamily, LLMCredential] | None] = ContextVar(
     "cca_run_creds", default=None
 )
 
-# 同一组 endpoint 在一次运行里复用客户端，避免每次 get_llm 都新建 httpx 连接池。
+# clients are reused within a run for the same endpoint set, to avoid rebuilding an httpx connection pool on every get_llm call.
 _creds_client_cache: dict[tuple[str, str | None, str, float], ChatOpenAI] = {}
 
 
 @contextmanager
 def use_credentials(creds: dict[AgentFamily, LLMCredential] | None) -> Iterator[None]:
-    """前端在 graph.invoke 外层用这个包住一次运行，注入用户上传的 endpoint。
+    """The frontend wraps a single run with this, outside graph.invoke, to inject the
+    user's uploaded endpoint.
 
-    creds 为空 / None → 回落 .env 路径（离线 demo）。
+    creds empty/None -> falls back to the .env path (offline demo).
     """
     token = _run_creds.set(creds or None)
     try:
@@ -179,13 +190,13 @@ def use_credentials(creds: dict[AgentFamily, LLMCredential] | None) -> Iterator[
 def _resolve_cred(
     creds: dict[AgentFamily, LLMCredential], family: AgentFamily
 ) -> LLMCredential:
-    """空槽按 _FALLBACK_ORDER 借已填的 endpoint。"""
+    """An empty slot borrows a filled endpoint per _FALLBACK_ORDER."""
     if family in creds:
         return creds[family]
     for candidate in _FALLBACK_ORDER:
         if candidate in creds:
             return creds[candidate]
-    raise ValueError("run creds 为空，不应走到 _resolve_cred")
+    raise ValueError("run creds is empty, should never reach _resolve_cred")
 
 
 def _is_doubao_endpoint(base_url: str | None) -> bool:
@@ -193,7 +204,7 @@ def _is_doubao_endpoint(base_url: str | None) -> bool:
 
 
 def _build_from_cred(cred: LLMCredential, temperature: float) -> ChatOpenAI:
-    """按用户 endpoint 现建客户端（缓存）。豆包 endpoint 自动应用 max_tokens 与超时。"""
+    """Build a client from the user's endpoint (cached). Doubao endpoints get max_tokens/timeout applied automatically."""
     key = (cred.api_key, cred.base_url, cred.model, temperature)
     client = _creds_client_cache.get(key)
     if client is None:
@@ -214,9 +225,9 @@ def _build_from_cred(cred: LLMCredential, temperature: float) -> ChatOpenAI:
 
 
 def get_llm(family: AgentFamily) -> ChatOpenAI:
-    """按角色槽位返回客户端。有 run creds 走用户 endpoint，否则 .env 单例。"""
+    """Return the client for a role slot. Uses the user's endpoint if run creds are set, otherwise the .env singleton."""
     if family not in _ENV_CLIENTS:
-        raise ValueError(f"未知 family: {family!r}")
+        raise ValueError(f"unknown family: {family!r}")
     creds = _run_creds.get()
     if creds is None:
         return _ENV_CLIENTS[family]
@@ -224,7 +235,7 @@ def get_llm(family: AgentFamily) -> ChatOpenAI:
 
 
 def get_report_llm() -> ChatOpenAI:
-    """Reporter 专用客户端（gpt-5 槽位，temperature=0.8）。"""
+    """Reporter's dedicated client (gpt-5 slot, temperature=0.8)."""
     creds = _run_creds.get()
     if creds is None:
         return report_llm
@@ -232,9 +243,9 @@ def get_report_llm() -> ChatOpenAI:
 
 
 def cross_family_enabled() -> bool:
-    """跨家族审核是否启用：用户填 >=2 个不同 endpoint 才开。
+    """Whether cross-family review is on: only when the user has filled >=2 distinct endpoints.
 
-    离线 .env 路径恒为 True（三家族齐全，行为不变）。
+    Always True on the offline .env path (all three families present, unchanged behavior).
     """
     creds = _run_creds.get()
     if creds is None:
@@ -243,7 +254,7 @@ def cross_family_enabled() -> bool:
     return len(distinct) >= 2
 
 
-# ── 凭证校验（供前端上传时调用）────────────────────────────────────────
+# ── credential validation (called by the frontend on upload) ───────────
 
 
 class CredentialCheck(BaseModel):
@@ -253,7 +264,7 @@ class CredentialCheck(BaseModel):
 
 
 def validate_credentials(creds: dict[AgentFamily, LLMCredential]) -> list[CredentialCheck]:
-    """对每个上传的 endpoint 真打一次最小 ping，返回逐槽结果。永不 raise。"""
+    """Send a real minimal ping to each uploaded endpoint, returning a per-slot result. Never raises."""
     results: list[CredentialCheck] = []
     for family, cred in creds.items():
         client = ChatOpenAI(
