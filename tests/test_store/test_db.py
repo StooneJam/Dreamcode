@@ -83,3 +83,23 @@ def test_get_history_returns_messages_for_owner(store) -> None:
         {"role": "assistant", "content": "A"},
     ]
     assert store.get_history("r1", "bob") == []         # 隔离
+
+
+def test_run_trace_roundtrip(store) -> None:
+    store.save_run_trace("run1", "alice", "ls-abc", '[{"type":"log"}]')
+    got = store.get_run_trace("run1", "alice")
+    assert got is not None
+    assert got["langsmith_run_id"] == "ls-abc"
+    assert got["events_json"] == '[{"type":"log"}]'
+
+
+def test_run_trace_isolated_by_owner(store) -> None:
+    store.save_run_trace("run1", "alice", None, "[]")
+    assert store.get_run_trace("run1", "bob") is None    # bob 看不到 alice 的
+    assert store.get_run_trace("run1", "alice") is not None
+
+
+def test_run_trace_same_id_overwrites(store) -> None:
+    store.save_run_trace("run1", "alice", None, "[1]")
+    store.save_run_trace("run1", "alice", None, "[2]")
+    assert store.get_run_trace("run1", "alice")["events_json"] == "[2]"

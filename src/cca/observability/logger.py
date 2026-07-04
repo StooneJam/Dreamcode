@@ -235,6 +235,23 @@ class LiveTokenCounter(BaseCallbackHandler):
             return sum(u.total_tokens for u in self._by_model.values())
 
 
+# ── 单条 run 的 web 链接（前端「查看完整 Trace」）─────────────────────────
+
+
+def resolve_trace_url(langsmith_run_id: str | None) -> str | None:
+    """尽力返回 LangSmith run 的 web 链接。未开 tracing / 查询失败均返 None。
+
+    需一次 read_run 网络往返换取 project 信息，故只在前端按需请求时调，不放 job 热路径。
+    """
+    if not langsmith_run_id or os.getenv("LANGSMITH_TRACING", "").lower() not in ("true", "1"):
+        return None
+    try:
+        client = Client()
+        return client.get_run_url(run=client.read_run(langsmith_run_id))
+    except Exception:
+        return None
+
+
 # ── 跨项目历史：从 LangSmith 拉 ───────────────────────────────────────────
 
 

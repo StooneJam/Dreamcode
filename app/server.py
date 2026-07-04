@@ -33,6 +33,7 @@ from cca.agents._streaming import JobCancelled, set_sse_emitter
 from cca.agents.qa_chat import answer_question
 from cca.graph import build_graph, empty_state
 from cca.llm.factory import SLOT_DEFAULTS, LLMCredential, get_report_llm, use_credentials
+from cca.observability.logger import resolve_trace_url, track_pipeline_tokens
 from cca.schema import AgentFamily
 from cca.store import db
 from cca.tools.search import use_tavily_key
@@ -48,6 +49,7 @@ _jobs: dict[str, dict] = {}
 _qa_locks: dict[str, asyncio.Lock] = {}
 
 _JOB_TTL = 3600  # 完成 1h 后清理内存（MemorySaver + queue 占用大）
+_MAX_RUN_EVENTS = 4000  # 单次运行落库的过程事件上限，防超长 job 撑爆 events blob
 
 
 def _cancel_job(job_id: str) -> None:
@@ -109,14 +111,23 @@ def _make_invoke(
     tavily: str | None,
     emit_fn,
     thread_config: dict,
+    on_run_id,
 ):
-    """返回一个可在线程池中安全调用的 graph.invoke 闭包。"""
+    """返回一个可在线程池中安全调用的 graph.invoke 闭包。
+
+    每次 invoke 用 track_pipeline_tokens 包住，拿到本次 trace 的 root run id 回传 on_run_id
+    （供前端「查看完整 Trace」深链）。HITL 场景 phase1/phase2 各一次 invoke，取最后一次。
+    """
     def _invoke(input_value):
         graph = build_graph(checkpointer=checkpointer)
         with use_credentials(creds):
             with use_tavily_key(tavily):
                 with set_sse_emitter(emit_fn):
-                    return graph.invoke(input_value, config=thread_config)
+                    with track_pipeline_tokens() as box:
+                        result = graph.invoke(input_value, config=thread_config)
+        if box.get("run_id"):
+            on_run_id(box["run_id"])
+        return result
     return _invoke
 
 
@@ -140,16 +151,22 @@ async def _run_job(
 ) -> None:
     queue: asyncio.Queue = _jobs[job_id]["queue"]
     loop = asyncio.get_event_loop()
+    events: list[dict] = []  # 落库回放用：同一份事件既推 SSE 也存下来
 
     # emit_fn 把结构化 SSE 事件从线程安全地送入 asyncio 队列；
     # 若 job 已被取消（客户端断开），抛 JobCancelled 中止图执行。
     def emit_fn(event: dict) -> None:
         if _jobs.get(job_id, {}).get("cancelled"):
             raise JobCancelled(job_id)
+        if len(events) < _MAX_RUN_EVENTS:
+            events.append(event)
         try:
             loop.call_soon_threadsafe(queue.put_nowait, event)
         except Exception:
             pass
+
+    def _capture_run_id(run_id: str) -> None:
+        _jobs[job_id]["langsmith_run_id"] = run_id
 
     checkpointer = MemorySaver()
     thread_config = {"configurable": {"thread_id": job_id}}
@@ -164,7 +181,7 @@ async def _run_job(
     })
 
     ctx = contextvars.copy_context()
-    _invoke = _make_invoke(checkpointer, creds, tavily, emit_fn, thread_config)
+    _invoke = _make_invoke(checkpointer, creds, tavily, emit_fn, thread_config, _capture_run_id)
 
     try:
         initial_state = empty_state(user_query, target_product, user_files)
@@ -209,6 +226,10 @@ async def _run_job(
         # 匿名（未登录）不持久化：报告留在内存 job，登录才入库存历史
         if owner != "anonymous":
             db.save_report(job_id, owner, target_product, result.get("report_md") or "", pdf)
+            db.save_run_trace(
+                job_id, owner, _jobs[job_id].get("langsmith_run_id"),
+                json.dumps(events, ensure_ascii=False),
+            )
         await queue.put({"type": "done", "has_pdf": bool(pdf)})
 
     except Exception as exc:
@@ -412,6 +433,22 @@ async def report_detail(report_id: str, owner: str = Depends(_resolve_owner)):
     if not report:
         return JSONResponse({"error": "not found"}, status_code=404)
     return {"report": report, "messages": db.get_history(report_id, owner)}
+
+
+@app.get("/api/reports/{report_id}/trace")
+async def report_trace(report_id: str, owner: str = Depends(_resolve_owner)):
+    """回放一次运行的 Agent 过程事件流 + LangSmith 深链。owner 不匹配返 404。
+
+    LangSmith URL 在此按需解析（一次网络往返），避免拖慢 job 收尾。
+    """
+    trace = db.get_run_trace(report_id, owner)
+    if not trace:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    loop = asyncio.get_event_loop()
+    trace_url = await loop.run_in_executor(
+        None, resolve_trace_url, trace.get("langsmith_run_id")
+    )
+    return {"events": json.loads(trace["events_json"] or "[]"), "trace_url": trace_url}
 
 
 # ── Auth endpoints ─────────────────────────────────────────────────────────

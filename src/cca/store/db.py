@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS otp_codes (
     code       TEXT NOT NULL,
     expires_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS run_traces (
+    run_id           TEXT PRIMARY KEY,
+    owner            TEXT NOT NULL,
+    langsmith_run_id TEXT,
+    events_json      TEXT NOT NULL,
+    created_at       TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_reports_owner ON reports(owner, created_at);
 CREATE INDEX IF NOT EXISTS idx_conv_lookup ON conversations(report_id, owner);
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, id);
@@ -172,6 +179,28 @@ def get_messages(conversation_id: str) -> list[dict]:
             (conversation_id,),
         ).fetchall()
     return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+def save_run_trace(
+    run_id: str, owner: str, langsmith_run_id: str | None, events_json: str
+) -> None:
+    """落库一次运行的 Agent 过程事件流（同 run_id 覆盖）。events_json 是事件数组的 JSON 串。"""
+    with _tx() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO run_traces"
+            "(run_id, owner, langsmith_run_id, events_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (run_id, owner, langsmith_run_id, events_json, _now()),
+        )
+
+
+def get_run_trace(run_id: str, owner: str) -> dict | None:
+    """取一次运行的过程事件流，owner 不匹配返 None（隔离）。"""
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT * FROM run_traces WHERE run_id = ? AND owner = ?", (run_id, owner)
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def get_history(report_id: str, owner: str) -> list[dict]:

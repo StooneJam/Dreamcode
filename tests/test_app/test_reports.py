@@ -29,3 +29,20 @@ def test_report_detail_isolated_returns_404(env, auth) -> None:
     db.save_report("r1", "alice", "飞书", "# 正文", "p")
     resp = client.get("/api/reports/r1", headers=auth("bob"))
     assert resp.status_code == 404                               # bob 看不到 alice 的报告
+
+
+def test_run_trace_returns_events_for_owner(env, auth) -> None:
+    client, db = env
+    db.save_run_trace("r1", "alice", None, '[{"type":"log","agent":"PM Agent","text":"start"}]')
+    resp = client.get("/api/reports/r1/trace", headers=auth("alice"))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["events"] == [{"type": "log", "agent": "PM Agent", "text": "start"}]
+    assert body["trace_url"] is None                             # 测试环境未开 LANGSMITH_TRACING
+
+
+def test_run_trace_isolated_returns_404(env, auth) -> None:
+    client, db = env
+    db.save_run_trace("r1", "alice", None, "[]")
+    assert client.get("/api/reports/r1/trace", headers=auth("bob")).status_code == 404
+    assert client.get("/api/reports/nope/trace", headers=auth("alice")).status_code == 404

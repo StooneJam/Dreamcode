@@ -627,6 +627,8 @@ section.snap-in { animation: sec-enter 1.1s ease forwards; }
 .log-msg   { word-break: break-word; line-height: 1.5; min-width: 0; }
 .log-bright { color: #dbdbeb; }
 .log-dim    { color: #808099; }
+.trace-link { color: #40c4d0; text-decoration: none; font-size: 12px; }
+.trace-link:hover { text-decoration: underline; }
 
 .log-hint {
   display: flex; gap: 10px; align-items: flex-start;

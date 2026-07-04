@@ -64,6 +64,7 @@ const I18N = {
     myReportsBtn:'我的报告', myReportsTitle:'历史报告',
     myReportsEmpty:'暂无历史报告', myReportsLoading:'加载中...',
     myReportsErr:'加载失败，请重试',
+    replayEmpty:'本次运行未记录过程日志', viewTrace:'在 LangSmith 查看完整 Trace →',
     galleryLabel:'报告样本展示', galleryHint:'点击圆点或箭头切换图表',
     // Modal
     modalTitle:'选择接入方式', modalSub:'选择一种方式以启动本次分析', modalNext:'下一步 →',
@@ -130,6 +131,7 @@ const I18N = {
     myReportsBtn:'My Reports', myReportsTitle:'Report History',
     myReportsEmpty:'No reports yet', myReportsLoading:'Loading...',
     myReportsErr:'Failed to load, please retry',
+    replayEmpty:'No process log recorded for this run', viewTrace:'View full trace in LangSmith →',
     galleryLabel:'Report Samples', galleryHint:'Click dots or arrows to switch charts',
     // Modal
     modalTitle:'API Access Method', modalSub:'Choose how to power this analysis', modalNext:'Next →',
@@ -430,6 +432,8 @@ async function loadReport(id, productName){
       msgBox.innerHTML='';
       messages.forEach(m=>appendQaMessage(m.role==='user'?'user':'agent', m.content));
     }
+    // 回放本次运行的 Agent 过程日志 + LangSmith Trace 链接
+    loadRunTrace(id);
   } catch(e){
     if(_pcontent) _pcontent.innerHTML=`<div class="pdf-empty"><p style="color:var(--muted);padding:24px">${lang==='zh'?'报告加载失败，请重试':'Failed to load report, please retry'}</p></div>`;
   }
@@ -1426,18 +1430,53 @@ async function startAnalysis(){
   } catch(_){ isSimulateMode=true; simulate(btn,product); }
 }
 
+// 单条流式事件的「渲染」逻辑：实时 SSE 与历史回放共用，保证两条路径完全一致。
+function applyStreamEvent(msg){
+  switch(msg.type){
+    case 'thinking': setThink(true); break;
+    case 'tool_call': setThink(false); appendLog(msg.agent,`→ ${msg.tool}(${msg.args})`,true); break;
+    case 'tool_result': appendLog(msg.agent,`← ${msg.tool} (${msg.size}) ${msg.preview}`,true); break;
+    case 'log': appendLog(msg.agent,msg.text,false); break;
+    case 'token_usage': appendLog(msg.agent,`tokens  in=${msg.input} (cached=${msg.cached})  out=${msg.output}  total=${msg.total}`,true); break;
+    case 'progress': setProgress(msg.pct); break;
+    case 'domain_seed':   renderDomainSeed(msg); break;
+    case 'review_update': renderReviewUpdate(msg.units); break;
+    case 'reroute':       renderReroute(msg); break;
+    case 'debate_result': renderDebateResult(msg); break;
+    case 'report_status': showReportStatus(msg.status); break;
+    case 'qa_result':     renderQaResult(msg.results); break;
+    case 'signal':        renderSignal(msg); break;
+  }
+}
+
+// 历史回放：把落库的事件流按序重放进日志面板（无实时时间戳）。
+function replayRun(events){
+  const body=$('log-body');
+  if(body) body.innerHTML='';
+  analysisStartTime=0;  // appendLog 据此不渲染 +MM:SS 时间戳
+  (events||[]).forEach(applyStreamEvent);
+  setThink(false); setProgress(100);
+}
+
+async function loadRunTrace(id){
+  try{
+    const res=await fetch(`/api/reports/${id}/trace`,{headers:{...authHeaders()}});
+    if(!res.ok) return;
+    const data=await res.json();
+    if(data.events&&data.events.length) replayRun(data.events);
+    else { const body=$('log-body'); if(body) body.innerHTML=''; appendLog('System',T('replayEmpty'),true); }
+    if(data.trace_url){
+      appendLogBlock(`<div class="log-line" style="padding-top:8px"><a href="${esc(data.trace_url)}" target="_blank" rel="noopener" class="trace-link">${T('viewTrace')}</a></div>`);
+    }
+  } catch(_){}
+}
+
 function openSSE(jobId,btn){
   if(eventSource) eventSource.close();
   eventSource=new EventSource(`/api/stream/${jobId}`);
   eventSource.onmessage=ev=>{
     const msg=JSON.parse(ev.data);
     switch(msg.type){
-      case 'thinking': setThink(true); break;
-      case 'tool_call': setThink(false); appendLog(msg.agent,`→ ${msg.tool}(${msg.args})`,true); break;
-      case 'tool_result': appendLog(msg.agent,`← ${msg.tool} (${msg.size}) ${msg.preview}`,true); break;
-      case 'log': appendLog(msg.agent,msg.text,false); break;
-      case 'token_usage': appendLog(msg.agent,`tokens  in=${msg.input} (cached=${msg.cached})  out=${msg.output}  total=${msg.total}`,true); break;
-      case 'progress': setProgress(msg.pct); break;
       case 'phase1_checkpoint':
         setThink(false); showPhase1Box(msg.summary); break;
       case 'heartbeat': break;
@@ -1451,15 +1490,9 @@ function openSSE(jobId,btn){
         }
         showQaBox();
         break;
-      case 'domain_seed':   renderDomainSeed(msg); break;
-      case 'review_update': renderReviewUpdate(msg.units); break;
-      case 'reroute':       renderReroute(msg); break;
-      case 'debate_result': renderDebateResult(msg); break;
-      case 'report_status': showReportStatus(msg.status); break;
-      case 'qa_result':     renderQaResult(msg.results); break;
-      case 'signal':        renderSignal(msg); break;
       case 'error':
         eventSource.close(); setThink(false); stopTimer(); btn.disabled=false; appendLog('Error',msg.message,false); break;
+      default: applyStreamEvent(msg);
     }
   };
   // 断线后让 EventSource 自动重连（不立即关闭），容忍 LLM 长文生成期间的网络抖动；
