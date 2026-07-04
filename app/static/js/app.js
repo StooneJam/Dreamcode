@@ -207,7 +207,7 @@ function buildScrollContent(l) {
 /* ══════════════════════════════════════
    State
 ══════════════════════════════════════ */
-let lang = 'zh';
+let lang = 'en';
 let uploadedFile = null;
 let pdfBlobUrl = null;
 let pdfFname = '';
