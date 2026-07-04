@@ -78,6 +78,32 @@ def _chain_run(children: list) -> SimpleNamespace:
     return SimpleNamespace(id="root-id", run_type="chain", extra={}, outputs={}, child_runs=children)
 
 
+def test_track_pipeline_tokens_sets_run_id_even_on_exception(monkeypatch):
+    """graph.invoke 中途抛异常时 box 仍需填充 run_id/usages——这正是最需要回查 trace 的场景，
+    不能因为 with 块提前退出（异常穿透 collect_runs）就丢了 run_id。"""
+    import langchain_core.tracers.context as tracer_context
+
+    class _FakeCollectRuns:
+        def __init__(self) -> None:
+            self.traced_runs = [SimpleNamespace(id="run-123", run_type="chain", extra={}, outputs={}, child_runs=[])]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False  # 不吞异常，交还给外层 with
+
+    monkeypatch.setattr(tracer_context, "collect_runs", lambda: _FakeCollectRuns())
+
+    box = {}
+    with pytest.raises(RuntimeError, match="boom"):
+        with logger.track_pipeline_tokens() as box:
+            raise RuntimeError("boom")
+
+    assert box["run_id"] == "run-123"
+    assert box["usages"] == []
+
+
 def test_traced_walks_nested_llm_runs():
     # 一个 chain root 套两层 llm，模拟 ReAct 子图内部调用
     inner = _local_llm_run("deepseek-v4-pro", 30, 5)

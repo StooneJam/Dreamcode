@@ -117,17 +117,23 @@ def _make_invoke(
 
     每次 invoke 用 track_pipeline_tokens 包住，拿到本次 trace 的 root run id 回传 on_run_id
     （供前端「查看完整 Trace」深链）。HITL 场景 phase1/phase2 各一次 invoke，取最后一次。
+
+    on_run_id 放在 finally 里调用：graph.invoke 抛异常时 box 仍会被 track_pipeline_tokens
+    填充（见 logger.py 的 try/finally），这里必须同样不因异常提前退出而丢了 run_id——
+    失败的运行恰恰是最需要回查 trace 的场景。
     """
     def _invoke(input_value):
         graph = build_graph(checkpointer=checkpointer)
-        with use_credentials(creds):
-            with use_tavily_key(tavily):
-                with set_sse_emitter(emit_fn):
-                    with track_pipeline_tokens() as box:
-                        result = graph.invoke(input_value, config=thread_config)
-        if box.get("run_id"):
-            on_run_id(box["run_id"])
-        return result
+        box: dict = {}
+        try:
+            with use_credentials(creds):
+                with use_tavily_key(tavily):
+                    with set_sse_emitter(emit_fn):
+                        with track_pipeline_tokens() as box:
+                            return graph.invoke(input_value, config=thread_config)
+        finally:
+            if box.get("run_id"):
+                on_run_id(box["run_id"])
     return _invoke
 
 
@@ -167,6 +173,20 @@ async def _run_job(
 
     def _capture_run_id(run_id: str) -> None:
         _jobs[job_id]["langsmith_run_id"] = run_id
+
+    async def _persist_and_emit_trace() -> None:
+        """登录用户落库过程事件流 + 实时推一条 LangSmith trace 链接。
+
+        成功/失败都调用——失败时同样落库，且同样尝试推 trace_url，因为调用失败
+        恰恰是最需要点进 LangSmith 看细节的场景，不能只在 done 路径才做。
+        """
+        if owner == "anonymous":
+            return
+        langsmith_run_id = _jobs[job_id].get("langsmith_run_id")
+        db.save_run_trace(job_id, owner, langsmith_run_id, json.dumps(events, ensure_ascii=False))
+        trace_url = await loop.run_in_executor(None, resolve_trace_url, langsmith_run_id)
+        if trace_url:
+            await queue.put({"type": "trace_url", "url": trace_url})
 
     checkpointer = MemorySaver()
     thread_config = {"configurable": {"thread_id": job_id}}
@@ -226,15 +246,13 @@ async def _run_job(
         # 匿名（未登录）不持久化：报告留在内存 job，登录才入库存历史
         if owner != "anonymous":
             db.save_report(job_id, owner, target_product, result.get("report_md") or "", pdf)
-            db.save_run_trace(
-                job_id, owner, _jobs[job_id].get("langsmith_run_id"),
-                json.dumps(events, ensure_ascii=False),
-            )
+        await _persist_and_emit_trace()
         await queue.put({"type": "done", "has_pdf": bool(pdf)})
 
     except Exception as exc:
         _jobs[job_id]["status"] = "error"
         _jobs[job_id]["finished_at"] = time.monotonic()
+        await _persist_and_emit_trace()
         await queue.put({"type": "error", "message": str(exc)})
     finally:
         await queue.put(None)  # 终止 SSE 生成器

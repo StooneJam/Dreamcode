@@ -151,14 +151,18 @@ def track_pipeline_tokens() -> Iterator[dict[str, Any]]:
     """包住一次 graph.invoke；with 块结束后 box['usages'] 是本次各模型 token 加和。
 
     box['run_id'] 是本次 trace 的 root run id（供回查 LangSmith 详情）。
+    try/finally 保证 graph.invoke 中途抛异常时 box 仍被填充——这恰恰是最需要回查
+    trace 的场景（调用失败），不能因为 with 块提前退出就丢了 run_id。
     """
     from langchain_core.tracers.context import collect_runs
 
     box: dict[str, Any] = {}
     with collect_runs() as cb:
-        yield box
-    box["usages"] = aggregate_traced(cb.traced_runs)
-    box["run_id"] = str(cb.traced_runs[0].id) if cb.traced_runs else None
+        try:
+            yield box
+        finally:
+            box["usages"] = aggregate_traced(cb.traced_runs)
+            box["run_id"] = str(cb.traced_runs[0].id) if cb.traced_runs else None
 
 
 # ── 运行中实时：回调累加器（前端展示）──────────────────────────────────

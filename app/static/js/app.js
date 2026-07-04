@@ -1458,6 +1458,11 @@ function replayRun(events){
   setThink(false); setProgress(100);
 }
 
+// LangSmith trace 深链渲染：实时（trace_url SSE 事件）与历史回放共用同一块 HTML。
+function renderTraceUrl(url){
+  appendLogBlock(`<div class="log-line" style="padding-top:8px"><a href="${esc(url)}" target="_blank" rel="noopener" class="trace-link">${T('viewTrace')}</a></div>`);
+}
+
 async function loadRunTrace(id){
   try{
     const res=await fetch(`/api/reports/${id}/trace`,{headers:{...authHeaders()}});
@@ -1465,9 +1470,7 @@ async function loadRunTrace(id){
     const data=await res.json();
     if(data.events&&data.events.length) replayRun(data.events);
     else { const body=$('log-body'); if(body) body.innerHTML=''; appendLog('System',T('replayEmpty'),true); }
-    if(data.trace_url){
-      appendLogBlock(`<div class="log-line" style="padding-top:8px"><a href="${esc(data.trace_url)}" target="_blank" rel="noopener" class="trace-link">${T('viewTrace')}</a></div>`);
-    }
+    if(data.trace_url) renderTraceUrl(data.trace_url);
   } catch(_){}
 }
 
@@ -1479,6 +1482,7 @@ function openSSE(jobId,btn){
     switch(msg.type){
       case 'phase1_checkpoint':
         setThink(false); showPhase1Box(msg.summary); break;
+      case 'trace_url': renderTraceUrl(msg.url); break;
       case 'heartbeat': break;
       case 'done':
         eventSource.close(); setThink(false); setProgress(100); btn.disabled=false;
